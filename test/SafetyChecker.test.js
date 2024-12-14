@@ -115,5 +115,112 @@ describe("SafetyChecker", () => {
     });
   });
 
+  describe("holder concentration checks", () => {
+    it("should pass when holder concentration is below threshold", () => {
+      // Add some holders with total concentration below 30%
+      token.update({
+        traderPublicKey: "holder1",
+        newTokenBalance: initialBuyAmount * 0.1, // 10%
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+      token.update({
+        traderPublicKey: "holder2",
+        newTokenBalance: initialBuyAmount * 0.15, // 15%
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+
+      expect(safetyChecker.runSecurityChecks(token)).to.be.true;
+      expect(safetyChecker.isHolderConcentrationSafe(token)).to.be.true;
+    });
+
+    it("should fail when holder concentration is above threshold", () => {
+      // Add some holders with total concentration above 30%
+      token.update({
+        traderPublicKey: "holder1",
+        newTokenBalance: initialBuyAmount * 0.2, // 20%
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+      token.update({
+        traderPublicKey: "holder2",
+        newTokenBalance: initialBuyAmount * 0.3, // 30%
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+
+      expect(safetyChecker.runSecurityChecks(token)).to.be.false;
+      expect(safetyChecker.isHolderConcentrationSafe(token)).to.be.false;
+    });
+  });
+
+  describe("minimum holder checks", () => {
+    it("should fail when there are too few holders", () => {
+      // Add just a few holders
+      for (let i = 1; i <= 10; i++) {
+        token.update({
+          traderPublicKey: `holder${i}`,
+          newTokenBalance: 100,
+          marketCapSol: 100,
+          vTokensInBondingCurve: 1000,
+          vSolInBondingCurve: 10
+        });
+      }
+
+      expect(safetyChecker.runSecurityChecks(token)).to.be.false;
+      expect(safetyChecker.hasEnoughHolders(token)).to.be.false;
+    });
+
+    it("should pass when there are enough holders", () => {
+      // Add required number of holders
+      for (let i = 1; i <= 25; i++) {
+        token.update({
+          traderPublicKey: `holder${i}`,
+          newTokenBalance: 100,
+          marketCapSol: 100,
+          vTokensInBondingCurve: 1000,
+          vSolInBondingCurve: 10
+        });
+      }
+
+      expect(safetyChecker.hasEnoughHolders(token)).to.be.true;
+      // Note: This might still fail due to holder concentration
+      // Let's make sure the concentration is low enough
+      token.update({
+        traderPublicKey: "creator123",
+        newTokenBalance: initialBuyAmount * 0.01, // Reduce creator's holdings to 1%
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+      expect(safetyChecker.runSecurityChecks(token)).to.be.true;
+    });
+
+    it("should allow configurable minimum holder count", () => {
+      const customSafetyChecker = new SafetyChecker({
+        MIN_HOLDERS: 10,
+        MAX_TOP_HOLDER_CONCENTRATION: 30
+      });
+
+      // Add 15 holders
+      for (let i = 1; i <= 15; i++) {
+        token.update({
+          traderPublicKey: `holder${i}`,
+          newTokenBalance: 100,
+          marketCapSol: 100,
+          vTokensInBondingCurve: 1000,
+          vSolInBondingCurve: 10
+        });
+      }
+
+      expect(customSafetyChecker.hasEnoughHolders(token)).to.be.true;
+    });
+  });
+
   // Add more tests for SafetyChecker methods
 });

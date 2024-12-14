@@ -37,8 +37,8 @@ module.exports = {
   SAFETY: {
     MIN_LIQUIDITY_SOL: 5, // Minimum SOL in bonding curve
     MAX_PRICE_IMPACT: 10, // Maximum price impact percentage
-    MIN_HOLDERS: 10, // Minimum number of token holders
-    MAX_CREATOR_OWNERSHIP: 50, // Maximum percentage owned by creator
+    MIN_HOLDERS: 25, // Minimum number of token holders
+    MAX_TOP_HOLDER_CONCENTRATION: 30, // Maximum percentage held by top 10 holders
   },
 
   // Trading hours (UTC)
