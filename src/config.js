@@ -14,8 +14,8 @@ module.exports = {
 
   // Market thresholds
   THRESHOLDS: {
-    HEATING_UP: 9000, // Market cap in SOL to consider token heating up
-    FIRST_PUMP: 12000, // Market cap in SOL to consider first pump
+    HEATING_UP: 12000, // Market cap in SOL to consider token heating up
+    FIRST_PUMP: 16000, // Market cap in SOL to consider first pump
     DEAD: 7000, // Market cap in SOL to consider token dead
     PUMP_DRAWDOWN: 30, // Percentage drawdown to enter drawdown phase
     RECOVERY: 10, // Percentage recovery from drawdown low to consider recovery
@@ -30,27 +30,27 @@ module.exports = {
         enabled: true,
         volatilityMultiplier: 2.0, // More aggressive volatility adjustment
         minPercentage: 10, // Tighter minimum
-        maxPercentage: 30  // Still protect against major drops
-      }
+        maxPercentage: 30, // Still protect against major drops
+      },
     },
     trailingTakeProfit: {
       enabled: true,
       initialTrigger: 10, // Lower initial trigger for quicker profits
-      trailPercentage: 5,  // Tighter trailing to lock in profits
+      trailPercentage: 5, // Tighter trailing to lock in profits
       dynamicAdjustment: {
         enabled: true,
         volatilityMultiplier: 1.5, // More responsive to volatility
-        minPercentage: 3,  // Very tight in low volatility
-        maxPercentage: 10  // Wider in high volatility
-      }
+        minPercentage: 3, // Very tight in low volatility
+        maxPercentage: 10, // Wider in high volatility
+      },
     },
     tieredTakeProfit: {
       enabled: true,
       tiers: [
-        { percentage: 15, portion: 0.5 },  // Take half position earlier
-        { percentage: 30, portion: 0.3 },  // Another 30% at higher profit
-        { percentage: 50, portion: 0.2 }   // Let the rest run for bigger moves
-      ]
+        { percentage: 15, portion: 0.5 }, // Take half position earlier
+        { percentage: 30, portion: 0.3 }, // Another 30% at higher profit
+        { percentage: 50, portion: 0.2 }, // Let the rest run for bigger moves
+      ],
     },
     timeBasedExit: {
       enabled: true,
@@ -58,23 +58,23 @@ module.exports = {
       profitBasedExtension: {
         enabled: true,
         threshold: 30, // Extend time if profit > 30%
-        extensionMultiplier: 2 // Double the max duration
+        extensionMultiplier: 2, // Double the max duration
       },
       timedTakeProfit: {
         enabled: true,
         intervals: [
-          { time: 300000, percentage: 10 },  // 5 min: exit if profit > 10%
-          { time: 600000, percentage: 7 },   // 10 min: exit if profit > 7%
-          { time: 900000, percentage: 5 }    // 15 min: exit if profit > 5%
-        ]
-      }
+          { time: 300000, percentage: 10 }, // 5 min: exit if profit > 10%
+          { time: 600000, percentage: 7 }, // 10 min: exit if profit > 7%
+          { time: 900000, percentage: 5 }, // 15 min: exit if profit > 5%
+        ],
+      },
     },
     volumeBasedExit: {
       enabled: true,
       volumeDrop: {
         enabled: true,
         window: 5 * 60 * 1000, // 5 minutes in milliseconds
-        threshold: 50 // Exit if volume drops 50% from peak
+        threshold: 50, // Exit if volume drops 50% from peak
       },
       volumeSpike: {
         enabled: true,
@@ -84,28 +84,28 @@ module.exports = {
         consecutiveDecline: {
           enabled: true,
           periods: 3,
-          minDeclinePercent: 15
-        }
+          minDeclinePercent: 15,
+        },
       },
       lowVolumeExit: {
         enabled: true,
         duration: 15 * 60 * 1000, // 15 minutes in milliseconds
-        threshold: 30 // Exit if volume is 30% or less of peak volume
-      }
+        threshold: 30, // Exit if volume is 30% or less of peak volume
+      },
     },
     priceAction: {
       enabled: true,
       wickRejection: {
         enabled: true,
         minCandleSize: 0.1, // Minimum candle size of 0.1%
-        threshold: 60 // Exit if wick is 60% or more of total range
+        threshold: 60, // Exit if wick is 60% or more of total range
       },
       momentumLoss: {
         enabled: true,
         consecutiveSmaller: 3, // Exit after 3 consecutive smaller candles
-        minSize: 0.05 // Only consider candles larger than 0.05%
-      }
-    }
+        minSize: 0.05, // Only consider candles larger than 0.05%
+      },
+    },
   },
 
   // Safety checks
