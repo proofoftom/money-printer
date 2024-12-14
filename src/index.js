@@ -11,7 +11,7 @@ const Wallet = require("./Wallet");
 const wallet = new Wallet();
 const positionManager = new PositionManager(wallet);
 const safetyChecker = new SafetyChecker(config.SAFETY);
-const tokenTracker = new TokenTracker(config, safetyChecker, positionManager);
+const tokenTracker = new TokenTracker(safetyChecker, positionManager);
 const wsManager = new WebSocketManager(tokenTracker);
 
 // Set up event listeners for token lifecycle events
@@ -33,13 +33,15 @@ tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
   if (to === "drawdown") {
     console.log(`Drawdown from peak: ${token.getDrawdownPercentage().toFixed(2)}%`);
   } else if (to === "inPosition") {
-    console.log(`Position opened at: ${token.position.entryPrice} SOL`);
+    const position = positionManager.getPosition(token.mint);
+    console.log(`Position opened at: ${position.entryPrice} SOL`);
   }
 });
 
 tokenTracker.on("positionOpened", (token) => {
+  const position = positionManager.getPosition(token.mint);
   console.log(` Opened position for ${token.symbol}`);
-  console.log(`Entry price: ${token.position.entryPrice} SOL`);
+  console.log(`Entry price: ${position.entryPrice} SOL`);
   console.log(`Market cap: ${token.marketCapSol} SOL`);
 });
 

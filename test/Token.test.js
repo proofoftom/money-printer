@@ -57,6 +57,11 @@ describe("Token", () => {
       token.update({ marketCapSol: 6, vTokensInBondingCurve: 1000000, vSolInBondingCurve: 6 });
       expect(token.drawdownLow).to.equal(6);
     });
+
+    it("should allow setting state to inPosition", () => {
+      token.setState("inPosition");
+      expect(token.state).to.equal("inPosition");
+    });
   });
 
   describe("Market Calculations", () => {
@@ -78,22 +83,6 @@ describe("Token", () => {
       token.drawdownLow = 5;
       token.marketCapSol = 10;
       expect(token.getRecoveryPercentage()).to.equal(0);
-    });
-  });
-
-  describe("Position Management", () => {
-    it("should set position and update state", () => {
-      const position = { entryPrice: 10 };
-      token.setPosition(position);
-      expect(token.position).to.equal(position);
-      expect(token.state).to.equal("inPosition");
-    });
-
-    it("should clear position and maintain state", () => {
-      token.setState("inPosition");
-      token.setPosition(null);
-      expect(token.position).to.be.null;
-      expect(token.state).to.equal("inPosition");
     });
   });
 

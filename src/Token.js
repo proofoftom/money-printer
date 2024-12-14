@@ -23,7 +23,6 @@ class Token extends EventEmitter {
     this.highestMarketCap = tokenData.marketCapSol;
     this.drawdownLow = tokenData.marketCapSol;
     this.lastUpdate = Date.now();
-    this.position = null;
 
     // Creation metadata
     this.createdAt = Date.now();
@@ -70,11 +69,6 @@ class Token extends EventEmitter {
   getRecoveryPercentage() {
     if (this.state !== "drawdown") return 0;
     return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
-  }
-
-  setPosition(position) {
-    this.position = position;
-    this.setState(position ? "inPosition" : this.state);
   }
 
   isHeatingUp(threshold) {
