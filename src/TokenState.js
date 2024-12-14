@@ -9,6 +9,7 @@ class TokenState {
     this.inUnsafeRecovery = new Set();
     this.inUnsafeDrawdown = new Set();
     this.inPosition = new Set();
+    this.tokenMetadata = new Map();
     console.log("TokenState initialized");
   }
 

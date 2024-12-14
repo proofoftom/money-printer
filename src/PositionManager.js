@@ -7,6 +7,8 @@ class PositionManager {
   constructor(wallet) {
     this.wallet = wallet;
     this.positions = new Map();
+    this.wins = 0;
+    this.losses = 0;
     console.log(
       "PositionManager initialized with wallet balance:",
       this.wallet.balance
@@ -36,6 +38,11 @@ class PositionManager {
       this.wallet.updateBalance(profitLoss + position.size);
       this.wallet.recordTrade(profitLoss);
       this.positions.delete(mint);
+      if (profitLoss > 0) {
+        this.wins += 1;
+      } else if (profitLoss < 0) {
+        this.losses += 1;
+      }
       console.log(
         `Closed position for ${mint} at ${exitPrice} with PnL ${profitLoss}`
       );
