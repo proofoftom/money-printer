@@ -20,9 +20,9 @@ class SafetyChecker {
 
     // Check holder concentration
     if (!this.isHolderConcentrationSafe(token)) {
-      const concentration = token.getTopHolderConcentration(2);
+      const concentration = token.getTopHolderConcentration(10);
       console.log(
-        `Warning: Top holders control ${concentration}% of supply, maximum allowed is ${this.MAX_TOP_HOLDER_CONCENTRATION}%`
+        `Warning: Top holders control ${Math.round(concentration)}% of supply, maximum allowed is ${this.MAX_TOP_HOLDER_CONCENTRATION}%`
       );
       return false;
     }
@@ -41,7 +41,7 @@ class SafetyChecker {
   }
 
   isHolderConcentrationSafe(token) {
-    const concentration = token.getTopHolderConcentration(2);
+    const concentration = token.getTopHolderConcentration(10);
     return concentration <= this.MAX_TOP_HOLDER_CONCENTRATION;
   }
 
