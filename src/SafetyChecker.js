@@ -1,16 +1,26 @@
 const config = require('./config');
 
 class SafetyChecker {
-  constructor(customConfig = {}) {
-    this.config = {
-      THRESHOLDS: {
-        ...config.THRESHOLDS,
-        ...customConfig.THRESHOLDS
-      }
-    };
+  constructor(config, priceManager) {
+    this.config = config;
+    this.priceManager = priceManager;
   }
 
-  runSecurityChecks(token) {
+  async runSecurityChecks(token) {
+    // Convert market cap to USD for all checks
+    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+
+    // Check market cap thresholds
+    if (marketCapUSD > this.config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
+      console.log(`Market cap $${marketCapUSD.toFixed(2)} exceeds maximum entry threshold of $${this.config.THRESHOLDS.MAX_ENTRY_CAP_USD}`);
+      return false;
+    }
+
+    if (marketCapUSD < this.config.THRESHOLDS.DEAD_USD) {
+      console.log(`Market cap $${marketCapUSD.toFixed(2)} is below minimum threshold of $${this.config.THRESHOLDS.DEAD_USD}`);
+      return false;
+    }
+
     // Check if we have enough holders
     if (!this.hasEnoughHolders(token)) {
       console.log(
@@ -33,6 +43,20 @@ class SafetyChecker {
       console.log("Creator has fully exited their position - reduced risk");
     }
 
+    // Check time since creation
+    const timeSinceCreation = (Date.now() - token.createdAt) / 1000;
+    if (timeSinceCreation < this.config.THRESHOLDS.MIN_TIME_SINCE_CREATION) {
+      console.log(`Token is too new. Only ${timeSinceCreation.toFixed(0)} seconds old, minimum required is ${this.config.THRESHOLDS.MIN_TIME_SINCE_CREATION} seconds`);
+      return false;
+    }
+
+    // Check trading patterns
+    const avgTradeSizeUSD = this.priceManager.solToUSD(token.getAverageTradeSize());
+    if (avgTradeSizeUSD > this.config.THRESHOLDS.MAX_AVG_TRADE_SIZE_USD) {
+      console.log(`Average trade size $${avgTradeSizeUSD.toFixed(2)} exceeds maximum of $${this.config.THRESHOLDS.MAX_AVG_TRADE_SIZE_USD}`);
+      return false;
+    }
+
     return true;
   }
 
@@ -47,7 +71,7 @@ class SafetyChecker {
   }
 
   isCreatorFullyExited(token) {
-    return token.hasCreatorFullyExited();
+    return token.hasCreatorSoldAll();
   }
 
   isTokenSafe(marketData) {
@@ -73,13 +97,14 @@ class SafetyChecker {
   }
 
   checkMarketCap(marketData) {
-    if (marketData.marketCap > this.config.THRESHOLDS.MAX_ENTRY_CAP) {
-      console.log(`Market cap ${marketData.marketCap} exceeds maximum entry threshold of ${this.config.THRESHOLDS.MAX_ENTRY_CAP}`);
+    const marketCapUSD = this.priceManager.solToUSD(marketData.marketCapSol);
+    if (marketCapUSD > this.config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
+      console.log(`Market cap $${marketCapUSD.toFixed(2)} exceeds maximum entry threshold of $${this.config.THRESHOLDS.MAX_ENTRY_CAP_USD}`);
       return false;
     }
 
-    if (marketData.marketCap < this.config.THRESHOLDS.DEAD) {
-      console.log(`Market cap ${marketData.marketCap} is below minimum threshold of ${this.config.THRESHOLDS.DEAD}`);
+    if (marketCapUSD < this.config.THRESHOLDS.DEAD_USD) {
+      console.log(`Market cap $${marketCapUSD.toFixed(2)} is below minimum threshold of $${this.config.THRESHOLDS.DEAD_USD}`);
       return false;
     }
 
@@ -121,8 +146,9 @@ class SafetyChecker {
     }
 
     // Check average trade size
-    if (marketData.avgTradeSize > this.config.THRESHOLDS.MAX_AVG_TRADE_SIZE) {
-      console.log(`Average trade size ${marketData.avgTradeSize.toFixed(2)} SOL exceeds maximum of ${this.config.THRESHOLDS.MAX_AVG_TRADE_SIZE} SOL`);
+    const avgTradeSizeUSD = this.priceManager.solToUSD(marketData.avgTradeSize);
+    if (avgTradeSizeUSD > this.config.THRESHOLDS.MAX_AVG_TRADE_SIZE_USD) {
+      console.log(`Average trade size $${avgTradeSizeUSD.toFixed(2)} exceeds maximum of $${this.config.THRESHOLDS.MAX_AVG_TRADE_SIZE_USD}`);
       return false;
     }
 

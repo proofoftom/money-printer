@@ -101,7 +101,7 @@ class WebSocketManager extends EventEmitter {
     if (message.txType === "create" && message.mint && message.name) {
       // Ignore tokens that are already above our heating up threshold
       const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
-      if (marketCapUSD > config.THRESHOLDS.HEATING_UP) {
+      if (marketCapUSD > config.THRESHOLDS.HEATING_UP_USD) {
         console.log(`Ignoring new token ${message.name} (${message.mint}) - Market cap too high: $${marketCapUSD.toFixed(2)} (${message.marketCapSol.toFixed(2)} SOL)`);
         return;
       }
@@ -208,14 +208,13 @@ class WebSocketManager extends EventEmitter {
   }
 
   close() {
-    // Remove SIGINT handler
-    process.removeListener("SIGINT", this.sigintHandler);
-
     if (this.ws) {
-      this.isConnected = false;
+      this.ws.removeAllListeners();
       this.ws.close();
       this.ws = null;
     }
+    this.isConnected = false;
+    process.removeListener("SIGINT", this.sigintHandler);
   }
 }
 

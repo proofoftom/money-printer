@@ -15,7 +15,7 @@ describe('WebSocketManager', () => {
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
     tokenTracker = new TokenTracker();
-    priceManager = new MockPriceManager();
+    priceManager = new MockPriceManager(1); // Set SOL price to $1 for simpler testing
     wsManager = new WebSocketManager(tokenTracker, priceManager);
     
     // Create a mock WebSocket with all necessary methods
@@ -75,8 +75,8 @@ describe('WebSocketManager', () => {
         initialBuy: 30280031.760362,
         bondingCurveKey: 'GFFiiixn6ZdvGXCFoE79fH5nuPyzrWUKHEL7tATe6gaf',
         vTokensInBondingCurve: 1042719968.239638,
-        vSolInBondingCurve: 30.87118399999998,
-        marketCapSol: 29.606399551471107,
+        vSolInBondingCurve: 10.87118399999998,
+        marketCapSol: 10.606399551471107,
         name: 'Test Token',
         symbol: 'TEST',
         uri: 'https://test.uri'
@@ -108,7 +108,7 @@ describe('WebSocketManager', () => {
     it('should ignore subscription confirmation messages', () => {
       const spy = sinon.spy(tokenTracker, 'handleTokenUpdate');
       const message = {
-        message: 'Successfully subscribed to testMint'
+        message: 'Successfully subscribed to token trades'
       };
 
       wsManager.handleMessage(message);

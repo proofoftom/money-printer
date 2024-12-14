@@ -6,9 +6,13 @@ module.exports = {
 
   // Market thresholds
   THRESHOLDS: {
-    // Market Cap Thresholds
-    MAX_ENTRY_CAP: 250, // Maximum market cap in SOL for entry
-    DEAD: 5, // Minimum market cap in SOL
+    // Market Cap Thresholds (in USD)
+    MAX_ENTRY_CAP_USD: 50000, // Maximum market cap in USD for entry ($50k)
+    DEAD_USD: 6500, // Consider token dead if it drops below $6.5k after pumping
+    HEATING_UP_USD: 15000, // Market cap threshold to consider token heating up ($15k)
+    FIRST_PUMP_USD: 25000, // Market cap threshold for first pump ($25k)
+    PUMP_DRAWDOWN: 20, // Percentage drawdown to enter recovery mode
+    RECOVERY: 10, // Percentage recovery needed to enter position
 
     // Time and Age Thresholds
     MIN_TIME_SINCE_CREATION: 30, // Minimum seconds since token creation
@@ -24,7 +28,7 @@ module.exports = {
 
     // Trading Pattern Thresholds
     MIN_UNIQUE_BUYERS: 15, // Minimum number of unique buyers
-    MAX_AVG_TRADE_SIZE: 5, // Maximum average trade size in SOL
+    MAX_AVG_TRADE_SIZE_USD: 500, // Maximum average trade size in USD
     MIN_BUY_SELL_RATIO: 0.6, // Minimum ratio of buys to total trades
     MAX_SINGLE_WALLET_VOLUME: 25, // Maximum percentage of volume from a single wallet
 
