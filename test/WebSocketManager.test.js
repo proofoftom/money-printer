@@ -3,17 +3,20 @@ const sinon = require('sinon');
 const WebSocket = require('ws');
 const WebSocketManager = require('../src/WebSocketManager');
 const TokenTracker = require('../src/TokenTracker');
+const MockPriceManager = require('./mocks/mockPriceManager');
 const EventEmitter = require('events');
 
 describe('WebSocketManager', () => {
   let wsManager;
   let tokenTracker;
+  let priceManager;
   let mockWs;
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
     tokenTracker = new TokenTracker();
-    wsManager = new WebSocketManager(tokenTracker);
+    priceManager = new MockPriceManager();
+    wsManager = new WebSocketManager(tokenTracker, priceManager);
     
     // Create a mock WebSocket with all necessary methods
     mockWs = new EventEmitter();
