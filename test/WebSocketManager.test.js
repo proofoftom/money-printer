@@ -65,23 +65,41 @@ describe('WebSocketManager', () => {
     it('should handle new token messages', () => {
       const spy = sinon.spy(tokenTracker, 'handleNewToken');
       const message = {
-        type: 'newToken',
-        data: { mint: 'testMint', name: 'TestToken' }
+        signature: '3qQ2EDRHz5jVxKFe4pkiaY8ZfP6okJNH75a5ckGqRCo1e3eSZD8oeDUdpwMjgwZyQ2iLymAwc8a1Ly62ZQtdNFDn',
+        mint: 'HALHiUFutmGJ48n5WLFihE566BTgxYG9JFsHkKMZN2UW',
+        traderPublicKey: '5S78br7qpRpV46ErYPaYVmwCxXUwHacPB4ip8TPDm5Db',
+        txType: 'create',
+        initialBuy: 30280031.760362,
+        bondingCurveKey: 'GFFiiixn6ZdvGXCFoE79fH5nuPyzrWUKHEL7tATe6gaf',
+        vTokensInBondingCurve: 1042719968.239638,
+        vSolInBondingCurve: 30.87118399999998,
+        marketCapSol: 29.606399551471107,
+        name: 'Test Token',
+        symbol: 'TEST',
+        uri: 'https://test.uri'
       };
 
       wsManager.handleMessage(message);
-      expect(spy.calledWith(message.data)).to.be.true;
+      expect(spy.calledWith(message)).to.be.true;
     });
 
     it('should handle trade messages', () => {
       const spy = sinon.spy(tokenTracker, 'handleTokenUpdate');
       const message = {
-        type: 'trade',
-        data: { mint: 'testMint', price: 1.0 }
+        signature: '3AvtrNLxSctDZNU5CEPZ7A4iJcq64ocpZyZtaKaL3nRKm8PTQ2fBGewtUqhucatoQnzCg8FLG91pKt5Fn12D2gxD',
+        mint: 'G31NnZDkmgo59CN4AhDhYWyFqZWXV29W5VcUar5Xpump',
+        traderPublicKey: 'DAB8QPSKTE4DjbHTvkGEzRiKKw2N7cdwKdHX9NwKAcJz',
+        txType: 'buy',
+        tokenAmount: 67062499.874628,
+        newTokenBalance: 67062499.874628,
+        bondingCurveKey: '4YGMRKCJz9cJ71Xj5PY9vmwi8MnTJpWHDViUG1KNh8am',
+        vTokensInBondingCurve: 1005937500.125372,
+        vSolInBondingCurve: 31.999999996011773,
+        marketCapSol: 31.81112145836451
       };
 
       wsManager.handleMessage(message);
-      expect(spy.calledWith(message.data)).to.be.true;
+      expect(spy.calledWith(message)).to.be.true;
     });
 
     it('should ignore subscription confirmation messages', () => {

@@ -93,24 +93,21 @@ class WebSocketManager extends EventEmitter {
       return;
     }
 
-    // Validate message format
-    if (!message.type || !message.data) {
-      console.debug('Invalid message format:', message);
+    // Handle token creation messages
+    if (message.txType === 'create' && message.mint && message.name) {
+      this.emit('newToken', message);
+      this.tokenTracker.handleNewToken(message);
       return;
     }
 
-    switch (message.type) {
-      case 'newToken':
-        this.emit('newToken', message.data);
-        this.tokenTracker.handleNewToken(message.data);
-        break;
-      case 'trade':
-        this.emit('trade', message.data);
-        this.tokenTracker.handleTokenUpdate(message.data);
-        break;
-      default:
-        console.debug('Unknown message type:', message.type);
+    // Handle trade messages
+    if (message.txType && message.mint && message.txType !== 'create') {
+      this.emit('trade', message);
+      this.tokenTracker.handleTokenUpdate(message);
+      return;
     }
+
+    console.debug('Unknown message format:', message);
   }
 
   // For testing purposes
