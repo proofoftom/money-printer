@@ -25,12 +25,24 @@ module.exports = {
   EXIT_STRATEGIES: {
     trailingStopLoss: {
       enabled: true,
-      percentage: 30, // 30% drawdown from peak triggers stop loss
+      percentage: 30,
+      dynamicAdjustment: {
+        enabled: true,
+        volatilityMultiplier: 1.5, // Higher volatility = wider stop loss
+        minPercentage: 20, // Never tighter than 20%
+        maxPercentage: 40  // Never wider than 40%
+      }
     },
     trailingTakeProfit: {
       enabled: true,
-      initialTrigger: 20, // Start trailing after 20% profit
-      trailPercentage: 10, // Trail 10% behind highest price
+      initialTrigger: 20,
+      trailPercentage: 10,
+      dynamicAdjustment: {
+        enabled: true,
+        volatilityMultiplier: 1.0, // Adjust trail % based on volatility
+        minPercentage: 5,  // Minimum trail percentage
+        maxPercentage: 15  // Maximum trail percentage
+      }
     },
     tieredTakeProfit: {
       enabled: true,
