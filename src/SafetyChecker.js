@@ -5,12 +5,22 @@ class SafetyChecker {
     console.log("SafetyChecker initialized");
   }
 
-  runSecurityChecks() {
+  runSecurityChecks(token) {
     console.log("Running safety checks...");
+    
+    // If creator has sold all tokens, that's actually a good sign
+    if (token.hasCreatorSoldAll()) {
+      console.log(`Creator has fully exited their position - reduced risk`);
+      return true;
+    }
+
+    // For now, always return true if creator still has position
     return true;
   }
 
-  // Add methods for safety checks
+  isCreatorFullyExited(token) {
+    return token.hasCreatorSoldAll();
+  }
 }
 
 module.exports = SafetyChecker;
