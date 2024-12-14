@@ -10,12 +10,13 @@ TokenState manages the complete lifecycle state of tokens, providing efficient d
 
 ```javascript
 class TokenState {
+  newlyCreated = new Set(); // Newly minted tokens
   heatingUp = new Set(); // Tokens that are showing initial signs of activity
-  firstPump = new Set(); // Tokens that are in an active pump phase
+  inFirstPump = new Set(); // Tokens that are in their first pump phase
+  inFirstDrawdown = new Set(); // Tokens that have entered their first drawdown phase
   inDrawdown = new Set(); // Tokens that have entered a drawdown phase
-  inRecovery = new Set(); // Tokens recovering from a drawdown
-  inUnsafeRecovery = new Set(); // Tokens recovering but not meeting safety criteria
-  inTakeProfit = new Set(); // Tokens that have hit take profit targets
+  unsafeRecovery = new Set(); // Tokens recovering but not meeting safety criteria
+  inPosition = new Set(); // Tokens that are currently in a trading position
 }
 ```
 
@@ -39,6 +40,16 @@ class TokenState {
   closedPositions = new Map(); // Historical trading positions
 }
 ```
+
+## Lifecycle
+
+1. **New Mint**: Tokens start in the `new` state when they are first minted.
+2. **Heating Up**: Tokens transition to the `heatingUp` state when they show initial signs of activity.
+3. **First Pump**: Tokens move to the `inFirstPump` state during their first significant price increase.
+4. **First Drawdown**: Tokens enter the `inFirstDrawdown` state after their first pump when prices start to fall.
+5. **Drawdown**: Tokens transition to the `inDrawdown` state during subsequent price declines.
+6. **Recovery**: Tokens may enter the `unsafeRecovery` state if they begin to recover but do not meet all safety criteria.
+7. **In Position**: Tokens are in the `inPosition` state when they are actively traded.
 
 ## State Management
 
@@ -110,7 +121,7 @@ heatingUp.add(mint);
 
 // Transition to pumping
 heatingUp.delete(mint);
-pumping.add(mint);
+inFirstPump.add(mint);
 ```
 
 ### 4. Position Tracking

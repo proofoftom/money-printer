@@ -11,7 +11,7 @@ export const config = {
   // Trading Parameters
   trading: {
     initialSOLBalance: 1, // Starting balance in SOL for trading
-    positionSize: 0.01, // Size of each position (in SOL)
+    positionSize: 0.1, // Size of each position (in SOL)
     transactionFee: 0.002, // Fee per transaction (in SOL)
     slippage: 10, // Expected slippage per trade (in %)
     takeProfitLevel: 40, // Target profit level (in %) if not trailing

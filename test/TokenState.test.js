@@ -13,19 +13,17 @@ describe('TokenState', () => {
   });
 
   it('should add and remove tokens from states', () => {
-    // Simulate adding and removing tokens from states
-    tokenState.addTokenToState('mint', 'heatingUp');
-    expect(tokenState.heatingUp).to.include('mint');
-    tokenState.removeTokenFromState('mint', 'heatingUp');
-    expect(tokenState.heatingUp).to.not.include('mint');
+    tokenState.addTokenToState('mint1', 'heatingUp');
+    expect(tokenState.heatingUp.has('mint1')).to.be.true;
+    tokenState.removeTokenFromState('mint1', 'heatingUp');
+    expect(tokenState.heatingUp.has('mint1')).to.be.false;
   });
 
   it('should handle state transitions correctly', () => {
-    // Simulate state transitions and verify consistency
-    tokenState.addTokenToState('mint', 'heatingUp');
-    tokenState.transitionTokenState('mint', 'heatingUp', 'pumping');
-    expect(tokenState.pumping).to.include('mint');
-    expect(tokenState.heatingUp).to.not.include('mint');
+    tokenState.addTokenToState('mint1', 'heatingUp');
+    tokenState.transitionTokenState('mint1', 'heatingUp', 'firstPump');
+    expect(tokenState.heatingUp.has('mint1')).to.be.false;
+    expect(tokenState.firstPump.has('mint1')).to.be.true;
   });
 
   // Add more tests for TokenState methods
