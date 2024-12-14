@@ -98,6 +98,12 @@ class WebSocketManager extends EventEmitter {
 
     // Handle token creation messages
     if (message.txType === "create" && message.mint && message.name) {
+      // Ignore tokens that are already above our heating up threshold
+      if (message.marketCapSol > config.THRESHOLDS.HEATING_UP) {
+        console.log(`Ignoring new token ${message.name} (${message.mint}) - Market cap too high: ${message.marketCapSol} SOL`);
+        return;
+      }
+      
       this.emit("newToken", message);
       this.tokenTracker.handleNewToken(message);
       // Subscribe to trades for the new token
