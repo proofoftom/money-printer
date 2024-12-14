@@ -5,6 +5,8 @@ class SafetyChecker {
     this.MIN_HOLDERS = config.MIN_HOLDERS || 25;
     this.MAX_TOP_HOLDER_CONCENTRATION =
       config.MAX_TOP_HOLDER_CONCENTRATION || 30;
+    this.MAX_ENTRY_CAP = config.MAX_ENTRY_CAP || 100000000;
+    this.DEAD = config.DEAD || 100000;
   }
 
   runSecurityChecks(token) {
@@ -47,6 +49,22 @@ class SafetyChecker {
 
   isCreatorFullyExited(token) {
     return token.hasCreatorSoldAll();
+  }
+
+  isTokenSafe(marketData) {
+    // Check if market cap is below maximum entry threshold
+    if (marketData.marketCap > this.MAX_ENTRY_CAP) {
+      console.log(`Market cap ${marketData.marketCap} exceeds maximum entry threshold of ${this.MAX_ENTRY_CAP}`);
+      return false;
+    }
+
+    // Check if market cap is above minimum (DEAD) threshold
+    if (marketData.marketCap < this.DEAD) {
+      console.log(`Market cap ${marketData.marketCap} is below minimum threshold of ${this.DEAD}`);
+      return false;
+    }
+
+    return true;
   }
 }
 

@@ -15,7 +15,7 @@ class PositionManager {
   }
 
   openPosition(mint, marketCap) {
-    const positionSize = config.POSITION.SIZE_SOL;
+    const positionSize = config.POSITION.SIZE;
     if (this.wallet.balance >= positionSize) {
       const position = {
         entryPrice: marketCap,
