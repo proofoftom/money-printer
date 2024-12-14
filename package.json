@@ -1,11 +1,13 @@
 {
   "name": "money-printer",
   "version": "1.0.0",
-  "description": "A trading bot for monitoring and managing token lifecycles.",
-  "main": "src/index.js",
+  "description": "",
+  "main": "index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "test": "mocha test/**/*.test.js"
+    "test": "mocha test/**/*.test.js",
+    "posttest": "node scripts/cleanup.js",
+    "cleanup": "node scripts/cleanup.js",
+    "start": "node src/index.js"
   },
   "keywords": [],
   "author": "",

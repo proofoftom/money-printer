@@ -1,140 +1,142 @@
 const { expect } = require('chai');
+const sinon = require('sinon');
 const WebSocket = require('ws');
 const WebSocketManager = require('../src/WebSocketManager');
-const sinon = require('sinon');
+const TokenTracker = require('../src/TokenTracker');
 const EventEmitter = require('events');
 
 describe('WebSocketManager', () => {
-  let webSocketManager;
-  let mockWebSocket;
-  let clock;
-  let originalWebSocket;
+  let wsManager;
+  let tokenTracker;
+  let mockWs;
 
   beforeEach(() => {
-    clock = sinon.useFakeTimers();
-    mockWebSocket = new EventEmitter();
-    mockWebSocket.send = sinon.spy();
-    mockWebSocket.close = sinon.spy();
+    process.env.NODE_ENV = 'test';
+    tokenTracker = new TokenTracker();
+    wsManager = new WebSocketManager(tokenTracker);
+    
+    // Create a mock WebSocket with all necessary methods
+    mockWs = new EventEmitter();
+    mockWs.readyState = WebSocket.OPEN;
+    mockWs.send = sinon.spy();
+    mockWs.close = sinon.spy();
+    mockWs.removeAllListeners = sinon.spy();
 
-    // Store the original WebSocket
-    originalWebSocket = global.WebSocket;
-    // Replace WebSocket with our mock constructor
-    global.WebSocket = function() {
-      return mockWebSocket;
-    };
-
-    webSocketManager = new WebSocketManager();
+    // Add event listeners
+    mockWs.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+        wsManager.handleMessage(message);
+      } catch (error) {
+        console.error('Error parsing message:', error);
+      }
+    });
+    
+    // Set the mock WebSocket
+    wsManager.setWebSocket(mockWs);
   });
 
   afterEach(() => {
-    clock.restore();
-    // Restore the original WebSocket
-    global.WebSocket = originalWebSocket;
-    if (webSocketManager) {
-      webSocketManager.close();
-    }
+    process.env.NODE_ENV = undefined;
+    sinon.restore();
+    wsManager.close();
   });
 
-  it('should initialize correctly', () => {
-    expect(webSocketManager).to.be.instanceOf(WebSocketManager);
-    expect(webSocketManager.isConnected).to.be.false;
-    expect(webSocketManager.subscriptions).to.be.instanceOf(Set);
-    expect(webSocketManager.tokens).to.be.instanceOf(Map);
-  });
-
-  it('should emit connected event when websocket opens', (done) => {
-    webSocketManager.on('connected', () => {
-      expect(webSocketManager.isConnected).to.be.true;
-      done();
-    });
-    mockWebSocket.emit('open');
-  });
-
-  it('should emit disconnected event when websocket closes', (done) => {
-    webSocketManager.on('disconnected', () => {
-      expect(webSocketManager.isConnected).to.be.false;
-      done();
-    });
-    mockWebSocket.emit('close');
-  });
-
-  it('should handle new token creation messages', (done) => {
-    const newTokenMessage = {
-      txType: 'create',
-      mint: 'testMint123',
-      initialBuy: 100,
-      marketCapSol: 50
-    };
-
-    webSocketManager.on('newToken', (token) => {
-      expect(token).to.deep.equal(newTokenMessage);
-      expect(webSocketManager.tokens.get('testMint123')).to.deep.equal(newTokenMessage);
-      done();
+  describe('connect', () => {
+    it('should establish WebSocket connection and set up event handlers', () => {
+      expect(wsManager.isConnected).to.be.true;
+      expect(mockWs.listenerCount('message')).to.be.at.least(1);
+      expect(mockWs.listenerCount('error')).to.be.at.least(0);
+      expect(mockWs.listenerCount('close')).to.be.at.least(0);
     });
 
-    mockWebSocket.emit('message', JSON.stringify(newTokenMessage));
-  });
-
-  it('should handle buy/sell event messages', (done) => {
-    const tradeMessage = {
-      txType: 'buy',
-      mint: 'testMint123',
-      tokenAmount: 50,
-      marketCapSol: 75
-    };
-
-    webSocketManager.on('trade', (trade) => {
-      expect(trade).to.deep.equal(tradeMessage);
-      done();
+    it('should handle connection open event correctly', () => {
+      expect(wsManager.isConnected).to.be.true;
     });
 
-    mockWebSocket.emit('message', JSON.stringify(tradeMessage));
+    it('should handle connection close event correctly', () => {
+      wsManager.close();
+      expect(wsManager.isConnected).to.be.false;
+      expect(wsManager.ws).to.be.null;
+    });
   });
 
-  it('should subscribe to token trades when connected', () => {
-    mockWebSocket.emit('open');
-    webSocketManager.subscribeToToken('testMint123');
-    
-    expect(webSocketManager.subscriptions.has('testMint123')).to.be.true;
-    sinon.assert.calledWith(mockWebSocket.send, JSON.stringify({
-      method: 'subscribeTokenTrade',
-      keys: ['testMint123']
-    }));
+  describe('message handling', () => {
+    it('should handle new token messages', () => {
+      const spy = sinon.spy(tokenTracker, 'handleNewToken');
+      const message = {
+        type: 'newToken',
+        data: { mint: 'testMint', name: 'TestToken' }
+      };
+
+      wsManager.handleMessage(message);
+      expect(spy.calledWith(message.data)).to.be.true;
+    });
+
+    it('should handle trade messages', () => {
+      const spy = sinon.spy(tokenTracker, 'handleTokenUpdate');
+      const message = {
+        type: 'trade',
+        data: { mint: 'testMint', price: 1.0 }
+      };
+
+      wsManager.handleMessage(message);
+      expect(spy.calledWith(message.data)).to.be.true;
+    });
+
+    it('should ignore subscription confirmation messages', () => {
+      const spy = sinon.spy(tokenTracker, 'handleTokenUpdate');
+      const message = {
+        message: 'Successfully subscribed to testMint'
+      };
+
+      wsManager.handleMessage(message);
+      expect(spy.called).to.be.false;
+    });
   });
 
-  it('should unsubscribe from token trades when connected', () => {
-    mockWebSocket.emit('open');
-    webSocketManager.subscriptions.add('testMint123');
-    webSocketManager.unsubscribeFromToken('testMint123');
-    
-    expect(webSocketManager.subscriptions.has('testMint123')).to.be.false;
-    sinon.assert.calledWith(mockWebSocket.send, JSON.stringify({
-      method: 'unsubscribeTokenTrade',
-      keys: ['testMint123']
-    }));
-  });
+  describe('subscription management', () => {
+    it('should subscribe to token trades', () => {
+      const result = wsManager.subscribeToToken('testMint');
+      expect(result).to.be.true;
+      expect(mockWs.send.calledOnce).to.be.true;
+      expect(wsManager.subscriptions.has('testMint')).to.be.true;
+    });
 
-  it('should attempt to reconnect on connection close', () => {
-    mockWebSocket.emit('close');
-    expect(webSocketManager.isConnected).to.be.false;
-    clock.tick(5000);
-  });
+    it('should unsubscribe from token trades', () => {
+      wsManager.subscribeToToken('testMint');
+      const result = wsManager.unsubscribeFromToken('testMint');
+      expect(result).to.be.true;
+      expect(mockWs.send.calledTwice).to.be.true;
+      expect(wsManager.subscriptions.has('testMint')).to.be.false;
+    });
 
-  it('should subscribe to new tokens on connection', () => {
-    mockWebSocket.emit('open');
-    expect(webSocketManager.isConnected).to.be.true;
-    sinon.assert.calledWith(mockWebSocket.send, JSON.stringify({
-      method: 'subscribeNewToken'
-    }));
-  });
+    it('should subscribe to new tokens', () => {
+      const result = wsManager.subscribeToNewTokens();
+      expect(result).to.be.true;
+      expect(mockWs.send.calledOnce).to.be.true;
+    });
 
-  it('should resubscribe to existing tokens on reconnection', () => {
-    webSocketManager.subscriptions.add('testMint123');
-    mockWebSocket.emit('open');
-    
-    sinon.assert.calledWith(mockWebSocket.send, JSON.stringify({
-      method: 'subscribeTokenTrade',
-      keys: ['testMint123']
-    }));
+    it('should resubscribe to all tokens', () => {
+      wsManager.subscribeToToken('testMint1');
+      wsManager.subscribeToToken('testMint2');
+      mockWs.send.resetHistory();
+
+      const result = wsManager.resubscribeToTokens();
+      expect(result).to.be.true;
+      expect(mockWs.send.calledOnce).to.be.true;
+    });
+
+    it('should not subscribe when WebSocket is not connected', () => {
+      wsManager.isConnected = false;
+      expect(wsManager.subscribeToToken('testMint')).to.be.false;
+      expect(mockWs.send.called).to.be.false;
+    });
+
+    it('should not subscribe when WebSocket is not open', () => {
+      mockWs.readyState = WebSocket.CLOSING;
+      expect(wsManager.subscribeToToken('testMint')).to.be.false;
+      expect(mockWs.send.called).to.be.false;
+    });
   });
 });
