@@ -99,3 +99,8 @@ Special case for total loss if position value is less than transaction fees:
 ## Error Handling
 
 - Insufficient balance
+
+## Suggestions for Improvement
+
+- Ensure clear separation of concerns between position management and event broadcasting.
+- Add more detailed error handling for edge cases like insufficient balance.
