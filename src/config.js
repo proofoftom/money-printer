@@ -25,59 +25,85 @@ module.exports = {
   EXIT_STRATEGIES: {
     trailingStopLoss: {
       enabled: true,
-      percentage: 30,
+      percentage: 15, // Tighter stop loss due to rapid price movements
       dynamicAdjustment: {
         enabled: true,
-        volatilityMultiplier: 1.5, // Higher volatility = wider stop loss
-        minPercentage: 20, // Never tighter than 20%
-        maxPercentage: 40  // Never wider than 40%
+        volatilityMultiplier: 2.0, // More aggressive volatility adjustment
+        minPercentage: 10, // Tighter minimum
+        maxPercentage: 30  // Still protect against major drops
       }
     },
     trailingTakeProfit: {
       enabled: true,
-      initialTrigger: 20,
-      trailPercentage: 10,
+      initialTrigger: 10, // Lower initial trigger for quicker profits
+      trailPercentage: 5,  // Tighter trailing to lock in profits
       dynamicAdjustment: {
         enabled: true,
-        volatilityMultiplier: 1.0, // Adjust trail % based on volatility
-        minPercentage: 5,  // Minimum trail percentage
-        maxPercentage: 15  // Maximum trail percentage
+        volatilityMultiplier: 1.5, // More responsive to volatility
+        minPercentage: 3,  // Very tight in low volatility
+        maxPercentage: 10  // Wider in high volatility
       }
     },
     tieredTakeProfit: {
       enabled: true,
       tiers: [
-        { percentage: 30, portion: 0.4 }, // Take 40% profit at 30% gain
-        { percentage: 50, portion: 0.4 }, // Take 40% profit at 50% gain
-        { percentage: 100, portion: 0.2 }, // Take final 20% at 100% gain
-      ],
+        { percentage: 15, portion: 0.5 },  // Take half position earlier
+        { percentage: 30, portion: 0.3 },  // Another 30% at higher profit
+        { percentage: 50, portion: 0.2 }   // Let the rest run for bigger moves
+      ]
     },
     timeBasedExit: {
       enabled: true,
-      maxDuration: 3600000, // 1 hour in milliseconds
+      maxDuration: 900000, // 15 minutes max hold time
       profitBasedExtension: {
         enabled: true,
-        threshold: 50, // Extend time if profit > 50%
+        threshold: 30, // Extend time if profit > 30%
         extensionMultiplier: 2 // Double the max duration
       },
       timedTakeProfit: {
         enabled: true,
         intervals: [
-          { time: 900000, percentage: 20 },  // 15 min: exit if profit > 20%
-          { time: 1800000, percentage: 15 }, // 30 min: exit if profit > 15%
-          { time: 3600000, percentage: 10 }  // 60 min: exit if profit > 10%
+          { time: 300000, percentage: 10 },  // 5 min: exit if profit > 10%
+          { time: 600000, percentage: 7 },   // 10 min: exit if profit > 7%
+          { time: 900000, percentage: 5 }    // 15 min: exit if profit > 5%
         ]
       }
     },
     volumeBasedExit: {
       enabled: true,
       volumeDrop: {
-        window: 300000, // 5 minutes
+        enabled: true,
+        window: 5 * 60 * 1000, // 5 minutes in milliseconds
         threshold: 50 // Exit if volume drops 50% from peak
       },
       volumeSpike: {
+        enabled: true,
+        profitThreshold: 0.5, // Only check volume spike if in 0.5% profit
+        lookbackPeriods: 12,
         threshold: 200, // Exit if volume spikes 200% above average
-        profitThreshold: 10 // Only if in profit > 10%
+        consecutiveDecline: {
+          enabled: true,
+          periods: 3,
+          minDeclinePercent: 15
+        }
+      },
+      lowVolumeExit: {
+        enabled: true,
+        duration: 15 * 60 * 1000, // 15 minutes in milliseconds
+        threshold: 30 // Exit if volume is 30% or less of peak volume
+      }
+    },
+    priceAction: {
+      enabled: true,
+      wickRejection: {
+        enabled: true,
+        minCandleSize: 0.1, // Minimum candle size of 0.1%
+        threshold: 60 // Exit if wick is 60% or more of total range
+      },
+      momentumLoss: {
+        enabled: true,
+        consecutiveSmaller: 3, // Exit after 3 consecutive smaller candles
+        minSize: 0.05 // Only consider candles larger than 0.05%
       }
     }
   },

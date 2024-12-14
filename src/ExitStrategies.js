@@ -184,16 +184,104 @@ class ExitStrategies {
     if (volumeBasedExit.volumeSpike) {
       const profitPercentage = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
       
-      // Only check volume spike if we're in sufficient profit
       if (profitPercentage >= volumeBasedExit.volumeSpike.profitThreshold) {
-        const volumes = position.volumeHistory.map(v => v.volume);
-        // Calculate average excluding the current volume
+        const volumes = position.volumeHistory
+          .slice(-volumeBasedExit.volumeSpike.lookbackPeriods)
+          .map(v => v.volume);
+        
+        // Check consecutive volume decline
+        if (volumeBasedExit.volumeSpike.consecutiveDecline?.enabled) {
+          const declinePeriods = volumeBasedExit.volumeSpike.consecutiveDecline.periods;
+          const declineThreshold = volumeBasedExit.volumeSpike.consecutiveDecline.minDeclinePercent;
+          
+          let consecutiveDeclines = 0;
+          for (let i = volumes.length - 1; i > 0; i--) {
+            const decline = ((volumes[i-1] - volumes[i]) / volumes[i-1]) * 100;
+            if (decline >= declineThreshold) {
+              consecutiveDeclines++;
+              if (consecutiveDeclines >= declinePeriods) return true;
+            } else {
+              break;
+            }
+          }
+        }
+
+        // Calculate volume spike
         const historicalVolumes = volumes.slice(0, -1);
         const averageVolume = historicalVolumes.reduce((a, b) => a + b, 0) / historicalVolumes.length;
         const currentVolume = volumes[volumes.length - 1];
         const volumeIncreasePercentage = ((currentVolume - averageVolume) / averageVolume) * 100;
 
         if (volumeIncreasePercentage >= volumeBasedExit.volumeSpike.threshold) {
+          return true;
+        }
+      }
+    }
+
+    // Check extended low volume
+    if (volumeBasedExit.lowVolumeExit?.enabled) {
+      const recentVolumes = position.volumeHistory
+        .filter(v => Date.now() - v.timestamp <= volumeBasedExit.lowVolumeExit.duration)
+        .map(v => v.volume);
+
+      if (recentVolumes.length > 0) {
+        const peakVolume = Math.max(...position.volumeHistory.map(v => v.volume));
+        const averageRecentVolume = recentVolumes.reduce((a, b) => a + b, 0) / recentVolumes.length;
+        const volumePercentage = (averageRecentVolume / peakVolume) * 100;
+
+        if (volumePercentage <= volumeBasedExit.lowVolumeExit.threshold) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  shouldPriceActionExit(position) {
+    const { priceAction } = this.config;
+    if (!priceAction?.enabled || !position.candleHistory) return false;
+
+    // Check wick rejection
+    if (priceAction.wickRejection?.enabled) {
+      const currentCandle = position.candleHistory[position.candleHistory.length - 1];
+      const candleSize = Math.abs(currentCandle.close - currentCandle.open);
+      const candleSizePercentage = (candleSize / currentCandle.open) * 100;
+
+      if (candleSizePercentage >= priceAction.wickRejection.minCandleSize) {
+        const upperWick = currentCandle.high - Math.max(currentCandle.open, currentCandle.close);
+        const lowerWick = Math.min(currentCandle.open, currentCandle.close) - currentCandle.low;
+        const totalRange = currentCandle.high - currentCandle.low;
+
+        const wickRejectionPercentage = Math.max(
+          (upperWick / totalRange) * 100,
+          (lowerWick / totalRange) * 100
+        );
+
+        if (wickRejectionPercentage >= priceAction.wickRejection.threshold) {
+          return true;
+        }
+      }
+    }
+
+    // Check momentum loss
+    if (priceAction.momentumLoss?.enabled) {
+      const recentCandles = position.candleHistory.slice(-priceAction.momentumLoss.consecutiveSmaller);
+      if (recentCandles.length >= priceAction.momentumLoss.consecutiveSmaller) {
+        let consecutiveSmaller = 0;
+        for (let i = 1; i < recentCandles.length; i++) {
+          const currentSize = Math.abs(recentCandles[i].close - recentCandles[i].open);
+          const previousSize = Math.abs(recentCandles[i-1].close - recentCandles[i-1].open);
+          const currentSizePercent = (currentSize / recentCandles[i].open) * 100;
+          
+          if (currentSize < previousSize && currentSizePercent >= priceAction.momentumLoss.minSize) {
+            consecutiveSmaller++;
+          } else {
+            break;
+          }
+        }
+
+        if (consecutiveSmaller >= priceAction.momentumLoss.consecutiveSmaller - 1) {
           return true;
         }
       }
@@ -208,7 +296,8 @@ class ExitStrategies {
       this.shouldTakeProfit(position) ||
       this.shouldTimeBasedExit(position) ||
       this.shouldTimedTakeProfit(position) ||
-      this.shouldVolumeBasedExit(position)
+      this.shouldVolumeBasedExit(position) ||
+      this.shouldPriceActionExit(position)
     );
   }
 }

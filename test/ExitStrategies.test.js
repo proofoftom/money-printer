@@ -55,12 +55,38 @@ describe('ExitStrategies', () => {
       volumeBasedExit: {
         enabled: true,
         volumeDrop: {
-          window: 300000, // 5 minutes
-          threshold: 50 // Exit if volume drops 50% from peak
+          enabled: true,
+          window: 300000,
+          threshold: 50
         },
         volumeSpike: {
-          threshold: 200, // Exit if volume spikes 200% above average
-          profitThreshold: 10 // Only if in profit > 10%
+          enabled: true,
+          threshold: 200,
+          profitThreshold: 0.5,
+          lookbackPeriods: 12,
+          consecutiveDecline: {
+            enabled: true,
+            periods: 3,
+            minDeclinePercent: 15
+          }
+        },
+        lowVolumeExit: {
+          enabled: true,
+          duration: 900000,
+          threshold: 30
+        }
+      },
+      priceAction: {
+        enabled: true,
+        wickRejection: {
+          enabled: true,
+          minCandleSize: 0.1,
+          threshold: 60
+        },
+        momentumLoss: {
+          enabled: true,
+          consecutiveSmaller: 3,
+          minSize: 0.05
         }
       }
     });
@@ -369,6 +395,116 @@ describe('ExitStrategies', () => {
       
       const portion = exitStrategies.calculateTierExit(position);
       expect(portion).to.equal(0.2);
+    });
+  });
+
+  describe('Price Action Exits', () => {
+    it('should exit on significant wick rejection', () => {
+      const position = {
+        entryPrice: 100,
+        currentPrice: 105,
+        candleHistory: [{
+          open: 100,
+          high: 120,
+          low: 95,
+          close: 105
+        }]
+      };
+      
+      expect(exitStrategies.shouldPriceActionExit(position)).to.be.true;
+    });
+
+    it('should not exit on small wick', () => {
+      const position = {
+        entryPrice: 100,
+        currentPrice: 105,
+        candleHistory: [{
+          open: 100,
+          high: 106,
+          low: 99,
+          close: 105
+        }]
+      };
+      
+      expect(exitStrategies.shouldPriceActionExit(position)).to.be.false;
+    });
+
+    it('should exit on momentum loss', () => {
+      const position = {
+        entryPrice: 100,
+        currentPrice: 110,
+        candleHistory: [
+          { open: 100, close: 110, high: 112, low: 99 },  // Large candle
+          { open: 110, close: 115, high: 116, low: 109 }, // Medium candle
+          { open: 115, close: 117, high: 118, low: 114 }, // Small candle
+          { open: 117, close: 118, high: 119, low: 116 }  // Smaller candle
+        ]
+      };
+      
+      expect(exitStrategies.shouldPriceActionExit(position)).to.be.true;
+    });
+
+    it('should not exit when momentum is strong', () => {
+      const position = {
+        entryPrice: 100,
+        currentPrice: 110,
+        candleHistory: [
+          { open: 100, close: 105, high: 106, low: 99 },
+          { open: 105, close: 110, high: 111, low: 104 },
+          { open: 110, close: 115, high: 116, low: 109 }
+        ]
+      };
+      
+      expect(exitStrategies.shouldPriceActionExit(position)).to.be.false;
+    });
+  });
+
+  describe('Enhanced Volume-Based Exits', () => {
+    it('should exit on consecutive volume decline', () => {
+      const position = {
+        entryPrice: 100,
+        currentPrice: 110,
+        volumeHistory: [
+          { timestamp: Date.now() - 300000, volume: 1000000 },
+          { timestamp: Date.now() - 240000, volume: 800000 },
+          { timestamp: Date.now() - 180000, volume: 600000 },
+          { timestamp: Date.now() - 120000, volume: 450000 },
+          { timestamp: Date.now() - 60000, volume: 300000 }
+        ]
+      };
+      
+      expect(exitStrategies.shouldVolumeBasedExit(position)).to.be.true;
+    });
+
+    it('should exit on extended low volume', () => {
+      const position = {
+        entryPrice: 100,
+        currentPrice: 110,
+        volumeHistory: [
+          { timestamp: Date.now() - 900000, volume: 1000000 }, // Peak volume
+          { timestamp: Date.now() - 600000, volume: 250000 },
+          { timestamp: Date.now() - 300000, volume: 200000 },
+          { timestamp: Date.now(), volume: 150000 }
+        ]
+      };
+      
+      expect(exitStrategies.shouldVolumeBasedExit(position)).to.be.true;
+    });
+
+    it('should not exit when volume is healthy', () => {
+      const position = {
+        entryPrice: 100,
+        currentPrice: 110,
+        volumeHistory: [
+          { timestamp: Date.now() - 300000, volume: 1000000 },
+          { timestamp: Date.now() - 240000, volume: 950000 },
+          { timestamp: Date.now() - 180000, volume: 1100000 },
+          { timestamp: Date.now() - 120000, volume: 900000 },
+          { timestamp: Date.now() - 60000, volume: 1050000 }
+        ]
+      };
+      
+      expect(exitStrategies.shouldVolumeBasedExit(position)).to.be.false;
     });
   });
 });
