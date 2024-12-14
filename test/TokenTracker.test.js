@@ -18,13 +18,19 @@ describe("TokenTracker", () => {
 
     positionManager = {
       openPosition: sinon.stub().returns(true),
-      closePosition: sinon.stub().returns(0.4),
+      closePosition: sinon.stub().returns({ profitLoss: 0.4, portion: 1.0 }),
       getPosition: sinon.stub().returns({
         entryPrice: 10000,
         size: 0.1,
-        highestPrice: 15000
+        highestPrice: 15000,
+        currentPrice: 15000
       }),
-      updateHighestPrice: sinon.stub()
+      updatePosition: sinon.stub().returns({
+        profitLoss: 0.4,
+        portion: 0.4,
+        entryPrice: 10000,
+        exitPrice: 15000
+      })
     };
 
     priceManager = new MockPriceManager();
@@ -82,24 +88,41 @@ describe("TokenTracker", () => {
       const token = tokenTracker.handleNewToken(tokenData);
       token.setState("inPosition");
       
+      // Mock a partial exit (take profit)
+      positionManager.updatePosition.returns({
+        profitLoss: 0.4,
+        portion: 0.4,
+        entryPrice: 10000,
+        exitPrice: 15000
+      });
+      
       await tokenTracker.handleTokenUpdate({
         ...tokenData,
         marketCapSol: 150
       });
 
-      expect(positionManager.closePosition.called).to.be.true;
+      expect(positionManager.updatePosition.called).to.be.true;
+      expect(token.state).to.equal("inPosition"); // Still in position after partial exit
     });
 
     it("should handle stop loss", async () => {
       const token = tokenTracker.handleNewToken(tokenData);
       token.setState("inPosition");
       
+      // Mock a full exit (stop loss)
+      positionManager.updatePosition.returns({
+        profitLoss: -0.2,
+        portion: 1.0,
+        entryPrice: 10000,
+        exitPrice: 8000
+      });
+      
       await tokenTracker.handleTokenUpdate({
         ...tokenData,
         marketCapSol: 70
       });
 
-      expect(positionManager.closePosition.called).to.be.true;
+      expect(positionManager.updatePosition.called).to.be.true;
       expect(token.state).to.equal("closed");
     });
   });

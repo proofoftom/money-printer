@@ -19,18 +19,27 @@ module.exports = {
     DEAD: 7000, // Market cap in SOL to consider token dead
     PUMP_DRAWDOWN: 30, // Percentage drawdown to enter drawdown phase
     RECOVERY: 10, // Percentage recovery from drawdown low to consider recovery
-    TRAIL_DRAWDOWN: 30, // Percentage drawdown from peak to trigger trailing stop
   },
 
-  // Take profit configuration
-  TAKE_PROFIT: {
-    ENABLED: true,
-    TRAILING: true, // Use trailing take profit
-    TIERS: [
-      { percentage: 30, portion: 0.4 }, // Take 40% profit at 30% gain
-      { percentage: 50, portion: 0.4 }, // Take 40% profit at 50% gain
-      { percentage: 100, portion: 0.2 }, // Take final 20% at 100% gain
-    ],
+  // Exit Strategies Configuration
+  EXIT_STRATEGIES: {
+    trailingStopLoss: {
+      enabled: true,
+      percentage: 30, // 30% drawdown from peak triggers stop loss
+    },
+    trailingTakeProfit: {
+      enabled: true,
+      initialTrigger: 20, // Start trailing after 20% profit
+      trailPercentage: 10, // Trail 10% behind highest price
+    },
+    tieredTakeProfit: {
+      enabled: true,
+      tiers: [
+        { percentage: 30, portion: 0.4 }, // Take 40% profit at 30% gain
+        { percentage: 50, portion: 0.4 }, // Take 40% profit at 50% gain
+        { percentage: 100, portion: 0.2 }, // Take final 20% at 100% gain
+      ],
+    }
   },
 
   // Safety checks

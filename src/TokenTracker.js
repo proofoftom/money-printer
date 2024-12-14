@@ -75,31 +75,17 @@ class TokenTracker extends EventEmitter {
         break;
 
       case "inPosition":
-        const position = this.positionManager.getPosition(token.mint);
-        if (position) {
-          this.positionManager.updateHighestPrice(token.mint, token.marketCapSol);
-
-          // Check take profit tiers
-          if (config.TAKE_PROFIT.ENABLED) {
-            const profitPercentage = ((token.marketCapSol - position.entryPrice) / position.entryPrice) * 100;
-            for (const tier of config.TAKE_PROFIT.TIERS) {
-              if (profitPercentage >= tier.percentage) {
-                this.positionManager.closePosition(token.mint, tier.portion);
-                this.emit("takeProfitExecuted", {
-                  token,
-                  percentage: tier.percentage,
-                  portion: tier.portion,
-                });
-              }
-            }
-          }
-
-          // Check stop loss
-          const drawdown = ((position.highestPrice - token.marketCapSol) / position.highestPrice) * 100;
-          if (drawdown >= config.THRESHOLDS.TRAIL_DRAWDOWN) {
-            this.positionManager.closePosition(token.mint);
+        const result = this.positionManager.updatePosition(token.mint, token.marketCapSol);
+        if (result) {
+          if (result.portion === 1.0) {
             token.setState("closed");
-            this.emit("positionClosed", { token, reason: "stopLoss" });
+            this.emit("positionClosed", { token, reason: "exit_strategy" });
+          } else {
+            this.emit("takeProfitExecuted", {
+              token,
+              percentage: ((token.marketCapSol - result.entryPrice) / result.entryPrice) * 100,
+              portion: result.portion
+            });
           }
         }
         break;

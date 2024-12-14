@@ -41,7 +41,6 @@ tokenTracker.on("tokenAdded", (token) => {
 tokenTracker.on("tokenHeatingUp", (token) => {
   console.log(`Token ${token.symbol} (${token.mint}) is heating up!`);
   console.log(`Market cap: ${token.marketCapSol} SOL`);
-  // console.log(`Bonding curve liquidity: ${token.vSolInBondingCurve} SOL`);
 });
 
 tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
