@@ -2,11 +2,13 @@ const { expect } = require("chai");
 const sinon = require("sinon");
 const TokenTracker = require("../src/TokenTracker");
 const Token = require("../src/Token");
+const MockPriceManager = require("./mocks/mockPriceManager");
 
 describe("TokenTracker", () => {
   let tokenTracker;
   let safetyChecker;
   let positionManager;
+  let priceManager;
   let tokenData;
 
   beforeEach(() => {
@@ -25,6 +27,8 @@ describe("TokenTracker", () => {
       updateHighestPrice: sinon.stub()
     };
 
+    priceManager = new MockPriceManager();
+
     tokenData = {
       mint: "testMint123",
       name: "Test Token",
@@ -34,10 +38,10 @@ describe("TokenTracker", () => {
       initialBuy: 1000000,
       vTokensInBondingCurve: 1000000,
       vSolInBondingCurve: 10,
-      marketCapSol: 10000,
+      marketCapSol: 100,
     };
 
-    tokenTracker = new TokenTracker(safetyChecker, positionManager);
+    tokenTracker = new TokenTracker(safetyChecker, positionManager, priceManager);
   });
 
   afterEach(() => {
@@ -60,11 +64,11 @@ describe("TokenTracker", () => {
     it("should manage positions based on token state", async () => {
       const token = tokenTracker.handleNewToken(tokenData);
       token.setState("drawdown");
-      token.drawdownLow = 8000;
+      token.drawdownLow = 80;
       
       await tokenTracker.handleTokenUpdate({
         ...tokenData,
-        marketCapSol: 9000
+        marketCapSol: 90
       });
 
       expect(safetyChecker.runSecurityChecks.called).to.be.true;
@@ -80,7 +84,7 @@ describe("TokenTracker", () => {
       
       await tokenTracker.handleTokenUpdate({
         ...tokenData,
-        marketCapSol: 15000
+        marketCapSol: 150
       });
 
       expect(positionManager.closePosition.called).to.be.true;
@@ -92,11 +96,11 @@ describe("TokenTracker", () => {
       
       await tokenTracker.handleTokenUpdate({
         ...tokenData,
-        marketCapSol: 7000
+        marketCapSol: 70
       });
 
       expect(positionManager.closePosition.called).to.be.true;
-      expect(token.state).to.equal("dead");
+      expect(token.state).to.equal("closed");
     });
   });
 
