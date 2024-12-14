@@ -29,6 +29,9 @@ class PositionManager {
     const position = this.positions.get(mint);
     if (!position) return null;
 
+    // If no exitPrice provided, use current market price
+    exitPrice = exitPrice || position.highestPrice;
+
     const priceDiff = exitPrice - position.entryPrice;
     const profitLoss = (priceDiff / position.entryPrice) * position.size;
     
