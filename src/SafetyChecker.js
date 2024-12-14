@@ -4,12 +4,8 @@ class SafetyChecker {
   constructor(customConfig = {}) {
     this.config = {
       THRESHOLDS: {
-        MIN_HOLDERS: customConfig.THRESHOLDS?.MIN_HOLDERS || config.THRESHOLDS.MIN_HOLDERS || 25,
-        MAX_TOP_HOLDER_CONCENTRATION: customConfig.THRESHOLDS?.MAX_TOP_HOLDER_CONCENTRATION || config.THRESHOLDS.MAX_TOP_HOLDER_CONCENTRATION || 30,
-        MAX_ENTRY_CAP: customConfig.THRESHOLDS?.MAX_ENTRY_CAP || config.THRESHOLDS.MAX_ENTRY_CAP || 250,
-        DEAD: customConfig.THRESHOLDS?.DEAD || config.THRESHOLDS.DEAD || 5,
-        MAX_INITIAL_PRICE_MULT: customConfig.THRESHOLDS?.MAX_INITIAL_PRICE_MULT || config.THRESHOLDS.MAX_INITIAL_PRICE_MULT || 3,
-        MIN_TIME_SINCE_CREATION: customConfig.THRESHOLDS?.MIN_TIME_SINCE_CREATION || config.THRESHOLDS.MIN_TIME_SINCE_CREATION || 30,
+        ...config.THRESHOLDS,
+        ...customConfig.THRESHOLDS
       }
     };
   }
@@ -55,29 +51,129 @@ class SafetyChecker {
   }
 
   isTokenSafe(marketData) {
-    // Check if market cap is below maximum entry threshold
+    // Market Cap Checks
+    if (!this.checkMarketCap(marketData)) return false;
+
+    // Time and Age Checks
+    if (!this.checkTimeAndAge(marketData)) return false;
+
+    // Price Action Checks
+    if (!this.checkPriceAction(marketData)) return false;
+
+    // Trading Pattern Checks
+    if (!this.checkTradingPatterns(marketData)) return false;
+
+    // Holder Distribution Checks
+    if (!this.checkHolderDistribution(marketData)) return false;
+
+    // Volume Pattern Checks
+    if (!this.checkVolumePatterns(marketData)) return false;
+
+    return true;
+  }
+
+  checkMarketCap(marketData) {
     if (marketData.marketCap > this.config.THRESHOLDS.MAX_ENTRY_CAP) {
       console.log(`Market cap ${marketData.marketCap} exceeds maximum entry threshold of ${this.config.THRESHOLDS.MAX_ENTRY_CAP}`);
       return false;
     }
 
-    // Check if market cap is above minimum (DEAD) threshold
     if (marketData.marketCap < this.config.THRESHOLDS.DEAD) {
       console.log(`Market cap ${marketData.marketCap} is below minimum threshold of ${this.config.THRESHOLDS.DEAD}`);
       return false;
     }
 
-    // Check if token is too new (avoid frontrunning bots)
-    const timeSinceCreation = (Date.now() - marketData.creationTime) / 1000; // convert to seconds
+    return true;
+  }
+
+  checkTimeAndAge(marketData) {
+    const timeSinceCreation = (Date.now() - marketData.creationTime) / 1000;
     if (timeSinceCreation < this.config.THRESHOLDS.MIN_TIME_SINCE_CREATION) {
       console.log(`Token is too new. Only ${timeSinceCreation.toFixed(0)} seconds old, minimum required is ${this.config.THRESHOLDS.MIN_TIME_SINCE_CREATION} seconds`);
       return false;
     }
 
-    // Check if price has pumped too much from initial
+    return true;
+  }
+
+  checkPriceAction(marketData) {
+    // Check initial price pump
     const priceMultiplier = marketData.currentPrice / marketData.initialPrice;
     if (priceMultiplier > this.config.THRESHOLDS.MAX_INITIAL_PRICE_MULT) {
       console.log(`Price has pumped ${priceMultiplier.toFixed(2)}x from initial, maximum allowed is ${this.config.THRESHOLDS.MAX_INITIAL_PRICE_MULT}x`);
+      return false;
+    }
+
+    // Check price volatility
+    if (marketData.priceVolatility > this.config.THRESHOLDS.MAX_PRICE_VOLATILITY) {
+      console.log(`Price volatility ${marketData.priceVolatility.toFixed(2)}% exceeds maximum of ${this.config.THRESHOLDS.MAX_PRICE_VOLATILITY}%`);
+      return false;
+    }
+
+    return true;
+  }
+
+  checkTradingPatterns(marketData) {
+    // Check unique buyers
+    if (marketData.uniqueBuyers < this.config.THRESHOLDS.MIN_UNIQUE_BUYERS) {
+      console.log(`Only ${marketData.uniqueBuyers} unique buyers, minimum required is ${this.config.THRESHOLDS.MIN_UNIQUE_BUYERS}`);
+      return false;
+    }
+
+    // Check average trade size
+    if (marketData.avgTradeSize > this.config.THRESHOLDS.MAX_AVG_TRADE_SIZE) {
+      console.log(`Average trade size ${marketData.avgTradeSize.toFixed(2)} SOL exceeds maximum of ${this.config.THRESHOLDS.MAX_AVG_TRADE_SIZE} SOL`);
+      return false;
+    }
+
+    // Check buy/sell ratio
+    const buySellRatio = marketData.buyCount / (marketData.buyCount + marketData.sellCount);
+    if (buySellRatio < this.config.THRESHOLDS.MIN_BUY_SELL_RATIO) {
+      console.log(`Buy/Sell ratio ${(buySellRatio * 100).toFixed(2)}% below minimum of ${(this.config.THRESHOLDS.MIN_BUY_SELL_RATIO * 100)}%`);
+      return false;
+    }
+
+    // Check single wallet volume
+    if (marketData.maxWalletVolumePercentage > this.config.THRESHOLDS.MAX_SINGLE_WALLET_VOLUME) {
+      console.log(`Single wallet accounts for ${marketData.maxWalletVolumePercentage.toFixed(2)}% of volume, maximum allowed is ${this.config.THRESHOLDS.MAX_SINGLE_WALLET_VOLUME}%`);
+      return false;
+    }
+
+    return true;
+  }
+
+  checkHolderDistribution(marketData) {
+    // Check minimum holders
+    if (marketData.holderCount < this.config.THRESHOLDS.MIN_HOLDERS) {
+      console.log(`Only ${marketData.holderCount} holders, minimum required is ${this.config.THRESHOLDS.MIN_HOLDERS}`);
+      return false;
+    }
+
+    // Check holder concentration
+    if (marketData.topHolderConcentration > this.config.THRESHOLDS.MAX_TOP_HOLDER_CONCENTRATION) {
+      console.log(`Top holders control ${marketData.topHolderConcentration.toFixed(2)}% of supply, maximum allowed is ${this.config.THRESHOLDS.MAX_TOP_HOLDER_CONCENTRATION}%`);
+      return false;
+    }
+
+    // Check holder wallet age
+    if (marketData.minHolderWalletAge < this.config.THRESHOLDS.MIN_HOLDER_WALLET_AGE) {
+      console.log(`Newest holder wallet is ${marketData.minHolderWalletAge} days old, minimum required is ${this.config.THRESHOLDS.MIN_HOLDER_WALLET_AGE} days`);
+      return false;
+    }
+
+    return true;
+  }
+
+  checkVolumePatterns(marketData) {
+    // Check volume-price correlation
+    if (marketData.volumePriceCorrelation < this.config.THRESHOLDS.MIN_VOLUME_PRICE_CORRELATION) {
+      console.log(`Volume-price correlation ${marketData.volumePriceCorrelation.toFixed(2)} below minimum of ${this.config.THRESHOLDS.MIN_VOLUME_PRICE_CORRELATION}`);
+      return false;
+    }
+
+    // Check for wash trading
+    if (marketData.suspectedWashTradePercentage > this.config.THRESHOLDS.MAX_WASH_TRADE_PERCENTAGE) {
+      console.log(`${marketData.suspectedWashTradePercentage.toFixed(2)}% of trades suspected as wash trades, maximum allowed is ${this.config.THRESHOLDS.MAX_WASH_TRADE_PERCENTAGE}%`);
       return false;
     }
 

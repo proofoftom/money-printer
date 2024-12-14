@@ -6,16 +6,31 @@ module.exports = {
 
   // Market thresholds
   THRESHOLDS: {
+    // Market Cap Thresholds
     MAX_ENTRY_CAP: 250, // Maximum market cap in SOL for entry
-    DEAD: 5, // Minimum market cap in SOL to consider token dead
-    FIRST_PUMP: 14000, // Market cap threshold for first pump in SOL
-    PUMP_DRAWDOWN: 20, // Maximum drawdown percentage allowed
-    MAX_INITIAL_PRICE_MULT: 3, // Maximum multiplier from initial price for entry
+    DEAD: 5, // Minimum market cap in SOL
+
+    // Time and Age Thresholds
     MIN_TIME_SINCE_CREATION: 30, // Minimum seconds since token creation
-    MIN_LIQUIDITY: 2, // Minimum liquidity in SOL
-    MIN_LIQUIDITY_RATIO: 0.05, // Minimum liquidity to market cap ratio (5%)
-    MAX_LIQUIDITY_RATIO: 0.95, // Maximum liquidity to market cap ratio (95%)
-    RECOVERY: 10, // Percentage recovery from drawdown low to consider recovery
+    MIN_HOLDER_WALLET_AGE: 7, // Minimum age of holder wallets in days
+
+    // Holder Distribution Thresholds
+    MIN_HOLDERS: 25, // Minimum number of unique holders
+    MAX_TOP_HOLDER_CONCENTRATION: 30, // Maximum percentage of supply held by top holders
+    
+    // Price Action Thresholds
+    MAX_INITIAL_PRICE_MULT: 3, // Maximum multiplier from initial price
+    MAX_PRICE_VOLATILITY: 50, // Maximum price volatility percentage
+
+    // Trading Pattern Thresholds
+    MIN_UNIQUE_BUYERS: 15, // Minimum number of unique buyers
+    MAX_AVG_TRADE_SIZE: 5, // Maximum average trade size in SOL
+    MIN_BUY_SELL_RATIO: 0.6, // Minimum ratio of buys to total trades
+    MAX_SINGLE_WALLET_VOLUME: 25, // Maximum percentage of volume from a single wallet
+
+    // Volume Pattern Thresholds
+    MIN_VOLUME_PRICE_CORRELATION: 0.5, // Minimum correlation between volume and price
+    MAX_WASH_TRADE_PERCENTAGE: 20, // Maximum percentage of suspected wash trades
   },
 
   // Position sizing
