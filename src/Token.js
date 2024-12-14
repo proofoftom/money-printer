@@ -12,6 +12,7 @@ class Token extends EventEmitter {
     // Creator information
     this.creator = tokenData.traderPublicKey;
     this.initialBuy = tokenData.initialBuy;
+    this.creatorInitialHoldings = tokenData.initialBuy || 0;
 
     // Market data
     this.vTokensInBondingCurve = tokenData.vTokensInBondingCurve;
@@ -28,6 +29,35 @@ class Token extends EventEmitter {
     this.createdAt = Date.now();
     this.signature = tokenData.signature;
     this.bondingCurveKey = tokenData.bondingCurveKey;
+
+    // Holder tracking
+    this.holders = new Map();
+    if (tokenData.traderPublicKey) {
+      // If newTokenBalance is provided, use that
+      if (tokenData.newTokenBalance !== undefined) {
+        this.updateHolder(tokenData.traderPublicKey, tokenData.newTokenBalance);
+      }
+      // Otherwise use initialBuy amount
+      else if (tokenData.initialBuy) {
+        this.updateHolder(tokenData.traderPublicKey, tokenData.initialBuy);
+      }
+    }
+  }
+
+  updateHolder(publicKey, balance) {
+    if (balance > 0) {
+      this.holders.set(publicKey, balance);
+    } else {
+      this.holders.delete(publicKey);
+    }
+  }
+
+  getHolderCount() {
+    return this.holders.size;
+  }
+
+  getTotalTokensHeld() {
+    return Array.from(this.holders.values()).reduce((sum, balance) => sum + balance, 0);
   }
 
   update(tradeData) {
@@ -35,6 +65,11 @@ class Token extends EventEmitter {
     this.vTokensInBondingCurve = tradeData.vTokensInBondingCurve;
     this.vSolInBondingCurve = tradeData.vSolInBondingCurve;
     this.marketCapSol = tradeData.marketCapSol;
+    
+    // Update holder data if available
+    if (tradeData.traderPublicKey && tradeData.newTokenBalance !== undefined) {
+      this.updateHolder(tradeData.traderPublicKey, tradeData.newTokenBalance);
+    }
     
     // Update tracking metrics
     if (this.marketCapSol > this.highestMarketCap) {
@@ -81,6 +116,20 @@ class Token extends EventEmitter {
 
   isDead(threshold) {
     return this.marketCapSol <= threshold;
+  }
+
+  getCreatorHoldings() {
+    return this.holders.get(this.creator) || 0;
+  }
+
+  getCreatorSellPercentage() {
+    if (!this.creatorInitialHoldings) return 0;
+    const currentHoldings = this.getCreatorHoldings();
+    return ((this.creatorInitialHoldings - currentHoldings) / this.creatorInitialHoldings) * 100;
+  }
+
+  hasCreatorSoldAll() {
+    return this.getCreatorHoldings() === 0;
   }
 }
 

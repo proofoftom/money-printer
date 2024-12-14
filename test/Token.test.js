@@ -105,4 +105,137 @@ describe("Token", () => {
       expect(token.isDead(3)).to.be.false;
     });
   });
+
+  describe("holder tracking", () => {
+    it("should initialize with creator as holder when newTokenBalance provided", () => {
+      const token = new Token({
+        ...tokenData,
+        traderPublicKey: "creator123",
+        newTokenBalance: 500
+      });
+      expect(token.getHolderCount()).to.equal(1);
+      expect(token.getTotalTokensHeld()).to.equal(500);
+    });
+
+    it("should initialize with creator as holder on initialBuy", () => {
+      const token = new Token({
+        ...tokenData,
+        traderPublicKey: "creator123",
+        initialBuy: 60735849.056603,
+        newTokenBalance: undefined
+      });
+      expect(token.getHolderCount()).to.equal(1);
+      expect(token.getTotalTokensHeld()).to.equal(60735849.056603);
+    });
+
+    it("should not initialize creator as holder without initialBuy or newTokenBalance", () => {
+      const token = new Token({
+        ...tokenData,
+        traderPublicKey: "creator123",
+        initialBuy: false,
+        newTokenBalance: undefined
+      });
+      expect(token.getHolderCount()).to.equal(0);
+      expect(token.getTotalTokensHeld()).to.equal(0);
+    });
+
+    let token;
+    const tokenData = {
+      mint: "testMint",
+      name: "Test Token",
+      symbol: "TEST",
+      uri: "testUri",
+      traderPublicKey: "creator123",
+      initialBuy: true,
+      vTokensInBondingCurve: 1000,
+      vSolInBondingCurve: 10,
+      marketCapSol: 100,
+      signature: "sig123",
+      bondingCurveKey: "curve123",
+      newTokenBalance: 500
+    };
+
+    beforeEach(() => {
+      token = new Token(tokenData);
+    });
+
+    it("should initialize with creator as holder", () => {
+      expect(token.getHolderCount()).to.equal(1);
+      expect(token.getTotalTokensHeld()).to.equal(500);
+    });
+
+    it("should update holder balances", () => {
+      token.update({
+        traderPublicKey: "holder456",
+        newTokenBalance: 200,
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+
+      expect(token.getHolderCount()).to.equal(2);
+      expect(token.getTotalTokensHeld()).to.equal(700);
+    });
+
+    it("should remove holders with zero balance", () => {
+      token.update({
+        traderPublicKey: "creator123",
+        newTokenBalance: 0,
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+
+      expect(token.getHolderCount()).to.equal(0);
+      expect(token.getTotalTokensHeld()).to.equal(0);
+    });
+  });
+
+  describe("creator holdings tracking", () => {
+    let token;
+    const initialBuyAmount = 60735849.056603;
+
+    beforeEach(() => {
+      token = new Token({
+        ...tokenData,
+        traderPublicKey: "creator123",
+        initialBuy: initialBuyAmount
+      });
+    });
+
+    it("should track creator's initial holdings", () => {
+      expect(token.getCreatorHoldings()).to.equal(initialBuyAmount);
+      expect(token.creatorInitialHoldings).to.equal(initialBuyAmount);
+      expect(token.hasCreatorSoldAll()).to.be.false;
+      expect(token.getCreatorSellPercentage()).to.equal(0);
+    });
+
+    it("should track creator's selling activity", () => {
+      // Creator sells half their tokens
+      token.update({
+        traderPublicKey: "creator123",
+        newTokenBalance: initialBuyAmount / 2,
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+
+      expect(token.getCreatorHoldings()).to.equal(initialBuyAmount / 2);
+      expect(token.hasCreatorSoldAll()).to.be.false;
+      expect(token.getCreatorSellPercentage()).to.equal(50);
+
+      // Creator sells all tokens
+      token.update({
+        traderPublicKey: "creator123",
+        newTokenBalance: 0,
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      });
+
+      expect(token.getCreatorHoldings()).to.equal(0);
+      expect(token.hasCreatorSoldAll()).to.be.true;
+      expect(token.getCreatorSellPercentage()).to.equal(100);
+    });
+  });
 });
