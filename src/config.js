@@ -51,6 +51,34 @@ module.exports = {
         { percentage: 50, portion: 0.4 }, // Take 40% profit at 50% gain
         { percentage: 100, portion: 0.2 }, // Take final 20% at 100% gain
       ],
+    },
+    timeBasedExit: {
+      enabled: true,
+      maxDuration: 3600000, // 1 hour in milliseconds
+      profitBasedExtension: {
+        enabled: true,
+        threshold: 50, // Extend time if profit > 50%
+        extensionMultiplier: 2 // Double the max duration
+      },
+      timedTakeProfit: {
+        enabled: true,
+        intervals: [
+          { time: 900000, percentage: 20 },  // 15 min: exit if profit > 20%
+          { time: 1800000, percentage: 15 }, // 30 min: exit if profit > 15%
+          { time: 3600000, percentage: 10 }  // 60 min: exit if profit > 10%
+        ]
+      }
+    },
+    volumeBasedExit: {
+      enabled: true,
+      volumeDrop: {
+        window: 300000, // 5 minutes
+        threshold: 50 // Exit if volume drops 50% from peak
+      },
+      volumeSpike: {
+        threshold: 200, // Exit if volume spikes 200% above average
+        profitThreshold: 10 // Only if in profit > 10%
+      }
     }
   },
 

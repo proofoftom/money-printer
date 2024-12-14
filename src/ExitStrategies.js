@@ -120,6 +120,97 @@ class ExitStrategies {
     
     return nextTier.portion;
   }
+
+  shouldTimeBasedExit(position) {
+    const { timeBasedExit } = this.config;
+    if (!timeBasedExit.enabled) return false;
+
+    const currentTime = Date.now();
+    const positionDuration = currentTime - position.entryTime;
+    
+    // Calculate current profit percentage
+    const profitPercentage = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    
+    // Check if we should extend the duration based on profit
+    let maxDuration = timeBasedExit.maxDuration;
+    if (timeBasedExit.profitBasedExtension?.enabled && 
+        profitPercentage >= timeBasedExit.profitBasedExtension.threshold) {
+      maxDuration *= timeBasedExit.profitBasedExtension.extensionMultiplier;
+    }
+    
+    return positionDuration >= maxDuration;
+  }
+
+  shouldTimedTakeProfit(position) {
+    const { timeBasedExit } = this.config;
+    if (!timeBasedExit.enabled || !timeBasedExit.timedTakeProfit?.enabled) return false;
+
+    const currentTime = Date.now();
+    const positionDuration = currentTime - position.entryTime;
+    const profitPercentage = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
+
+    // Find the appropriate interval based on position duration
+    const interval = timeBasedExit.timedTakeProfit.intervals
+      .filter(i => positionDuration >= i.time)
+      .sort((a, b) => b.time - a.time)[0];
+
+    if (!interval) return false;
+
+    return profitPercentage >= interval.percentage;
+  }
+
+  shouldVolumeBasedExit(position) {
+    const { volumeBasedExit } = this.config;
+    if (!volumeBasedExit.enabled || !position.volumeHistory) return false;
+
+    // Check volume drop
+    if (volumeBasedExit.volumeDrop) {
+      const recentVolumes = position.volumeHistory
+        .filter(v => Date.now() - v.timestamp <= volumeBasedExit.volumeDrop.window)
+        .map(v => v.volume);
+
+      if (recentVolumes.length >= 2) {
+        const peakVolume = Math.max(...recentVolumes);
+        const currentVolume = recentVolumes[recentVolumes.length - 1];
+        const volumeDropPercentage = ((peakVolume - currentVolume) / peakVolume) * 100;
+
+        if (volumeDropPercentage >= volumeBasedExit.volumeDrop.threshold) {
+          return true;
+        }
+      }
+    }
+
+    // Check volume spike
+    if (volumeBasedExit.volumeSpike) {
+      const profitPercentage = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
+      
+      // Only check volume spike if we're in sufficient profit
+      if (profitPercentage >= volumeBasedExit.volumeSpike.profitThreshold) {
+        const volumes = position.volumeHistory.map(v => v.volume);
+        // Calculate average excluding the current volume
+        const historicalVolumes = volumes.slice(0, -1);
+        const averageVolume = historicalVolumes.reduce((a, b) => a + b, 0) / historicalVolumes.length;
+        const currentVolume = volumes[volumes.length - 1];
+        const volumeIncreasePercentage = ((currentVolume - averageVolume) / averageVolume) * 100;
+
+        if (volumeIncreasePercentage >= volumeBasedExit.volumeSpike.threshold) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  shouldExit(position) {
+    return (
+      this.shouldStopLoss(position) ||
+      this.shouldTakeProfit(position) ||
+      this.shouldTimeBasedExit(position) ||
+      this.shouldTimedTakeProfit(position) ||
+      this.shouldVolumeBasedExit(position)
+    );
+  }
 }
 
 module.exports = ExitStrategies;
