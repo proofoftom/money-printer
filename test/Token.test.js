@@ -18,7 +18,7 @@ describe("Token", () => {
       vSolInBondingCurve: 10,
       marketCapSol: 10,
       signature: "sig123",
-      bondingCurveKey: "curve123"
+      bondingCurveKey: "curve123",
     };
     token = new Token(tokenData);
   });
@@ -44,17 +44,33 @@ describe("Token", () => {
     });
 
     it("should track highest market cap", () => {
-      token.update({ marketCapSol: 15, vTokensInBondingCurve: 1000000, vSolInBondingCurve: 15 });
+      token.update({
+        marketCapSol: 15,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 15,
+      });
       expect(token.highestMarketCap).to.equal(15);
-      token.update({ marketCapSol: 12, vTokensInBondingCurve: 1000000, vSolInBondingCurve: 12 });
+      token.update({
+        marketCapSol: 12,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 12,
+      });
       expect(token.highestMarketCap).to.equal(15);
     });
 
     it("should track drawdown low when in drawdown state", () => {
       token.setState("drawdown");
-      token.update({ marketCapSol: 8, vTokensInBondingCurve: 1000000, vSolInBondingCurve: 8 });
+      token.update({
+        marketCapSol: 8,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 8,
+      });
       expect(token.drawdownLow).to.equal(8);
-      token.update({ marketCapSol: 6, vTokensInBondingCurve: 1000000, vSolInBondingCurve: 6 });
+      token.update({
+        marketCapSol: 6,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 6,
+      });
       expect(token.drawdownLow).to.equal(6);
     });
 
@@ -111,7 +127,7 @@ describe("Token", () => {
       const token = new Token({
         ...tokenData,
         traderPublicKey: "creator123",
-        newTokenBalance: 500
+        newTokenBalance: 500,
       });
       expect(token.getHolderCount()).to.equal(1);
       expect(token.getTotalTokensHeld()).to.equal(500);
@@ -122,7 +138,7 @@ describe("Token", () => {
         ...tokenData,
         traderPublicKey: "creator123",
         initialBuy: 60735849.056603,
-        newTokenBalance: undefined
+        newTokenBalance: undefined,
       });
       expect(token.getHolderCount()).to.equal(1);
       expect(token.getTotalTokensHeld()).to.equal(60735849.056603);
@@ -133,7 +149,7 @@ describe("Token", () => {
         ...tokenData,
         traderPublicKey: "creator123",
         initialBuy: false,
-        newTokenBalance: undefined
+        newTokenBalance: undefined,
       });
       expect(token.getHolderCount()).to.equal(0);
       expect(token.getTotalTokensHeld()).to.equal(0);
@@ -152,7 +168,7 @@ describe("Token", () => {
       marketCapSol: 100,
       signature: "sig123",
       bondingCurveKey: "curve123",
-      newTokenBalance: 500
+      newTokenBalance: 500,
     };
 
     beforeEach(() => {
@@ -170,7 +186,7 @@ describe("Token", () => {
         newTokenBalance: 200,
         marketCapSol: 100,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 10
+        vSolInBondingCurve: 10,
       });
 
       expect(token.getHolderCount()).to.equal(2);
@@ -183,7 +199,7 @@ describe("Token", () => {
         newTokenBalance: 0,
         marketCapSol: 100,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 10
+        vSolInBondingCurve: 10,
       });
 
       expect(token.getHolderCount()).to.equal(0);
@@ -199,7 +215,7 @@ describe("Token", () => {
       token = new Token({
         ...tokenData,
         traderPublicKey: "creator123",
-        initialBuy: initialBuyAmount
+        initialBuy: initialBuyAmount,
       });
     });
 
@@ -217,7 +233,7 @@ describe("Token", () => {
         newTokenBalance: initialBuyAmount / 2,
         marketCapSol: 100,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 10
+        vSolInBondingCurve: 10,
       });
 
       expect(token.getCreatorHoldings()).to.equal(initialBuyAmount / 2);
@@ -230,12 +246,63 @@ describe("Token", () => {
         newTokenBalance: 0,
         marketCapSol: 100,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 10
+        vSolInBondingCurve: 10,
       });
 
       expect(token.getCreatorHoldings()).to.equal(0);
       expect(token.hasCreatorSoldAll()).to.be.true;
       expect(token.getCreatorSellPercentage()).to.equal(100);
+    });
+  });
+
+  describe("holder concentration", () => {
+    let token;
+    const initialBuyAmount = 1000;
+
+    beforeEach(() => {
+      token = new Token({
+        ...tokenData,
+        initialBuy: initialBuyAmount,
+      });
+    });
+
+    it("should calculate top holder concentration", () => {
+      // Add some holders
+      token.update({
+        traderPublicKey: "holder1",
+        newTokenBalance: 200,
+        marketCapSol: 100,
+      });
+      token.update({
+        traderPublicKey: "holder2",
+        newTokenBalance: 300,
+        marketCapSol: 100,
+      });
+      token.update({
+        traderPublicKey: "holder3",
+        newTokenBalance: 500,
+        marketCapSol: 100,
+      });
+
+      const topHolders = token.getTopHolders(3);
+      expect(topHolders).to.have.length(3);
+      expect(topHolders[0].balance).to.equal(1000); // creator
+      expect(topHolders[1].balance).to.equal(500); // holder3
+      expect(topHolders[2].balance).to.equal(300); // holder2
+
+      // Total supply = 2000 (1000 + 200 + 300 + 500)
+      // Top 2 holders = 1500 (1000 + 500)
+      // Concentration = (1500 / 2000) * 100 = 75%
+      expect(token.getTopHolderConcentration(2)).to.equal(75);
+    });
+
+    it("should handle empty holders", () => {
+      const token = new Token({
+        ...tokenData,
+        initialBuy: undefined,
+      });
+      expect(token.getTopHolders()).to.have.length(0);
+      expect(token.getTopHolderConcentration()).to.equal(0);
     });
   });
 });

@@ -2,30 +2,32 @@
 
 class SafetyChecker {
   constructor(config = {}) {
-    this.config = config;
-    this.config.MAX_TOP_HOLDER_CONCENTRATION = this.config.MAX_TOP_HOLDER_CONCENTRATION || 30; // Default 30%
-    this.config.MIN_HOLDERS = this.config.MIN_HOLDERS || 25; // Default 25 holders
-    console.log("SafetyChecker initialized");
+    this.MIN_HOLDERS = config.MIN_HOLDERS || 25;
+    this.MAX_TOP_HOLDER_CONCENTRATION =
+      config.MAX_TOP_HOLDER_CONCENTRATION || 30;
   }
 
   runSecurityChecks(token) {
-    console.log("Running safety checks...");
-    
-    // Check minimum number of holders
-    const holderCount = token.getHolderCount();
-    if (holderCount < this.config.MIN_HOLDERS) {
-      console.log(`Warning: Only ${holderCount} holders, minimum required is ${this.config.MIN_HOLDERS}`);
+    // Check minimum holder count
+    if (!this.hasEnoughHolders(token)) {
+      console.log(
+        `Warning: Only ${token.getHolderCount()} holders, minimum required is ${
+          this.MIN_HOLDERS
+        }`
+      );
       return false;
     }
-    
-    // Check top holder concentration
-    const topHolderConcentration = token.getTopHolderConcentration();
-    if (topHolderConcentration > this.config.MAX_TOP_HOLDER_CONCENTRATION) {
-      console.log(`Warning: Top 10 holders control ${topHolderConcentration.toFixed(2)}% of supply`);
+
+    // Check holder concentration
+    if (!this.isHolderConcentrationSafe(token)) {
+      const concentration = token.getTopHolderConcentration(2);
+      console.log(
+        `Warning: Top holders control ${concentration}% of supply, maximum allowed is ${this.MAX_TOP_HOLDER_CONCENTRATION}%`
+      );
       return false;
     }
-    
-    // If creator has sold all tokens, that's a good sign
+
+    // Check creator holdings - if they've sold all, that's a good sign
     if (token.hasCreatorSoldAll()) {
       console.log(`Creator has fully exited their position - reduced risk`);
     }
@@ -33,16 +35,18 @@ class SafetyChecker {
     return true;
   }
 
-  isCreatorFullyExited(token) {
-    return token.hasCreatorSoldAll();
+  hasEnoughHolders(token) {
+    const holderCount = token.getHolderCount();
+    return holderCount >= this.MIN_HOLDERS;
   }
 
   isHolderConcentrationSafe(token) {
-    return token.getTopHolderConcentration() <= this.config.MAX_TOP_HOLDER_CONCENTRATION;
+    const concentration = token.getTopHolderConcentration(2);
+    return concentration <= this.MAX_TOP_HOLDER_CONCENTRATION;
   }
 
-  hasEnoughHolders(token) {
-    return token.getHolderCount() >= this.config.MIN_HOLDERS;
+  isCreatorFullyExited(token) {
+    return token.hasCreatorSoldAll();
   }
 }
 
