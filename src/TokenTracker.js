@@ -3,10 +3,11 @@ const Token = require("./Token");
 const config = require("./config");
 
 class TokenTracker extends EventEmitter {
-  constructor(safetyChecker, positionManager) {
+  constructor(safetyChecker, positionManager, priceManager) {
     super();
     this.safetyChecker = safetyChecker;
     this.positionManager = positionManager;
+    this.priceManager = priceManager;
     this.tokens = new Map();
   }
 
@@ -18,11 +19,8 @@ class TokenTracker extends EventEmitter {
       this.emit("tokenStateChanged", { token, from, to });
     });
 
-    if (token.marketCapSol >= config.THRESHOLDS.HEATING_UP) {
-      token.setState("heatingUp");
-      this.emit("tokenHeatingUp", token);
-    }
-
+    // Let handleTokenUpdate manage all state transitions
+    this.handleTokenUpdate(tokenData);
     this.emit("tokenAdded", token);
     return token;
   }
@@ -36,28 +34,24 @@ class TokenTracker extends EventEmitter {
 
     switch (token.state) {
       case "new":
-        if (token.marketCapSol >= config.THRESHOLDS.HEATING_UP) {
+        if (this.priceManager.solToUSD(token.marketCapSol) >= config.THRESHOLDS.HEATING_UP) {
           token.setState("heatingUp");
           this.emit("tokenHeatingUp", token);
         }
         break;
 
       case "heatingUp":
-        if (token.marketCapSol >= config.THRESHOLDS.FIRST_PUMP) {
+        if (this.priceManager.solToUSD(token.marketCapSol) >= config.THRESHOLDS.FIRST_PUMP) {
           token.setState("firstPump");
         }
         break;
 
       case "firstPump":
-        if (!token.highestMarketCap)
-          token.highestMarketCap = token.marketCapSol;
+        if (!token.highestMarketCap) token.highestMarketCap = token.marketCapSol;
         if (token.marketCapSol > token.highestMarketCap) {
           token.highestMarketCap = token.marketCapSol;
         }
-        const drawdownPercentage =
-          ((token.highestMarketCap - token.marketCapSol) /
-            token.highestMarketCap) *
-          100;
+        const drawdownPercentage = ((token.highestMarketCap - token.marketCapSol) / token.highestMarketCap) * 100;
         if (drawdownPercentage >= config.THRESHOLDS.PUMP_DRAWDOWN) {
           token.setState("drawdown");
           token.drawdownLow = token.marketCapSol;
@@ -66,16 +60,11 @@ class TokenTracker extends EventEmitter {
 
       case "drawdown":
         if (token.marketCapSol > token.drawdownLow) {
-          const recoveryPercentage =
-            ((token.marketCapSol - token.drawdownLow) / token.drawdownLow) *
-            100;
+          const recoveryPercentage = ((token.marketCapSol - token.drawdownLow) / token.drawdownLow) * 100;
           if (recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
             const isSecure = await this.safetyChecker.runSecurityChecks(token);
             if (isSecure) {
-              const success = this.positionManager.openPosition(
-                token.mint,
-                token.marketCapSol
-              );
+              const success = this.positionManager.openPosition(token.mint, token.marketCapSol);
               if (success) {
                 token.setState("inPosition");
                 this.emit("positionOpened", token);
@@ -88,17 +77,11 @@ class TokenTracker extends EventEmitter {
       case "inPosition":
         const position = this.positionManager.getPosition(token.mint);
         if (position) {
-          this.positionManager.updateHighestPrice(
-            token.mint,
-            token.marketCapSol
-          );
+          this.positionManager.updateHighestPrice(token.mint, token.marketCapSol);
 
           // Check take profit tiers
           if (config.TAKE_PROFIT.ENABLED) {
-            const profitPercentage =
-              ((token.marketCapSol - position.entryPrice) /
-                position.entryPrice) *
-              100;
+            const profitPercentage = ((token.marketCapSol - position.entryPrice) / position.entryPrice) * 100;
             for (const tier of config.TAKE_PROFIT.TIERS) {
               if (profitPercentage >= tier.percentage) {
                 this.positionManager.closePosition(token.mint, tier.portion);
@@ -112,10 +95,7 @@ class TokenTracker extends EventEmitter {
           }
 
           // Check stop loss
-          const drawdown =
-            ((position.highestPrice - token.marketCapSol) /
-              position.highestPrice) *
-            100;
+          const drawdown = ((position.highestPrice - token.marketCapSol) / position.highestPrice) * 100;
           if (drawdown >= config.THRESHOLDS.TRAIL_DRAWDOWN) {
             this.positionManager.closePosition(token.mint);
             token.setState("closed");
@@ -126,7 +106,7 @@ class TokenTracker extends EventEmitter {
     }
 
     // Check for token death in any state
-    if (token.marketCapSol <= config.THRESHOLDS.DEAD) {
+    if (this.priceManager.solToUSD(token.marketCapSol) <= config.THRESHOLDS.DEAD) {
       // Only mark tokens as dead if they've reached FIRST_PUMP state
       if (token.highestMarketCap >= config.THRESHOLDS.FIRST_PUMP) {
         token.setState("dead");
@@ -145,9 +125,7 @@ class TokenTracker extends EventEmitter {
   }
 
   getTokensByState(state) {
-    return Array.from(this.tokens.values()).filter(
-      (token) => token.state === state
-    );
+    return Array.from(this.tokens.values()).filter((token) => token.state === state);
   }
 }
 

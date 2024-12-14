@@ -13,7 +13,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "ws": "^8.0.0"
+    "ws": "^8.0.0",
+    "axios": "^1.6.2"
   },
   "devDependencies": {
     "chai": "^4.0.0",

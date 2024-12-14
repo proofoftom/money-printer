@@ -5,14 +5,27 @@ const TokenTracker = require("./TokenTracker");
 const WebSocketManager = require("./WebSocketManager");
 const SafetyChecker = require("./SafetyChecker");
 const PositionManager = require("./PositionManager");
+const PriceManager = require("./PriceManager");
 const Wallet = require("./Wallet");
 
 // Initialize components
 const wallet = new Wallet();
+const priceManager = new PriceManager();
 const positionManager = new PositionManager(wallet);
 const safetyChecker = new SafetyChecker(config.SAFETY);
-const tokenTracker = new TokenTracker(safetyChecker, positionManager);
-const wsManager = new WebSocketManager(tokenTracker);
+const tokenTracker = new TokenTracker(safetyChecker, positionManager, priceManager);
+const wsManager = new WebSocketManager(tokenTracker, priceManager);
+
+// Initialize price manager before starting
+async function start() {
+  try {
+    await priceManager.initialize();
+    console.log('Money Printer initialized and ready to trade!');
+  } catch (error) {
+    console.error('Failed to initialize Money Printer:', error);
+    process.exit(1);
+  }
+}
 
 // Set up event listeners for token lifecycle events
 tokenTracker.on("tokenAdded", (token) => {
@@ -73,8 +86,4 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-// Log startup
-console.log("Money printer starting up... ");
-console.log(`Max position size: ${config.POSITION.MAX_SIZE_SOL} SOL`);
-console.log(`Take profit tiers:`, config.TAKE_PROFIT.TIERS);
-console.log("Connecting to PumpPortal...");
+start();
