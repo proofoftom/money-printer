@@ -12,10 +12,10 @@ TokenState manages the complete lifecycle state of tokens, providing efficient d
 class TokenState {
   newlyCreated = new Set(); // Newly minted tokens
   heatingUp = new Set(); // Tokens that are showing initial signs of activity
-  inFirstPump = new Set(); // Tokens that are in their first pump phase
+  inFirstPumpPhase = new Set(); // Tokens that are in their first pump phase
   inFirstDrawdown = new Set(); // Tokens that have entered their first drawdown phase
-  inDrawdown = new Set(); // Tokens that have entered a drawdown phase
-  unsafeRecovery = new Set(); // Tokens recovering but not meeting safety criteria
+  inUnsafeRecovery = new Set(); // Tokens recovering but not meeting safety criteria
+  inUnsafeDrawdown = new Set(); // Tokens recovering but not meeting safety criteria
   inPosition = new Set(); // Tokens that are currently in a trading position
 }
 ```

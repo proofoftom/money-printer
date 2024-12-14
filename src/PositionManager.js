@@ -15,7 +15,7 @@ class PositionManager {
 
   // Add methods for managing positions
   openPosition(mint, marketCap) {
-    const positionSize = marketCap * config.POSITION_SIZE_PERCENT; // Use config for position size
+    const positionSize = config.POSITION_SIZE_SOL; // Use config for position size
     if (this.wallet.balance >= positionSize) {
       this.positions.set(mint, { entryPrice: marketCap, size: positionSize });
       this.wallet.updateBalance(-positionSize);

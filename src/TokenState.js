@@ -4,10 +4,10 @@ class TokenState {
   constructor() {
     this.newlyCreated = new Set();
     this.heatingUp = new Set();
-    this.inFirstPump = new Set();
+    this.inFirstPumpPhase = new Set();
     this.inFirstDrawdown = new Set();
-    this.inDrawdown = new Set();
-    this.unsafeRecovery = new Set();
+    this.inUnsafeRecovery = new Set();
+    this.inUnsafeDrawdown = new Set();
     this.inPosition = new Set();
     console.log("TokenState initialized");
   }
