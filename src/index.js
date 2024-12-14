@@ -13,25 +13,29 @@ const wallet = new Wallet();
 const priceManager = new PriceManager();
 const positionManager = new PositionManager(wallet);
 const safetyChecker = new SafetyChecker(config.SAFETY);
-const tokenTracker = new TokenTracker(safetyChecker, positionManager, priceManager);
+const tokenTracker = new TokenTracker(
+  safetyChecker,
+  positionManager,
+  priceManager
+);
 const wsManager = new WebSocketManager(tokenTracker, priceManager);
 
 // Initialize price manager before starting
 async function start() {
   try {
     await priceManager.initialize();
-    console.log('Money Printer initialized and ready to trade!');
+    console.log("Money Printer initialized and ready to trade!");
   } catch (error) {
-    console.error('Failed to initialize Money Printer:', error);
+    console.error("Failed to initialize Money Printer:", error);
     process.exit(1);
   }
 }
 
 // Set up event listeners for token lifecycle events
 tokenTracker.on("tokenAdded", (token) => {
-  console.log(`New token discovered: ${token.symbol} (${token.mint})`);
-  console.log(`Creator: ${token.creator}`);
-  console.log(`Initial market cap: ${token.marketCapSol} SOL`);
+  // console.log(`New token discovered: ${token.symbol} (${token.mint})`);
+  // console.log(`Creator: ${token.creator}`);
+  // console.log(`Initial market cap: ${token.marketCapSol} SOL`);
 });
 
 tokenTracker.on("tokenHeatingUp", (token) => {
@@ -44,7 +48,9 @@ tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
   console.log(`Token ${token.symbol} state changed: ${from} -> ${to}`);
   console.log(`Market cap: ${token.marketCapSol} SOL`);
   if (to === "drawdown") {
-    console.log(`Drawdown from peak: ${token.getDrawdownPercentage().toFixed(2)}%`);
+    console.log(
+      `Drawdown from peak: ${token.getDrawdownPercentage().toFixed(2)}%`
+    );
   } else if (to === "inPosition") {
     const position = positionManager.getPosition(token.mint);
     console.log(`Position opened at: ${position.entryPrice} SOL`);
