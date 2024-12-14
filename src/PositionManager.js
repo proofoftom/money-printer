@@ -44,21 +44,21 @@ class PositionManager {
     return profitLoss;
   }
 
-  getCurrentPrice(mint) {
-    const position = this.positions.get(mint);
-    // For testing, return a price that gives 40% profit
-    return position ? position.entryPrice * 1.4 : 0;
-  }
-
   getPosition(mint) {
     return this.positions.get(mint);
   }
 
-  updateHighestPrice(mint, price) {
+  updateHighestPrice(mint, currentPrice) {
     const position = this.positions.get(mint);
-    if (position && price > position.highestPrice) {
-      position.highestPrice = price;
+    if (position && currentPrice > position.highestPrice) {
+      position.highestPrice = currentPrice;
     }
+  }
+
+  getCurrentPrice(mint) {
+    const position = this.positions.get(mint);
+    // For testing, return a price that gives 40% profit
+    return position ? position.entryPrice * 1.4 : 0;
   }
 }
 
