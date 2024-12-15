@@ -10,6 +10,7 @@ class WebSocketManager extends EventEmitter {
     this.subscriptions = new Set();
     this.isConnected = false;
     this.ws = null;
+    this.reconnectAttempts = 0;
 
     // Don't auto-connect in test mode
     if (process.env.NODE_ENV !== "test") {
@@ -31,56 +32,80 @@ class WebSocketManager extends EventEmitter {
   }
 
   connect() {
-    if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws = null;
+    if (this.isConnected) {
+      console.debug("Already connected");
+      return;
     }
 
+    console.log("Connecting to WebSocket...");
+    
     try {
       this.ws = new WebSocket(config.WEBSOCKET.URL);
 
       this.ws.on("open", () => {
-        console.log("WebSocket connection established");
+        console.log("WebSocket connected");
         this.isConnected = true;
         this.emit("connected");
         this.subscribeToNewTokens();
         this.resubscribeToTokens();
       });
 
+      this.ws.on("message", (data) => {
+        try {
+          const message = JSON.parse(data);
+          this.handleMessage(message);
+        } catch (error) {
+          console.error("Error parsing WebSocket message:", error.message);
+          this.emit("error", {
+            source: "WebSocketManager.messageParser",
+            message: error.message,
+            stack: error.stack,
+            type: error.constructor.name,
+            data: { rawMessage: data.toString() }
+          });
+        }
+      });
+
       this.ws.on("close", () => {
-        console.log("WebSocket connection closed");
+        console.log("WebSocket disconnected");
         this.isConnected = false;
         this.emit("disconnected");
-        if (process.env.NODE_ENV !== "test") {
-          setTimeout(() => {
-            console.log("Attempting to reconnect...");
-            this.connect();
-          }, config.WEBSOCKET.RECONNECT_TIMEOUT);
-        }
+        
+        // Implement exponential backoff for reconnection
+        const backoffTime = Math.min(
+          config.WEBSOCKET.RECONNECT_TIMEOUT * Math.pow(2, this.reconnectAttempts || 0),
+          config.WEBSOCKET.MAX_RECONNECT_TIMEOUT
+        );
+        this.reconnectAttempts = (this.reconnectAttempts || 0) + 1;
+        
+        console.log(`Attempting to reconnect in ${backoffTime}ms...`);
+        setTimeout(() => {
+          this.connect();
+        }, backoffTime);
       });
 
       this.ws.on("error", (error) => {
-        console.error("WebSocket error:", error);
-        this.emit("error", error);
-      });
-
-      this.ws.on("message", (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          this.handleMessage(message);
-        } catch (error) {
-          console.error("Error parsing message:", error);
-        }
+        console.error("WebSocket error:", error.message);
+        this.emit("error", {
+          source: "WebSocketManager.connection",
+          message: error.message,
+          stack: error.stack,
+          type: error.constructor.name
+        });
       });
     } catch (error) {
-      console.error("Error creating WebSocket:", error);
-      this.emit("error", error);
-      if (process.env.NODE_ENV !== "test") {
-        setTimeout(() => {
-          console.log("Attempting to reconnect...");
-          this.connect();
-        }, config.WEBSOCKET.RECONNECT_TIMEOUT);
-      }
+      console.error("Error creating WebSocket connection:", error.message);
+      this.emit("error", {
+        source: "WebSocketManager.connect",
+        message: error.message,
+        stack: error.stack,
+        type: error.constructor.name
+      });
+      
+      // Attempt to reconnect
+      setTimeout(() => {
+        this.connect();
+      }, config.WEBSOCKET.RECONNECT_TIMEOUT);
     }
   }
 
@@ -89,38 +114,65 @@ class WebSocketManager extends EventEmitter {
       return;
     }
 
-    // Handle subscription confirmation messages silently
-    if (
-      message.message &&
-      message.message.includes("Successfully subscribed")
-    ) {
-      return;
-    }
-
-    // Handle token creation messages
-    if (message.txType === "create" && message.mint && message.name) {
-      // Ignore tokens that are already above our heating up threshold
-      const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
-      if (marketCapUSD > config.THRESHOLDS.HEATING_UP_USD) {
-        console.log(`Ignoring new token ${message.name} (${message.mint}) - Market cap too high: $${marketCapUSD.toFixed(2)} (${message.marketCapSol.toFixed(2)} SOL)`);
+    try {
+      // Handle subscription confirmation messages silently
+      if (
+        message.message &&
+        message.message.includes("Successfully subscribed")
+      ) {
         return;
       }
 
-      this.emit("newToken", message);
-      this.tokenTracker.handleNewToken(message);
-      // Subscribe to trades for the new token
-      this.subscribeToToken(message.mint);
-      return;
-    }
+      // Handle token creation messages
+      if (message.txType === "create" && message.mint && message.name) {
+        if (!this.priceManager.isInitialized()) {
+          console.warn("Waiting for PriceManager to initialize before processing new tokens...");
+          return;
+        }
 
-    // Handle trade messages
-    if (message.txType && message.mint && message.txType !== "create") {
-      this.emit("trade", message);
-      this.tokenTracker.handleTokenUpdate(message);
-      return;
-    }
+        try {
+          // Ignore tokens that are already above our heating up threshold
+          const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
+          if (marketCapUSD > config.THRESHOLDS.HEATING_UP_USD) {
+            console.log(`Ignoring new token ${message.name} (${message.mint}) - Market cap too high: $${marketCapUSD.toFixed(2)} (${message.marketCapSol.toFixed(2)} SOL)`);
+            return;
+          }
 
-    console.debug("Unknown message format:", message);
+          this.emit("newToken", message);
+          this.tokenTracker.handleNewToken(message);
+          // Subscribe to trades for the new token
+          this.subscribeToToken(message.mint);
+        } catch (error) {
+          console.error("Error processing new token:", error.message);
+          this.emit("error", {
+            source: "WebSocketManager.handleTokenCreation",
+            message: error.message,
+            stack: error.stack,
+            type: error.constructor.name,
+            data: { mint: message.mint, name: message.name }
+          });
+        }
+        return;
+      }
+
+      // Handle trade messages
+      if (message.txType && message.mint && message.txType !== "create") {
+        this.emit("trade", message);
+        this.tokenTracker.handleTokenUpdate(message);
+        return;
+      }
+
+      console.debug("Unknown message format:", message);
+    } catch (error) {
+      console.error("Error handling WebSocket message:", error.message);
+      this.emit("error", {
+        source: "WebSocketManager.handleMessage",
+        message: error.message,
+        stack: error.stack,
+        type: error.constructor.name,
+        data: { message }
+      });
+    }
   }
 
   // For testing purposes

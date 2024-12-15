@@ -65,7 +65,7 @@ describe('WebSocketManager', () => {
   });
 
   describe('message handling', () => {
-    it('should handle new token messages', () => {
+    it('should handle new token messages when PriceManager is initialized', () => {
       const spy = sinon.spy(tokenTracker, 'handleNewToken');
       const message = {
         signature: '3qQ2EDRHz5jVxKFe4pkiaY8ZfP6okJNH75a5ckGqRCo1e3eSZD8oeDUdpwMjgwZyQ2iLymAwc8a1Ly62ZQtdNFDn',
@@ -84,6 +84,21 @@ describe('WebSocketManager', () => {
 
       wsManager.handleMessage(message);
       expect(spy.calledWith(message)).to.be.true;
+    });
+
+    it('should not process new token when PriceManager is not initialized', () => {
+      const spy = sinon.spy(tokenTracker, 'handleNewToken');
+      priceManager.initialized = false;
+      
+      const message = {
+        txType: 'create',
+        mint: 'testMint',
+        name: 'Test Token',
+        marketCapSol: 10
+      };
+
+      wsManager.handleMessage(message);
+      expect(spy.called).to.be.false;
     });
 
     it('should handle trade messages', () => {

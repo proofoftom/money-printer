@@ -1,18 +1,32 @@
-class MockPriceManager {
+const EventEmitter = require('events');
+
+class MockPriceManager extends EventEmitter {
   constructor(solPrice = 100) {
-    this.solPriceUSD = solPrice;
+    super();
+    this.solPrice = solPrice;
+    this.initialized = true;
+    this.lastUpdateTime = new Date();
   }
 
   async initialize() {
-    return this.solPriceUSD;
+    return Promise.resolve();
+  }
+
+  isInitialized() {
+    return this.initialized;
+  }
+
+  async updateSolPrice() {
+    this.lastUpdateTime = new Date();
+    return this.solPrice;
   }
 
   solToUSD(solAmount) {
-    return solAmount * this.solPriceUSD;
+    return solAmount * this.solPrice;
   }
 
-  usdToSOL(usdAmount) {
-    return usdAmount / this.solPriceUSD;
+  usdToSol(usdAmount) {
+    return usdAmount / this.solPrice;
   }
 }
 
