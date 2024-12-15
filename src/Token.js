@@ -1,160 +1,131 @@
-const EventEmitter = require("events");
+const EventEmitter = require('events');
 
 class Token extends EventEmitter {
   constructor(tokenData) {
     super();
-    // Token identification
     this.mint = tokenData.mint;
     this.name = tokenData.name;
     this.symbol = tokenData.symbol;
     this.uri = tokenData.uri;
-
-    // Creator information
-    this.creator = tokenData.traderPublicKey;
-    this.initialBuy = tokenData.initialBuy || 0;
-    this.creatorInitialHoldings = tokenData.initialBuy || 0;
-
-    // Market data
-    this.vTokensInBondingCurve = tokenData.vTokensInBondingCurve || 0;
-    this.vSolInBondingCurve = tokenData.vSolInBondingCurve || 0;
-    this.marketCapSol = tokenData.marketCapSol || 0;
-
-    // State tracking
-    this.state = "new";
-    this.highestMarketCapSol = this.marketCapSol;
-    this.drawdownLowSol = this.marketCapSol;
-    this.lastUpdate = Date.now();
-
-    // Creation metadata
-    this.createdAt = Date.now();
+    this.traderPublicKey = tokenData.traderPublicKey;
+    this.initialBuy = tokenData.initialBuy;
+    this.vTokensInBondingCurve = tokenData.vTokensInBondingCurve;
+    this.vSolInBondingCurve = tokenData.vSolInBondingCurve;
+    this.marketCapSol = tokenData.marketCapSol;
     this.signature = tokenData.signature;
     this.bondingCurveKey = tokenData.bondingCurveKey;
-
-    // Trading data
-    this.trades = [];
-    this.totalVolumeSol = 0;
-    this.uniqueBuyers = new Set();
-    this.uniqueSellers = new Set();
-
-    // Holder tracking
+    
+    this.state = 'new';
+    this.highestMarketCap = this.marketCapSol;
+    this.drawdownLow = null;
     this.holders = new Map();
-
-    // Initialize creator's holdings
-    if (tokenData.traderPublicKey) {
-      if (tokenData.newTokenBalance !== undefined) {
-        this.updateHolder(tokenData.traderPublicKey, tokenData.newTokenBalance);
-      } else if (tokenData.initialBuy && typeof tokenData.initialBuy === 'number') {
-        this.updateHolder(tokenData.traderPublicKey, tokenData.initialBuy);
-      }
+    this.creatorInitialHoldings = 0;
+    
+    // Initialize creator as holder if initial balance provided
+    if (tokenData.newTokenBalance) {
+      this.holders.set(tokenData.traderPublicKey, tokenData.newTokenBalance);
+      this.creatorInitialHoldings = tokenData.newTokenBalance;
+    } else if (tokenData.initialBuy) {
+      this.holders.set(tokenData.traderPublicKey, tokenData.initialBuy);
+      this.creatorInitialHoldings = tokenData.initialBuy;
     }
+  }
+
+  setState(newState) {
+    const oldState = this.state;
+    this.state = newState;
+    if (newState === 'drawdown') {
+      this.drawdownLow = this.marketCapSol;
+    }
+    this.emit('stateChanged', { token: this, from: oldState, to: newState });
   }
 
   update(data) {
-    // Update holder data if available
-    if (data.traderPublicKey && data.newTokenBalance !== undefined) {
-      this.updateHolder(data.traderPublicKey, data.newTokenBalance);
-    }
-
-    // Update market data
-    if (data.marketCapSol !== undefined) {
+    if (data.marketCapSol) {
+      if (data.marketCapSol > this.highestMarketCap) {
+        this.highestMarketCap = data.marketCapSol;
+      }
+      if (this.state === 'drawdown' && data.marketCapSol < this.drawdownLow) {
+        this.drawdownLow = data.marketCapSol;
+      }
       this.marketCapSol = data.marketCapSol;
-      if (this.marketCapSol > this.highestMarketCapSol) {
-        this.highestMarketCapSol = this.marketCapSol;
-      }
-      if (this.marketCapSol < this.drawdownLowSol) {
-        this.drawdownLowSol = this.marketCapSol;
-      }
     }
-
-    if (data.vTokensInBondingCurve !== undefined) {
+    
+    if (data.vTokensInBondingCurve) {
       this.vTokensInBondingCurve = data.vTokensInBondingCurve;
     }
-
-    if (data.vSolInBondingCurve !== undefined) {
+    
+    if (data.vSolInBondingCurve) {
       this.vSolInBondingCurve = data.vSolInBondingCurve;
     }
 
-    // Update trading data
-    if (data.txType === 'buy') {
-      this.uniqueBuyers.add(data.traderPublicKey);
-    } else if (data.txType === 'sell') {
-      this.uniqueSellers.add(data.traderPublicKey);
+    if (data.traderPublicKey && typeof data.newTokenBalance !== 'undefined') {
+      if (data.newTokenBalance > 0) {
+        this.holders.set(data.traderPublicKey, data.newTokenBalance);
+      } else {
+        this.holders.delete(data.traderPublicKey);
+      }
     }
-
-    if (data.solAmount) {
-      this.totalVolumeSol += data.solAmount;
-      this.trades.push({
-        type: data.txType,
-        solAmount: data.solAmount,
-        timestamp: Date.now()
-      });
-    }
-
-    this.lastUpdate = Date.now();
-    this.emit('updated', this);
   }
 
-  updateHolder(address, balance) {
-    if (balance === 0) {
-      this.holders.delete(address);
-    } else {
-      this.holders.set(address, balance);
-    }
+  getDrawdownPercentage() {
+    if (!this.highestMarketCap || !this.marketCapSol) return 0;
+    return ((this.highestMarketCap - this.marketCapSol) / this.highestMarketCap) * 100;
+  }
+
+  getRecoveryPercentage() {
+    if (this.state !== 'drawdown' || !this.drawdownLow || !this.marketCapSol) return 0;
+    return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
   }
 
   getHolderCount() {
     return this.holders.size;
   }
 
-  getTopHolderConcentration(topN = 10) {
-    const sortedHolders = Array.from(this.holders.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, topN);
-
-    const totalSupply = Array.from(this.holders.values()).reduce((a, b) => a + b, 0);
-    const topHoldersBalance = sortedHolders.reduce((sum, [_, balance]) => sum + balance, 0);
-
-    return (topHoldersBalance / totalSupply) * 100;
+  getTotalTokensHeld() {
+    return Array.from(this.holders.values()).reduce((sum, balance) => sum + balance, 0);
   }
 
   getCreatorHoldings() {
-    return this.holders.get(this.creator) || 0;
+    return this.holders.get(this.traderPublicKey) || 0;
   }
 
   hasCreatorSoldAll() {
     return this.getCreatorHoldings() === 0;
   }
 
-  getDrawdownPercentage() {
-    if (this.highestMarketCapSol === 0) return 0;
-    return ((this.highestMarketCapSol - this.marketCapSol) / this.highestMarketCapSol) * 100;
+  getCreatorSellPercentage() {
+    if (!this.creatorInitialHoldings) return 0;
+    const currentCreatorHoldings = this.getCreatorHoldings();
+    return ((this.creatorInitialHoldings - currentCreatorHoldings) / this.creatorInitialHoldings) * 100;
   }
 
-  getRecoveryPercentage() {
-    if (this.state !== "drawdown" || this.drawdownLowSol === 0) return 0;
-    return ((this.marketCapSol - this.drawdownLowSol) / this.drawdownLowSol) * 100;
+  getTopHolders(count = 5) {
+    return Array.from(this.holders.entries())
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, count)
+      .map(([address, balance]) => ({ address, balance }));
   }
 
-  getAverageTradeSize() {
-    if (this.trades.length === 0) return 0;
-    return this.totalVolumeSol / this.trades.length;
+  getTopHolderConcentration(topN = 10) {
+    const totalSupply = this.getTotalTokensHeld();
+    if (totalSupply === 0) return 0;
+
+    const topHolders = this.getTopHolders(topN);
+    const topHoldersBalance = topHolders.reduce((sum, { balance }) => sum + balance, 0);
+    return (topHoldersBalance / totalSupply) * 100;
   }
 
-  getBuySellRatio() {
-    const buyCount = this.trades.filter(t => t.type === 'buy').length;
-    return buyCount / this.trades.length;
+  isHeatingUp(threshold) {
+    return this.marketCapSol > threshold;
   }
 
-  setState(newState) {
-    const oldState = this.state;
-    this.state = newState;
+  isFirstPump(threshold) {
+    return this.marketCapSol > threshold;
+  }
 
-    // Reset tracking metrics based on state transition
-    if (newState === "drawdown") {
-      this.drawdownLowSol = this.marketCapSol;
-    }
-
-    this.emit("stateChanged", { token: this, from: oldState, to: newState });
+  isDead(threshold) {
+    return this.marketCapSol < threshold;
   }
 }
 

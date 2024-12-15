@@ -46,17 +46,32 @@ module.exports = {
 
   // Exit strategies configuration
   EXIT_STRATEGIES: {
-    TIER_1: {
-      THRESHOLD: 15,
-      PORTION: 0.5
+    STOP_LOSS: {
+      ENABLED: true,
+      THRESHOLD: -5, // Exit when loss exceeds 5%
     },
-    TIER_2: {
-      THRESHOLD: 25,
-      PORTION: 0.5
+    TRAILING_STOP: {
+      ENABLED: true,
+      ACTIVATION_THRESHOLD: 15, // Start trailing after 15% profit
+      BASE_PERCENTAGE: 10, // Base trailing distance is 10%
+      DYNAMIC_ADJUSTMENT: {
+        ENABLED: true,
+        VOLATILITY_MULTIPLIER: 0.5, // Increase trail by 0.5x volatility
+        MIN_PERCENTAGE: 5, // Minimum trail percentage
+        MAX_PERCENTAGE: 20, // Maximum trail percentage
+      },
     },
-    TIER_3: {
-      THRESHOLD: 40,
-      PORTION: 1.0
-    }
+    VOLUME_BASED: {
+      ENABLED: true,
+      VOLUME_DROP_THRESHOLD: 50, // Exit if volume drops below 50% of peak
+      MEASUREMENT_PERIOD: 300, // Look at volume over 5 minutes (300 seconds)
+      MIN_PEAK_VOLUME: 1000, // Minimum peak volume in SOL to consider
+    },
+    TIME_BASED: {
+      ENABLED: true,
+      MAX_HOLD_TIME: 1800, // 30 minutes in seconds
+      EXTENSION_THRESHOLD: 40, // Extend time if profit > 40%
+      EXTENSION_TIME: 900, // Add 15 minutes if above threshold
+    },
   },
 };
