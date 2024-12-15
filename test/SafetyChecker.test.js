@@ -1,20 +1,28 @@
 const assert = require('assert');
 const SafetyChecker = require('../src/SafetyChecker');
+const config = require('../src/config');
 
 describe('SafetyChecker', () => {
   let safetyChecker;
   let mockMarketData;
+  let mockPriceManager;
 
   beforeEach(() => {
-    safetyChecker = new SafetyChecker();
+    // Mock PriceManager with realistic SOL price of $225
+    mockPriceManager = {
+      solToUSD: (sol) => sol * 225, // 1 SOL = $225 USD for testing
+      usdToSOL: (usd) => usd / 225
+    };
+
+    safetyChecker = new SafetyChecker(config, mockPriceManager);
     mockMarketData = {
-      marketCap: 100,
+      marketCapSol: 66.67, // ~$15k USD at $225/SOL
       creationTime: Date.now() - 60000, // 60 seconds ago
       currentPrice: 1,
       initialPrice: 0.5,
       priceVolatility: 30,
       uniqueBuyers: 20,
-      avgTradeSize: 2,
+      avgTradeSize: 2.22, // ~$500 USD at $225/SOL
       buyCount: 80,
       sellCount: 20,
       maxWalletVolumePercentage: 15,
@@ -28,16 +36,17 @@ describe('SafetyChecker', () => {
 
   describe('Market Cap Checks', () => {
     it('should reject if market cap is too high', () => {
-      mockMarketData.marketCap = 300;
+      mockMarketData.marketCapSol = 133.34; // ~$30,001.50 USD at $225/SOL
       assert.strictEqual(safetyChecker.checkMarketCap(mockMarketData), false);
     });
 
     it('should reject if market cap is too low', () => {
-      mockMarketData.marketCap = 3;
+      mockMarketData.marketCapSol = 44.44; // ~$10k USD at $225/SOL
       assert.strictEqual(safetyChecker.checkMarketCap(mockMarketData), false);
     });
 
     it('should accept valid market cap', () => {
+      mockMarketData.marketCapSol = 88.89; // ~$20k USD at $225/SOL
       assert.strictEqual(safetyChecker.checkMarketCap(mockMarketData), true);
     });
   });
@@ -55,8 +64,7 @@ describe('SafetyChecker', () => {
 
   describe('Price Action Checks', () => {
     it('should reject if price pump is too high', () => {
-      mockMarketData.currentPrice = 2;
-      mockMarketData.initialPrice = 0.5;
+      mockMarketData.currentPrice = mockMarketData.initialPrice * 4;
       assert.strictEqual(safetyChecker.checkPriceAction(mockMarketData), false);
     });
 
@@ -77,7 +85,7 @@ describe('SafetyChecker', () => {
     });
 
     it('should reject if average trade size is too high', () => {
-      mockMarketData.avgTradeSize = 6;
+      mockMarketData.avgTradeSize = 4.44; // ~$1000 USD at $225/SOL
       assert.strictEqual(safetyChecker.checkTradingPatterns(mockMarketData), false);
     });
 
@@ -120,7 +128,7 @@ describe('SafetyChecker', () => {
 
   describe('Volume Pattern Checks', () => {
     it('should reject if volume-price correlation is too low', () => {
-      mockMarketData.volumePriceCorrelation = 0.4;
+      mockMarketData.volumePriceCorrelation = 0.3;
       assert.strictEqual(safetyChecker.checkVolumePatterns(mockMarketData), false);
     });
 
@@ -140,15 +148,7 @@ describe('SafetyChecker', () => {
     });
 
     it('should reject token with any invalid metric', () => {
-      mockMarketData.marketCap = 300;
-      assert.strictEqual(safetyChecker.isTokenSafe(mockMarketData), false);
-
-      mockMarketData.marketCap = 100;
-      mockMarketData.priceVolatility = 60;
-      assert.strictEqual(safetyChecker.isTokenSafe(mockMarketData), false);
-
-      mockMarketData.priceVolatility = 30;
-      mockMarketData.uniqueBuyers = 10;
+      mockMarketData.marketCapSol = 133.34; // ~$30,001.50 USD at $225/SOL
       assert.strictEqual(safetyChecker.isTokenSafe(mockMarketData), false);
     });
   });

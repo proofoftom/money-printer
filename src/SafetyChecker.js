@@ -11,12 +11,12 @@ class SafetyChecker {
     const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
 
     // Check market cap thresholds
-    if (marketCapUSD > this.config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
+    if (marketCapUSD >= this.config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
       console.log(`Market cap $${marketCapUSD.toFixed(2)} exceeds maximum entry threshold of $${this.config.THRESHOLDS.MAX_ENTRY_CAP_USD}`);
       return false;
     }
 
-    if (marketCapUSD < this.config.THRESHOLDS.DEAD_USD) {
+    if (marketCapUSD <= this.config.THRESHOLDS.DEAD_USD) {
       console.log(`Market cap $${marketCapUSD.toFixed(2)} is below minimum threshold of $${this.config.THRESHOLDS.DEAD_USD}`);
       return false;
     }
@@ -98,12 +98,13 @@ class SafetyChecker {
 
   checkMarketCap(marketData) {
     const marketCapUSD = this.priceManager.solToUSD(marketData.marketCapSol);
-    if (marketCapUSD > this.config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
+
+    if (marketCapUSD >= this.config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
       console.log(`Market cap $${marketCapUSD.toFixed(2)} exceeds maximum entry threshold of $${this.config.THRESHOLDS.MAX_ENTRY_CAP_USD}`);
       return false;
     }
 
-    if (marketCapUSD < this.config.THRESHOLDS.DEAD_USD) {
+    if (marketCapUSD <= this.config.THRESHOLDS.DEAD_USD) {
       console.log(`Market cap $${marketCapUSD.toFixed(2)} is below minimum threshold of $${this.config.THRESHOLDS.DEAD_USD}`);
       return false;
     }
