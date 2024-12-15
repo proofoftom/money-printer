@@ -91,7 +91,8 @@ Position Opened:
       portionClosed: portion,
       walletBalance: this.wallet.balance,
       volumeHistory: position.volumeHistory,
-      candleHistory: position.candleHistory
+      candleHistory: position.candleHistory,
+      exitReason: position.exitReason || 'unknown'
     };
 
     if (portion === 1.0) {

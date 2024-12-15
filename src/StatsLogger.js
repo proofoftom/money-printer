@@ -22,7 +22,30 @@ class StatsLogger {
       lossHoldTimes: [],
       profitFactor: 0,
       winRate: 0,
-      riskRewardRatio: 0
+      riskRewardRatio: 0,
+      exitStats: {
+        stopLoss: { count: 0, totalPnL: 0, avgHoldTime: 0 },
+        trailingStop: { count: 0, totalPnL: 0, avgHoldTime: 0 },
+        takeProfit: {
+          tier1: { count: 0, totalPnL: 0, avgHoldTime: 0 },
+          tier2: { count: 0, totalPnL: 0, avgHoldTime: 0 },
+          tier3: { count: 0, totalPnL: 0, avgHoldTime: 0 }
+        },
+        volumeExit: { count: 0, totalPnL: 0, avgHoldTime: 0 },
+        timeExit: { count: 0, totalPnL: 0, avgHoldTime: 0 }
+      },
+      volumeMetrics: {
+        avgExitVolume: 0,
+        avgPeakVolume: 0,
+        avgVolumeDropPercent: 0,
+        totalVolumeSamples: 0
+      },
+      priceMetrics: {
+        avgMaxUpside: 0,
+        avgDrawdown: 0,
+        avgRecoveryTime: 0,
+        totalPriceSamples: 0
+      }
     };
     this.ensureLogDirectory();
     this.rotateLogFileIfNeeded();
@@ -59,13 +82,13 @@ class StatsLogger {
     }
   }
 
-  updateSummaryMetrics(trade) {
-    if (trade.type !== 'POSITION_CLOSE') return;
+  updateSummaryMetrics(stats) {
+    if (stats.type !== 'POSITION_CLOSE') return;
 
     this.summaryMetrics.totalTrades++;
     
-    const profit = trade.profitLoss;
-    const holdTime = trade.holdTimeSeconds;
+    const profit = stats.profitLoss;
+    const holdTime = stats.holdTimeSeconds;
     
     if (profit > 0) {
       this.summaryMetrics.winningTrades++;
@@ -145,6 +168,41 @@ class StatsLogger {
           }
         };
         currentData.trades.push(tradeMetrics);
+      }
+
+      // Update exit strategy metrics
+      if (stats.type === 'POSITION_CLOSE' || stats.type === 'PARTIAL_CLOSE') {
+        const exitType = stats.exitReason || 'unknown';
+        const holdTime = stats.holdTimeSeconds;
+        const pnl = stats.profitLoss;
+
+        if (this.summaryMetrics.exitStats[exitType]) {
+          const exitStats = this.summaryMetrics.exitStats[exitType];
+          exitStats.count++;
+          exitStats.totalPnL += pnl;
+          exitStats.avgHoldTime = (exitStats.avgHoldTime * (exitStats.count - 1) + holdTime) / exitStats.count;
+        }
+
+        // Update volume metrics if available
+        if (stats.volumeHistory && stats.volumeHistory.length > 0) {
+          const volumeMetrics = this.summaryMetrics.volumeMetrics;
+          const peakVolume = Math.max(...stats.volumeHistory.map(v => v.volume));
+          const exitVolume = stats.volumeHistory[stats.volumeHistory.length - 1].volume;
+          const volumeDropPercent = ((peakVolume - exitVolume) / peakVolume) * 100;
+
+          volumeMetrics.totalVolumeSamples++;
+          volumeMetrics.avgExitVolume = (volumeMetrics.avgExitVolume * (volumeMetrics.totalVolumeSamples - 1) + exitVolume) / volumeMetrics.totalVolumeSamples;
+          volumeMetrics.avgPeakVolume = (volumeMetrics.avgPeakVolume * (volumeMetrics.totalVolumeSamples - 1) + peakVolume) / volumeMetrics.totalVolumeSamples;
+          volumeMetrics.avgVolumeDropPercent = (volumeMetrics.avgVolumeDropPercent * (volumeMetrics.totalVolumeSamples - 1) + volumeDropPercent) / volumeMetrics.totalVolumeSamples;
+        }
+
+        // Update price metrics
+        if (stats.maxUpside !== undefined && stats.maxDrawdown !== undefined) {
+          const priceMetrics = this.summaryMetrics.priceMetrics;
+          priceMetrics.totalPriceSamples++;
+          priceMetrics.avgMaxUpside = (priceMetrics.avgMaxUpside * (priceMetrics.totalPriceSamples - 1) + stats.maxUpside) / priceMetrics.totalPriceSamples;
+          priceMetrics.avgDrawdown = (priceMetrics.avgDrawdown * (priceMetrics.totalPriceSamples - 1) + stats.maxDrawdown) / priceMetrics.totalPriceSamples;
+        }
       }
 
       this.updateSummaryMetrics(stats);

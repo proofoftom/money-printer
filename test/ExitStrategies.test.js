@@ -171,7 +171,7 @@ describe('ExitStrategies', () => {
     it('should take first tier profit', () => {
       const result = exitStrategies.shouldExit(position, 120, 0); // 20% profit
       expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('TAKE_PROFIT');
+      expect(result.reason).to.equal('takeProfit_tier1');
       expect(result.portion).to.equal(0.4);
       expect(exitStrategies.remainingPosition).to.equal(0.6);
     });
@@ -183,7 +183,7 @@ describe('ExitStrategies', () => {
       // Second take profit
       const result = exitStrategies.shouldExit(position, 140, 0); // 40% profit
       expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('TAKE_PROFIT');
+      expect(result.reason).to.equal('takeProfit_tier2');
       expect(result.portion).to.equal(0.4);
       expect(exitStrategies.remainingPosition).to.equal(0.2);
     });
@@ -196,7 +196,7 @@ describe('ExitStrategies', () => {
       // Final take profit
       const result = exitStrategies.shouldExit(position, 160, 0); // 60% profit
       expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('TAKE_PROFIT');
+      expect(result.reason).to.equal('takeProfit_tier3');
       expect(result.portion).to.equal(0.2);
       expect(exitStrategies.remainingPosition).to.equal(0);
     });

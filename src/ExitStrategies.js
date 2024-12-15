@@ -19,13 +19,13 @@ class ExitStrategies {
   shouldExit(position, currentPrice, currentVolume) {
     // Skip all checks if no position remaining
     if (this.remainingPosition === 0) {
-      return { shouldExit: false, portion: 0 };
+      return { shouldExit: false };
     }
 
     // Check take profit first to capture gains
     const takeProfitResult = this.checkTakeProfit(position, currentPrice);
     if (takeProfitResult.shouldExit) {
-      return takeProfitResult;
+      return { ...takeProfitResult, reason: `takeProfit_tier${this.getTakeProfitTier(position, currentPrice)}` };
     }
 
     // Other exit conditions exit the entire remaining position
@@ -53,7 +53,7 @@ class ExitStrategies {
       return { shouldExit: true, reason: 'TIME_LIMIT', portion };
     }
 
-    return { shouldExit: false, portion: 0 };
+    return { shouldExit: false };
   }
 
   checkStopLoss(position, currentPrice) {
@@ -170,11 +170,22 @@ class ExitStrategies {
         this.triggeredTiers.add(tier.THRESHOLD);
         const portion = Math.min(tier.PORTION, this.remainingPosition);
         this.remainingPosition = this.roundToDecimals(this.remainingPosition - portion);
-        return { shouldExit: true, reason: 'TAKE_PROFIT', portion: this.roundToDecimals(portion) };
+        return { shouldExit: true, portion: this.roundToDecimals(portion) };
       }
     }
 
     return { shouldExit: false, portion: 0 };
+  }
+
+  getTakeProfitTier(position, currentPrice) {
+    const percentageGain = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    const tiers = this.config.EXIT_STRATEGIES.TAKE_PROFIT.TIERS;
+    for (let i = tiers.length - 1; i >= 0; i--) {
+      if (percentageGain >= tiers[i].THRESHOLD) {
+        return i + 1;
+      }
+    }
+    return 0;
   }
 
   calculateVolatility() {
