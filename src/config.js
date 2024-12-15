@@ -73,5 +73,13 @@ module.exports = {
       EXTENSION_THRESHOLD: 40, // Extend time if profit > 40%
       EXTENSION_TIME: 900, // Add 15 minutes if above threshold
     },
+    TAKE_PROFIT: {
+      ENABLED: true,
+      TIERS: [
+        { THRESHOLD: 20, PORTION: 0.4 }, // At 20% profit, take 40%
+        { THRESHOLD: 40, PORTION: 0.4 }, // At 40% profit, take another 40%
+        { THRESHOLD: 60, PORTION: 0.2 }, // At 60% profit, take final 20%
+      ],
+    },
   },
 };
