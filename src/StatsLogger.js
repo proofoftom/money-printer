@@ -3,8 +3,8 @@ const path = require('path');
 
 class StatsLogger {
   constructor(options = {}) {
-    this.maxFileSize = options.maxFileSize || 100 * 1024 * 1024; // 100 MB default
-    this.logDir = options.logDir || 'logs';
+    this.maxFileSize = options.maxFileSize || 500 * 1024 * 1024; // 500 MB default
+    this.logDir = options.logDir || 'logs/trading';
     this.currentLogFile = null;
     this.summaryMetrics = {
       totalTrades: 0,
@@ -47,38 +47,65 @@ class StatsLogger {
         totalPriceSamples: 0
       }
     };
-    this.ensureLogDirectory();
-    this.rotateLogFileIfNeeded();
-  }
 
-  ensureLogDirectory() {
+    // Ensure log directory exists
     if (!fs.existsSync(this.logDir)) {
       fs.mkdirSync(this.logDir, { recursive: true });
     }
+
+    this.rotateLogFileIfNeeded();
   }
 
   rotateLogFileIfNeeded() {
     const date = new Date().toISOString().split('T')[0];
     const newLogFile = path.join(this.logDir, `trading_stats_${date}.json`);
 
-    if (this.currentLogFile === newLogFile && fs.existsSync(newLogFile)) {
-      const stats = fs.statSync(newLogFile);
-      if (stats.size < this.maxFileSize) {
-        return;
-      }
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const archiveFile = path.join(this.logDir, `trading_stats_${date}_${timestamp}.json`);
-      fs.renameSync(newLogFile, archiveFile);
-    }
-
-    this.currentLogFile = newLogFile;
-    
-    if (!fs.existsSync(this.currentLogFile)) {
-      fs.writeFileSync(this.currentLogFile, JSON.stringify({
+    // Create initial empty file if it doesn't exist
+    if (!fs.existsSync(newLogFile)) {
+      fs.mkdirSync(path.dirname(newLogFile), { recursive: true });
+      fs.writeFileSync(newLogFile, JSON.stringify({
         trades: [],
         marketConditions: [],
         summary: this.summaryMetrics
       }, null, 2));
+    }
+
+    // Check if we need to rotate due to size
+    if (this.currentLogFile === newLogFile) {
+      const stats = fs.statSync(newLogFile);
+      if (stats.size >= this.maxFileSize) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const archiveFile = path.join(this.logDir, `trading_stats_${date}_${timestamp}.json`);
+        fs.renameSync(newLogFile, archiveFile);
+        fs.writeFileSync(newLogFile, JSON.stringify({
+          trades: [],
+          marketConditions: [],
+          summary: this.summaryMetrics
+        }, null, 2));
+      }
+    }
+
+    // Clean up old log files if total size exceeds limit
+    this.cleanupOldLogs();
+    this.currentLogFile = newLogFile;
+  }
+
+  cleanupOldLogs() {
+    const files = fs.readdirSync(this.logDir)
+      .filter(file => file.startsWith('trading_stats_'))
+      .map(file => ({
+        name: file,
+        path: path.join(this.logDir, file),
+        stats: fs.statSync(path.join(this.logDir, file))
+      }))
+      .sort((a, b) => b.stats.mtime.getTime() - a.stats.mtime.getTime());
+
+    let totalSize = 0;
+    for (const file of files) {
+      totalSize += file.stats.size;
+      if (totalSize > this.maxFileSize) {
+        fs.unlinkSync(file.path);
+      }
     }
   }
 
@@ -88,7 +115,7 @@ class StatsLogger {
     this.summaryMetrics.totalTrades++;
     
     const profit = stats.profitLoss;
-    const holdTime = stats.holdTimeSeconds;
+    const holdTime = stats.holdTimeSeconds || 0;
     
     if (profit > 0) {
       this.summaryMetrics.winningTrades++;
@@ -119,6 +146,45 @@ class StatsLogger {
       this.summaryMetrics.totalProfit;
     
     this.summaryMetrics.riskRewardRatio = Math.abs(this.summaryMetrics.largestWin / this.summaryMetrics.largestLoss);
+
+    // Update exit stats
+    if (stats.exitReason) {
+      const [exitType, subType] = stats.exitReason.split('_');
+      if (this.summaryMetrics.exitStats[exitType]) {
+        if (subType && this.summaryMetrics.exitStats[exitType][subType]) {
+          const exitStats = this.summaryMetrics.exitStats[exitType][subType];
+          exitStats.count++;
+          exitStats.totalPnL += profit;
+          exitStats.avgHoldTime = (exitStats.avgHoldTime * (exitStats.count - 1) + holdTime) / exitStats.count;
+        } else {
+          const exitStats = this.summaryMetrics.exitStats[exitType];
+          exitStats.count++;
+          exitStats.totalPnL += profit;
+          exitStats.avgHoldTime = (exitStats.avgHoldTime * (exitStats.count - 1) + holdTime) / exitStats.count;
+        }
+      }
+    }
+  }
+
+  getSummaryMetrics() {
+    return {
+      totalTrades: this.summaryMetrics.totalTrades,
+      winningTrades: this.summaryMetrics.winningTrades,
+      losingTrades: this.summaryMetrics.losingTrades,
+      totalProfit: this.summaryMetrics.totalProfit,
+      totalLoss: this.summaryMetrics.totalLoss,
+      largestWin: this.summaryMetrics.largestWin,
+      largestLoss: this.summaryMetrics.largestLoss,
+      averageHoldTime: this.summaryMetrics.averageHoldTime,
+      averageWinHoldTime: this.summaryMetrics.averageWinHoldTime,
+      averageLossHoldTime: this.summaryMetrics.averageLossHoldTime,
+      winRate: this.summaryMetrics.winRate,
+      profitFactor: this.summaryMetrics.profitFactor,
+      riskRewardRatio: this.summaryMetrics.riskRewardRatio,
+      exitStats: this.summaryMetrics.exitStats,
+      volumeMetrics: this.summaryMetrics.volumeMetrics,
+      priceMetrics: this.summaryMetrics.priceMetrics
+    };
   }
 
   logStats(stats) {

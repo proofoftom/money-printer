@@ -37,6 +37,25 @@ module.exports = {
     MAX_WASH_TRADE_PERCENTAGE: 20, // Maximum percentage of suspected wash trades
   },
 
+  // Safety configuration
+  SAFETY: {
+    SOL_PRICE_USD: 100, // Current SOL price in USD
+    MIN_MARKET_CAP_USD: 10000, // $10k minimum market cap
+    MAX_MARKET_CAP_USD: 10000000, // $10M maximum market cap
+    MIN_TOKEN_AGE_SECONDS: 3600, // 1 hour minimum age
+    MAX_PUMP_MULTIPLE: 10, // Maximum 10x from initial price
+    MAX_PRICE_VOLATILITY: 50, // Maximum 50% volatility
+    MIN_UNIQUE_BUYERS: 50, // Minimum unique buyers
+    MAX_AVG_TRADE_SIZE_USD: 5000, // Maximum $5k average trade
+    MIN_BUY_SELL_RATIO: 0.4, // Minimum 40% buys
+    MAX_SINGLE_WALLET_VOLUME: 20, // Maximum 20% volume from single wallet
+    MIN_HOLDERS: 100, // Minimum holder count
+    MAX_TOP_HOLDER_CONCENTRATION: 50, // Maximum 50% held by top holders
+    MIN_HOLDER_WALLET_AGE: 7, // Minimum 7 days wallet age
+    MIN_VOLUME_PRICE_CORRELATION: 0.5, // Minimum correlation coefficient
+    MAX_WASH_TRADE_PERCENTAGE: 30 // Maximum 30% suspected wash trading
+  },
+
   // Position sizing
   POSITION: {
     SIZE: 0.2, // Position size in SOL
