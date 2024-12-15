@@ -78,16 +78,21 @@ class TokenTracker extends EventEmitter {
         break;
 
       case "inPosition":
-        const result = this.positionManager.updatePosition(token.mint, token.marketCapSol);
+        const result = this.positionManager.updatePosition(
+          token.mint, 
+          token.marketCapSol,
+          { volume: token.volume24h }
+        );
         if (result) {
           if (result.portion === 1.0) {
             token.setState("closed");
-            this.emit("positionClosed", { token, reason: "exit_strategy" });
+            this.emit("positionClosed", { token, reason: result.reason || "exit_strategy" });
           } else {
-            this.emit("takeProfitExecuted", {
+            this.emit("partialExit", {
               token,
-              percentage: ((token.marketCapSol - result.entryPrice) / result.entryPrice) * 100,
-              portion: result.portion
+              percentage: result.profitPercentage,
+              portion: result.portion,
+              reason: result.reason || "take_profit"
             });
           }
         }

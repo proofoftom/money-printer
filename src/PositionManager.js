@@ -193,17 +193,11 @@ Partial Position Close:
 
     this.statsLogger.logStats(stats);
 
-    if (this.exitStrategies.shouldStopLoss(position)) {
-      return this.closePosition(mint, currentPrice);
-    }
-
-    if (this.exitStrategies.shouldTakeProfit(position)) {
-      return this.closePosition(mint, currentPrice);
-    }
-
-    const tierExit = this.exitStrategies.calculateTierExit(position);
-    if (tierExit !== null) {
-      return this.closePosition(mint, currentPrice, tierExit);
+    // Check all exit strategies
+    const exitResult = this.exitStrategies.shouldExit(position, currentPrice, volumeData?.volume || 0);
+    
+    if (exitResult.shouldExit) {
+      return this.closePosition(mint, currentPrice, exitResult.portion || 1.0);
     }
 
     return null;
