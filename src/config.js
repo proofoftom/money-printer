@@ -21,7 +21,7 @@ module.exports = {
     // Holder Distribution Thresholds
     MIN_HOLDERS: 25, // Minimum number of unique holders
     MAX_TOP_HOLDER_CONCENTRATION: 30, // Maximum percentage of supply held by top holders
-    
+
     // Price Action Thresholds
     MAX_INITIAL_PRICE_MULT: 3, // Maximum multiplier from initial price
     MAX_PRICE_VOLATILITY: 50, // Maximum price volatility percentage
@@ -53,7 +53,7 @@ module.exports = {
     MAX_TOP_HOLDER_CONCENTRATION: 50, // Maximum 50% held by top holders
     MIN_HOLDER_WALLET_AGE: 7, // Minimum 7 days wallet age
     MIN_VOLUME_PRICE_CORRELATION: 0.5, // Minimum correlation coefficient
-    MAX_WASH_TRADE_PERCENTAGE: 30 // Maximum 30% suspected wash trading
+    MAX_WASH_TRADE_PERCENTAGE: 30, // Maximum 30% suspected wash trading
   },
 
   // Position sizing
@@ -100,5 +100,14 @@ module.exports = {
         { THRESHOLD: 60, PORTION: 0.2 }, // At 60% profit, take final 20%
       ],
     },
+  },
+
+  // WebSocket configuration
+  WEBSOCKET: {
+    URL: "wss://pumpportal.fun/data-api/real-time",
+    RECONNECT_TIMEOUT: 5000, // 5 seconds
+    PING_INTERVAL: 30000, // 30 seconds
+    PONG_TIMEOUT: 10000, // 10 seconds
+    MAX_RETRIES: 5,
   },
 };
