@@ -16,8 +16,27 @@ class PositionManager {
     this.transactionSimulator = new TransactionSimulator();
   }
 
-  async openPosition(mint, marketCap) {
-    const positionSize = config.POSITION.SIZE;
+  calculatePositionSize(marketCap, volatility = 0) {
+    let size = config.POSITION.MIN_POSITION_SIZE_SOL;
+    
+    // Base size calculation
+    const marketCapBasedSize = marketCap * config.POSITION.POSITION_SIZE_MARKET_CAP_RATIO;
+    size = Math.min(marketCapBasedSize, config.POSITION.MAX_POSITION_SIZE_SOL);
+    size = Math.max(size, config.POSITION.MIN_POSITION_SIZE_SOL);
+
+    // Apply dynamic sizing if enabled
+    if (config.POSITION.USE_DYNAMIC_SIZING) {
+      // Scale based on volatility
+      const volatilityMultiplier = Math.max(0, 1 - (volatility * config.POSITION.VOLATILITY_SCALING_FACTOR));
+      size *= volatilityMultiplier;
+    }
+
+    return size;
+  }
+
+  async openPosition(mint, marketCap, volatility = 0) {
+    const positionSize = this.calculatePositionSize(marketCap, volatility);
+    
     if (this.wallet.balance >= positionSize) {
       // Simulate transaction delay and price impact
       const delay = await this.transactionSimulator.simulateTransactionDelay();
@@ -199,43 +218,36 @@ Partial Position Close:
     if (volumeData) {
       position.volumeHistory.push({
         timestamp: Date.now(),
-        volume: volumeData
+        volume: volumeData.volume,
+        price: currentPrice
       });
+
+      // Keep only recent volume history
+      const historyWindow = config.POSITION.PEAK_VOLUME_WINDOW || 300;
+      const cutoffTime = Date.now() - (historyWindow * 1000);
+      position.volumeHistory = position.volumeHistory.filter(v => v.timestamp >= cutoffTime);
     }
+
     if (candleData) {
       position.candleHistory.push({
         timestamp: Date.now(),
-        ...candleData
+        open: candleData.open,
+        high: candleData.high,
+        low: candleData.low,
+        close: candleData.close,
+        volume: candleData.volume
       });
     }
 
-    // Log position update stats
-    const stats = {
-      type: 'POSITION_UPDATE',
-      mint,
+    return {
       currentPrice,
-      highestPrice: position.highestPrice,
-      lowestPrice: position.lowestPrice,
+      entryPrice: position.entryPrice,
+      size: position.size,
+      remainingSize: position.remainingSize,
+      profitLoss: ((currentPrice - position.entryPrice) / position.entryPrice) * 100,
       maxUpside: position.maxUpside,
-      maxDrawdown: position.maxDrawdown,
-      holdTimeSeconds: Math.round((Date.now() - position.entryTime) / 1000),
-      unrealizedPL: ((currentPrice - position.entryPrice) / position.entryPrice) * position.size * position.remainingSize,
-      unrealizedPLPercentage: ((currentPrice - position.entryPrice) / position.entryPrice) * 100
+      maxDrawdown: position.maxDrawdown
     };
-
-    if (volumeData) stats.volumeData = volumeData;
-    if (candleData) stats.candleData = candleData;
-
-    this.statsLogger.logStats(stats);
-
-    // Check all exit strategies
-    const exitResult = this.exitStrategies.shouldExit(position, currentPrice, volumeData?.volume || 0);
-    
-    if (exitResult.shouldExit) {
-      return this.closePosition(mint, currentPrice, exitResult.portion || 1.0);
-    }
-
-    return null;
   }
 
   getPosition(mint) {

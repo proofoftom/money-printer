@@ -20,7 +20,7 @@ class SafetyChecker {
         approved = false;
         rejectionCategory = 'marketCap';
         rejectionReason = token.marketCapSol * config.SAFETY.SOL_PRICE_USD > config.SAFETY.MAX_MARKET_CAP_USD ? 'high' : 'low';
-      } else if (!this.checkTimeAndAge(token)) {
+      } else if (!this.checkTokenAge(token)) {
         approved = false;
         rejectionCategory = 'age';
         rejectionReason = 'tooNew';
@@ -77,7 +77,7 @@ class SafetyChecker {
            marketCapUSD >= config.SAFETY.MIN_MARKET_CAP_USD;
   }
 
-  checkTimeAndAge(token) {
+  checkTokenAge(token) {
     const ageInSeconds = (Date.now() - token.createdAt) / 1000;
     return ageInSeconds >= config.SAFETY.MIN_TOKEN_AGE_SECONDS;
   }
@@ -143,9 +143,9 @@ class SafetyChecker {
     return token.creatorExited;
   }
 
-  isTokenSafe(token) {
+  checkAll(token) {
     return this.checkMarketCap(token) &&
-           this.checkTimeAndAge(token) &&
+           this.checkTokenAge(token) &&
            this.checkPriceAction(token) &&
            this.checkTradingPatterns(token) &&
            this.checkHolderDistribution(token) &&
