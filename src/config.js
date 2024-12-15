@@ -110,4 +110,22 @@ module.exports = {
     PONG_TIMEOUT: 10000, // 10 seconds
     MAX_RETRIES: 5,
   },
+
+  // Transaction simulation settings
+  TRANSACTION: {
+    SIMULATION_MODE: {
+      ENABLED: true, // Toggle between simulation and real transactions
+      AVG_BLOCK_TIME: 0.4, // Average Solana block time in seconds
+      PRICE_IMPACT: {
+        ENABLED: true,
+        SLIPPAGE_BASE: 0.5, // Base slippage percentage
+        VOLUME_MULTIPLIER: 0.1, // Additional slippage per 1000 SOL volume
+      },
+      NETWORK_DELAY: {
+        MIN_MS: 100, // Minimum network delay in milliseconds
+        MAX_MS: 500, // Maximum network delay in milliseconds
+        CONGESTION_MULTIPLIER: 1.5, // Delay multiplier during high congestion
+      },
+    },
+  },
 };
