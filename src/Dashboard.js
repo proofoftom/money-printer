@@ -349,10 +349,10 @@ class Dashboard {
             const topConcentration = token.getTopHolderConcentration(10);
             const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
 
-            // Get volume data
-            const vol1m = token.getVolume('1m').toFixed(4);
-            const vol5m = token.getVolume('5m').toFixed(4);
-            const vol1h = token.getVolume('30m').toFixed(4);
+            // Get volume data in USD
+            const vol1m = this.priceManager.solToUSD(token.getVolume('1m')).toFixed(4);
+            const vol5m = this.priceManager.solToUSD(token.getVolume('5m')).toFixed(4);
+            const vol1h = this.priceManager.solToUSD(token.getVolume('30m')).toFixed(4);
             const volumeStr = `VOL 1m: $${vol1m} | 5m: $${vol5m} | 1h: $${vol1h}`;
 
             // Format the token info string

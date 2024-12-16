@@ -29,6 +29,9 @@ class Token extends EventEmitter {
       cleanupInterval: 5 * 60 * 1000, // Cleanup every 5 minutes
     };
 
+    // Price tracking
+    this.currentPrice = this.calculateTokenPrice();
+
     // Initialize creator as holder if initial balance provided
     if (tokenData.newTokenBalance) {
       this.holders.set(tokenData.traderPublicKey, tokenData.newTokenBalance);
@@ -67,9 +70,13 @@ class Token extends EventEmitter {
       this.vSolInBondingCurve = data.vSolInBondingCurve;
     }
 
+    // Update current price after bonding curve values change
+    this.currentPrice = this.calculateTokenPrice();
+
     // Update volume if trade data is provided
-    if (data.tradeAmount) {
-      this.updateVolume(data.tradeAmount);
+    if (data.tradeAmount && data.tokenAmount) {
+      const volumeInSol = data.tokenAmount * this.currentPrice;
+      this.updateVolume(volumeInSol);
     }
 
     if (data.traderPublicKey && typeof data.newTokenBalance !== "undefined") {
@@ -79,6 +86,13 @@ class Token extends EventEmitter {
         this.holders.delete(data.traderPublicKey);
       }
     }
+  }
+
+  calculateTokenPrice() {
+    if (!this.vTokensInBondingCurve || !this.vSolInBondingCurve || this.vTokensInBondingCurve === 0) {
+      return 0;
+    }
+    return this.vSolInBondingCurve / this.vTokensInBondingCurve;
   }
 
   updateVolume(tradeAmount) {
@@ -245,6 +259,10 @@ class Token extends EventEmitter {
 
   isDead(threshold) {
     return this.marketCapSol < threshold;
+  }
+
+  getTokenPrice() {
+    return this.currentPrice;
   }
 }
 
