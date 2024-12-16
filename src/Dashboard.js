@@ -266,58 +266,44 @@ class Dashboard {
       return "No active positions";
     }
 
-    const positionStrings = positions.map((pos) => {
-      // Calculate basic stats
-      const pnl = ((pos.currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-      const holdTime = (Date.now() - pos.entryTime) / 1000;
+    const positionStrings = positions.map((position) => {
+      // Get position metrics using Position class methods
+      const { percentage: pnl } = position.getProfitLoss();
+      const holdTime = position.getHoldTime() / 1000; // Convert to seconds
       const holdTimeStr = holdTime < 60 
         ? `${holdTime.toFixed(0)}s` 
         : `${(holdTime / 60).toFixed(1)}m`;
 
-      // Calculate price velocity (change per minute)
-      const priceHistory = pos.priceHistory || [];
-      const recentPrices = priceHistory.slice(-5); // Last 5 price points
-      const velocity = recentPrices.length > 1
-        ? ((recentPrices[recentPrices.length - 1] - recentPrices[0]) / recentPrices[0]) * 100
-        : 0;
+      // Get price metrics
+      const priceMetrics = position.getPriceMetrics();
+      const velocityIndicator = priceMetrics.velocity > 0 
+        ? '{green-fg}↑' + priceMetrics.velocity.toFixed(1) + '%/m{/green-fg}' 
+        : '{red-fg}↓' + Math.abs(priceMetrics.velocity).toFixed(1) + '%/m{/red-fg}';
 
-      // Get volume trends
-      const volumeHistory = pos.volumeHistory || [];
-      const recentVolume = volumeHistory.slice(-3); // Last 3 volume points
-      const volumeTrend = recentVolume.length > 1
-        ? ((recentVolume[recentVolume.length - 1] - recentVolume[0]) / recentVolume[0]) * 100
-        : 0;
+      // Get volume metrics
+      const volumeMetrics = position.getVolumeMetrics();
+      const volumeIndicator = volumeMetrics.trend > 0
+        ? '{green-fg}↑' + volumeMetrics.trend.toFixed(0) + '%{/green-fg}'
+        : '{red-fg}↓' + Math.abs(volumeMetrics.trend).toFixed(0) + '%{/red-fg}';
 
-      // Format velocity indicator
-      const velocityIndicator = velocity > 0 
-        ? '{green-fg}↑' + velocity.toFixed(1) + '%/m{/green-fg}' 
-        : '{red-fg}↓' + Math.abs(velocity).toFixed(1) + '%/m{/red-fg}';
-
-      // Format volume trend indicator
-      const volumeIndicator = volumeTrend > 0
-        ? '{green-fg}↑' + volumeTrend.toFixed(0) + '%{/green-fg}'
-        : '{red-fg}↓' + Math.abs(volumeTrend).toFixed(0) + '%{/red-fg}';
-
-      // Calculate profit trend
-      const profitTrend = pos.profitHistory || [];
-      const recentProfit = profitTrend.slice(-3);
-      const profitDirection = recentProfit.length > 1
-        ? recentProfit[recentProfit.length - 1] > recentProfit[0] ? "▲" : "▼"
-        : "─";
+      // Get profit trend
+      const profitMetrics = position.getProfitMetrics();
+      const profitDirection = profitMetrics.trend > 0 ? "▲" : profitMetrics.trend < 0 ? "▼" : "─";
 
       // Format P/L with color and trend
       const plColor = pnl >= 0 ? 'green' : 'red';
       const plStr = `{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(1)}%{/${plColor}-fg}`;
 
       // Get volume in USD
-      const volumeUSD = this.priceManager.solToUSD(pos.volume);
+      const volumeUSD = this.priceManager.solToUSD(position.getCurrentVolume());
 
       // Build the display string with dynamic data
       return [
-        `${pos.mint?.slice(0, 8)}... | ${holdTimeStr} | P/L: ${plStr}`,
-        `Price: ${pos.currentPrice?.toFixed(4)} SOL ${velocityIndicator}`,
-        `Vol: ${this.formatVolume(pos.volume5m || 0)}$ ${volumeIndicator}`,
-        `Entry: ${pos.entryPrice?.toFixed(4)} | High: ${pos.highPrice?.toFixed(4)}`,
+        `${position.mint?.slice(0, 8)}... | ${holdTimeStr} | P/L: ${plStr}`,
+        `Price: ${position.getCurrentPrice()?.toFixed(4)} SOL ${velocityIndicator}`,
+        `Vol: ${this.formatVolume(position.getCurrentVolume())}$ ${volumeIndicator}`,
+        `Entry: ${position.getEntryPrice()?.toFixed(4)} | High: ${position.getHighPrice()?.toFixed(4)}`,
+        `Size: ${(position.getRemainingSize() * 100).toFixed(0)}% | Exits: ${position.getPartialExits().length}`,
         "─".repeat(50) // Separator
       ].join("\n");
     });
@@ -332,7 +318,7 @@ class Dashboard {
         timestamp,
         type,
         mint,
-        profitLoss,
+        profitLoss: typeof profitLoss === 'object' ? profitLoss.percentage : profitLoss,
         symbol,
       };
       this.trades.unshift(trade);
@@ -342,39 +328,6 @@ class Dashboard {
       }
     } catch (error) {
       throw error;
-    }
-  }
-
-  getTradeHistory() {
-    try {
-      if (this.trades.length === 0) {
-        return "No trades yet";
-      }
-
-      return this.trades
-        .map((trade) => {
-          try {
-            const profitLossStr = trade.profitLoss !== undefined && trade.profitLoss !== null
-              ? `${trade.profitLoss >= 0 ? "+" : ""}${trade.profitLoss.toFixed(1)}%`
-              : "N/A";
-
-            const symbol = trade.symbol || trade.mint?.slice(0, 8) || "Unknown";
-            
-            // Color code based on trade type and profit/loss
-            let tradeColor = "white";
-            if (trade.type === "BUY") tradeColor = "yellow";
-            else if (trade.type === "SELL" || trade.type === "CLOSE") {
-              tradeColor = trade.profitLoss >= 0 ? "green" : "red";
-            }
-
-            return `{${tradeColor}-fg}[${trade.timestamp}] {${tradeColor}-fg}${trade.type.padEnd(5)} {/${tradeColor}-fg}{white-fg} ${symbol.padEnd(12)} {/${tradeColor}-fg}{${tradeColor}-fg} ${profitLossStr}{/${tradeColor}-fg}`;
-          } catch (err) {
-            return `Error formatting trade: ${err.message}`;
-          }
-        })
-        .join("\n");
-    } catch (error) {
-      return "Error displaying trade history";
     }
   }
 

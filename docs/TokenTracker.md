@@ -432,3 +432,323 @@ evaluateTokenState(token);
    - Pattern recognition
    - Performance metrics
    - Strategy optimization
+
+## Token Tracker
+
+The `TokenTracker` class orchestrates token state management and coordinates updates between tokens, positions, and other system components in the Money Printer system.
+
+## Features
+
+- Token state management
+- Position coordination
+- Price update handling
+- Volume tracking
+- Market monitoring
+- Event coordination
+- Performance tracking
+- Risk management
+
+## Class Structure
+
+### Constructor
+```javascript
+constructor({
+  config,
+  statsLogger,
+  eventEmitter,
+  positionManager
+}) {
+  this.config = config;
+  this.statsLogger = statsLogger;
+  this.eventEmitter = eventEmitter;
+  this.positionManager = positionManager;
+  
+  this.tokens = new Map();
+  this.priceFeeds = new Map();
+  this.metrics = new TrackerMetrics();
+  
+  this.initialize();
+}
+```
+
+### Core Methods
+
+#### Token Management
+```javascript
+addToken(token)
+removeToken(token)
+getToken(mint)
+getAllTokens()
+```
+
+#### State Management
+```javascript
+updateTokenState(mint, update)
+batchUpdateTokens(updates)
+validateTokenStates()
+```
+
+#### Position Coordination
+```javascript
+handlePositionOpen(position)
+handlePositionUpdate(position)
+handlePositionClose(position)
+validatePositionStates()
+```
+
+#### Market Analysis
+```javascript
+analyzeMarketConditions()
+calculateCorrelations()
+assessLiquidity()
+evaluateRisk()
+```
+
+## Events
+
+### Token Events
+- `tokenAdded`: New token tracked
+- `tokenRemoved`: Token removed
+- `tokenUpdated`: Token state changed
+- `tokenAlert`: Token alert triggered
+
+### Position Events
+- `positionOpened`: New position created
+- `positionUpdated`: Position changed
+- `positionClosed`: Position closed
+- `positionAlert`: Position alert triggered
+
+### Market Events
+- `marketUpdate`: Market conditions
+- `liquidityAlert`: Liquidity changes
+- `correlationAlert`: Correlation changes
+- `riskAlert`: Risk threshold breach
+
+### System Events
+- `stateValidated`: State validation
+- `metricsUpdated`: New metrics
+- `error`: Error occurred
+
+## Integration
+
+### With Token Class
+```javascript
+// Handle token updates
+async handleTokenUpdate(token, update) {
+  // Update token state
+  await token.updateState(update);
+  
+  // Update positions
+  for (const position of token.getActivePositions()) {
+    await this.positionManager.updatePosition(
+      position.id,
+      update.price,
+      update.volume
+    );
+  }
+  
+  // Update metrics
+  this.metrics.updateTokenMetrics(token);
+  
+  // Emit events
+  this.emit('tokenUpdated', {
+    token: token.mint,
+    update,
+    positions: token.activePositions.size
+  });
+}
+```
+
+### With PositionManager
+```javascript
+// Handle position events
+handlePositionEvent(event) {
+  const { position, type } = event;
+  const token = this.getToken(position.token.mint);
+  
+  switch (type) {
+    case 'open':
+      token.addPosition(position);
+      break;
+    case 'update':
+      token.updatePositionState(position);
+      break;
+    case 'close':
+      token.removePosition(position);
+      break;
+  }
+  
+  this.validateTokenState(token);
+}
+```
+
+## Example Usage
+
+```javascript
+// Initialize tracker
+const tracker = new TokenTracker({
+  config,
+  statsLogger,
+  eventEmitter,
+  positionManager
+});
+
+// Add token
+const token = new Token({
+  mint: 'So11111111111111111111111111111111111111112',
+  name: 'Wrapped SOL',
+  symbol: 'SOL',
+  decimals: 9
+});
+tracker.addToken(token);
+
+// Update token state
+await tracker.updateTokenState(token.mint, {
+  price: 1.5,
+  volume: 10000,
+  timestamp: Date.now()
+});
+
+// Handle position
+const position = await positionManager.openPosition(token, 1.5, 2.0);
+tracker.handlePositionOpen(position);
+
+// Get market analysis
+const market = tracker.analyzeMarketConditions();
+const risk = tracker.evaluateRisk();
+```
+
+## Configuration
+
+```javascript
+{
+  TOKEN_TRACKER: {
+    UPDATE_INTERVAL: 60000,
+    BATCH_SIZE: 100,
+    VALIDATION_INTERVAL: 300000,
+    PRICE_FEEDS: {
+      PRIMARY: 'jupiter',
+      BACKUP: 'birdeye'
+    },
+    MARKET_ANALYSIS: {
+      CORRELATION_WINDOW: 24,
+      LIQUIDITY_THRESHOLD: 10000,
+      RISK_CHECK_INTERVAL: 300000
+    },
+    POSITION_TRACKING: {
+      MAX_POSITIONS_PER_TOKEN: 5,
+      STATE_VALIDATION_INTERVAL: 60000
+    },
+    METRICS: {
+      UPDATE_INTERVAL: 60000,
+      HISTORY_LENGTH: 1000
+    }
+  }
+}
+```
+
+## Error Handling
+
+```javascript
+try {
+  await this.updateTokenState(mint, update);
+} catch (error) {
+  this.emit('error', {
+    error,
+    context: 'tokenUpdate',
+    token: mint
+  });
+  
+  // Attempt recovery
+  await this.recoverTokenState(mint);
+}
+```
+
+## Performance Optimization
+
+1. Batch Processing
+```javascript
+async processBatch(updates) {
+  const batch = new Map();
+  for (const update of updates) {
+    batch.set(update.token, {
+      price: update.price,
+      volume: update.volume
+    });
+  }
+  await this.batchUpdateTokens(batch);
+}
+```
+
+2. Efficient Updates
+```javascript
+optimizeUpdates() {
+  // Group updates by token
+  const groups = new Map();
+  for (const update of this.pendingUpdates) {
+    const group = groups.get(update.token) || [];
+    group.push(update);
+    groups.set(update.token, group);
+  }
+  
+  // Process groups
+  for (const [token, updates] of groups) {
+    this.processTokenUpdates(token, updates);
+  }
+}
+```
+
+## Market Analysis
+
+### Correlation Analysis
+```javascript
+calculateCorrelations() {
+  const correlations = new Map();
+  for (const [mintA, tokenA] of this.tokens) {
+    for (const [mintB, tokenB] of this.tokens) {
+      if (mintA !== mintB) {
+        correlations.set(
+          `${mintA}-${mintB}`,
+          this.calculateTokenCorrelation(tokenA, tokenB)
+        );
+      }
+    }
+  }
+  return correlations;
+}
+```
+
+### Liquidity Assessment
+```javascript
+assessLiquidity() {
+  return Array.from(this.tokens.values())
+    .map(token => ({
+      token: token.mint,
+      liquidity: token.calculateLiquidity(),
+      depth: token.getMarketDepth(),
+      risk: this.calculateLiquidityRisk(token)
+    }));
+}
+```
+
+## Best Practices
+
+1. Regular state validation
+2. Efficient updates
+3. Error handling
+4. Event coordination
+5. Performance monitoring
+6. Risk management
+7. Security measures
+8. Documentation maintenance
+
+## Security Considerations
+
+1. Input validation
+2. State integrity
+3. Access control
+4. Event validation
+5. Error handling
+6. Rate limiting
+7. Data encryption
+8. Audit logging

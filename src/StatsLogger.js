@@ -25,14 +25,14 @@ class StatsLogger {
       riskRewardRatio: 0,
       exitStats: {
         stopLoss: { count: 0, totalPnL: 0, avgHoldTime: 0 },
-        trailingStop: { count: 0, totalPnL: 0, avgHoldTime: 0 },
+        trailingStop: { count: 0, totalPnL: 0, avgHoldTime: 0, avgTrailDistance: 0 },
         takeProfit: {
           tier1: { count: 0, totalPnL: 0, avgHoldTime: 0 },
           tier2: { count: 0, totalPnL: 0, avgHoldTime: 0 },
           tier3: { count: 0, totalPnL: 0, avgHoldTime: 0 }
         },
-        volumeExit: { count: 0, totalPnL: 0, avgHoldTime: 0 },
-        timeExit: { count: 0, totalPnL: 0, avgHoldTime: 0 }
+        volumeExit: { count: 0, totalPnL: 0, avgHoldTime: 0, avgVolumeDropPercent: 0 },
+        timeExit: { count: 0, totalPnL: 0, avgHoldTime: 0, avgPriceChange: 0 }
       },
       volumeMetrics: {
         avgExitVolume: 0,
@@ -44,7 +44,14 @@ class StatsLogger {
         avgMaxUpside: 0,
         avgDrawdown: 0,
         avgRecoveryTime: 0,
-        totalPriceSamples: 0
+        totalPriceSamples: 0,
+        avgVolatility: 0
+      },
+      positionMetrics: {
+        avgPositionSize: 0,
+        totalPositions: 0,
+        partialExits: 0,
+        avgPartialExitPnL: 0
       }
     };
 
@@ -183,7 +190,8 @@ class StatsLogger {
       riskRewardRatio: this.summaryMetrics.riskRewardRatio,
       exitStats: this.summaryMetrics.exitStats,
       volumeMetrics: this.summaryMetrics.volumeMetrics,
-      priceMetrics: this.summaryMetrics.priceMetrics
+      priceMetrics: this.summaryMetrics.priceMetrics,
+      positionMetrics: this.summaryMetrics.positionMetrics
     };
   }
 
@@ -204,7 +212,7 @@ class StatsLogger {
           mint: stats.mint,
           price: stats.currentPrice,
           volume: stats.volumeData,
-          volatility: this.calculateVolatility(stats.candleHistory),
+          volatility: stats.token?.getVolatility() || this.calculateVolatility(stats.candleHistory),
           momentum: this.calculateMomentum(stats.candleHistory),
           marketTrend: this.identifyTrend(stats.candleHistory),
           volumeProfile: this.analyzeVolumeProfile(stats.volumeHistory),
@@ -212,7 +220,8 @@ class StatsLogger {
             swingHigh: stats.highestPrice,
             swingLow: stats.lowestPrice,
             currentDrawdown: stats.maxDrawdown,
-            currentUpside: stats.maxUpside
+            currentUpside: stats.maxUpside,
+            trailingStopPrice: stats.trailingStopPrice
           }
         };
         currentData.marketConditions.push(marketCondition);
@@ -230,23 +239,72 @@ class StatsLogger {
             sharpeRatio: this.calculateSharpeRatio(stats),
             maxDrawdown: stats.maxDrawdown,
             timeToMaxDrawdown: this.calculateTimeToMaxDrawdown(stats),
-            recoveryTime: this.calculateRecoveryTime(stats)
+            recoveryTime: this.calculateRecoveryTime(stats),
+            volatility: stats.token?.getVolatility() || 0
+          },
+          positionMetrics: {
+            size: stats.position?.size || 0,
+            remainingSize: stats.position?.remainingSize || 0,
+            partialExits: stats.position?.partialExits || []
           }
         };
         currentData.trades.push(tradeMetrics);
+
+        // Update position metrics
+        if (stats.type === 'POSITION_OPEN') {
+          const positionMetrics = this.summaryMetrics.positionMetrics;
+          positionMetrics.totalPositions++;
+          positionMetrics.avgPositionSize = (
+            (positionMetrics.avgPositionSize * (positionMetrics.totalPositions - 1) + stats.position.size)
+            / positionMetrics.totalPositions
+          );
+        }
+        
+        if (stats.type === 'PARTIAL_CLOSE') {
+          const positionMetrics = this.summaryMetrics.positionMetrics;
+          positionMetrics.partialExits++;
+          positionMetrics.avgPartialExitPnL = (
+            (positionMetrics.avgPartialExitPnL * (positionMetrics.partialExits - 1) + stats.profitLoss)
+            / positionMetrics.partialExits
+          );
+        }
       }
 
-      // Update exit strategy metrics
+      // Update exit strategy metrics with new data
       if (stats.type === 'POSITION_CLOSE' || stats.type === 'PARTIAL_CLOSE') {
-        const exitType = stats.exitReason || 'unknown';
+        const exitType = stats.exitReason?.split('_')[0] || 'unknown';
+        const exitTier = stats.exitReason?.split('_')[1];
         const holdTime = stats.holdTimeSeconds;
         const pnl = stats.profitLoss;
 
-        if (this.summaryMetrics.exitStats[exitType]) {
+        if (exitType === 'takeProfit' && exitTier && this.summaryMetrics.exitStats.takeProfit[exitTier]) {
+          const tierStats = this.summaryMetrics.exitStats.takeProfit[exitTier];
+          tierStats.count++;
+          tierStats.totalPnL += pnl;
+          tierStats.avgHoldTime = (tierStats.avgHoldTime * (tierStats.count - 1) + holdTime) / tierStats.count;
+        } else if (this.summaryMetrics.exitStats[exitType]) {
           const exitStats = this.summaryMetrics.exitStats[exitType];
           exitStats.count++;
           exitStats.totalPnL += pnl;
           exitStats.avgHoldTime = (exitStats.avgHoldTime * (exitStats.count - 1) + holdTime) / exitStats.count;
+
+          // Add specific exit type metrics
+          if (exitType === 'trailingStop' && stats.trailingStopDistance) {
+            exitStats.avgTrailDistance = (
+              (exitStats.avgTrailDistance * (exitStats.count - 1) + stats.trailingStopDistance)
+              / exitStats.count
+            );
+          } else if (exitType === 'volumeExit' && stats.volumeDropPercent) {
+            exitStats.avgVolumeDropPercent = (
+              (exitStats.avgVolumeDropPercent * (exitStats.count - 1) + stats.volumeDropPercent)
+              / exitStats.count
+            );
+          } else if (exitType === 'timeExit' && stats.priceChange) {
+            exitStats.avgPriceChange = (
+              (exitStats.avgPriceChange * (exitStats.count - 1) + stats.priceChange)
+              / exitStats.count
+            );
+          }
         }
 
         // Update volume metrics if available
@@ -262,12 +320,15 @@ class StatsLogger {
           volumeMetrics.avgVolumeDropPercent = (volumeMetrics.avgVolumeDropPercent * (volumeMetrics.totalVolumeSamples - 1) + volumeDropPercent) / volumeMetrics.totalVolumeSamples;
         }
 
-        // Update price metrics
+        // Update price metrics with volatility
         if (stats.maxUpside !== undefined && stats.maxDrawdown !== undefined) {
           const priceMetrics = this.summaryMetrics.priceMetrics;
+          const volatility = stats.token?.getVolatility() || 0;
+          
           priceMetrics.totalPriceSamples++;
           priceMetrics.avgMaxUpside = (priceMetrics.avgMaxUpside * (priceMetrics.totalPriceSamples - 1) + stats.maxUpside) / priceMetrics.totalPriceSamples;
           priceMetrics.avgDrawdown = (priceMetrics.avgDrawdown * (priceMetrics.totalPriceSamples - 1) + stats.maxDrawdown) / priceMetrics.totalPriceSamples;
+          priceMetrics.avgVolatility = (priceMetrics.avgVolatility * (priceMetrics.totalPriceSamples - 1) + volatility) / priceMetrics.totalPriceSamples;
         }
       }
 

@@ -287,3 +287,82 @@ Key configuration parameters:
   CLEANUP_INTERVAL: 300000    // 5-minute data cleanup
 }
 ```
+
+## Position Management Integration
+
+The Token component now integrates with the position management system for trading operations.
+
+### Position Class
+
+```javascript
+class Position {
+  constructor({
+    token,
+    entryPrice,
+    size
+  }) {
+    this.token = token;
+    this.entryPrice = entryPrice;
+    this.size = size;
+  }
+
+  update(price, volume) {
+    // Update position state
+  }
+
+  getHealth() {
+    // Calculate position health
+  }
+}
+```
+
+### Token Class
+
+```javascript
+class Token {
+  // ...
+
+  addPosition(position) {
+    // Add position to token
+  }
+
+  removePosition(position) {
+    // Remove position from token
+  }
+
+  updatePositionState(position, state) {
+    // Update position state
+  }
+
+  getActivePositions() {
+    // Get active positions
+  }
+}
+```
+
+### Integration Example
+
+```javascript
+const token = new Token({
+  mint: 'So11111111111111111111111111111111111111112',
+  name: 'Wrapped SOL',
+  symbol: 'SOL',
+  decimals: 9
+});
+
+const position = new Position({
+  token,
+  entryPrice: 1.5,
+  size: 2.0
+});
+
+token.addPosition(position);
+
+// Update token state
+token.updatePrice(1.5);
+token.updateVolume(10000);
+
+// Get token metrics
+const metrics = token.getPerformanceStats();
+const risk = token.calculateRiskMetrics();
+const health = token.analyzeTokenHealth();

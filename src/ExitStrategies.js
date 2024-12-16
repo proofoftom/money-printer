@@ -1,6 +1,7 @@
 class ExitStrategies {
-  constructor(config) {
+  constructor(config, position) {
     this.config = config;
+    this.position = position;
     this.trailingStopPrice = null;
     this.volumeHistory = [];
     this.peakVolume = 0;
@@ -16,63 +17,72 @@ class ExitStrategies {
     return Math.round(value * multiplier) / multiplier;
   }
 
-  shouldExit(position, currentPrice, currentVolume) {
+  shouldExit(currentPrice, currentVolume) {
     // Skip all checks if no position remaining
     if (this.remainingPosition === 0) {
       return { shouldExit: false };
     }
 
     // Check take profit first to capture gains
-    const takeProfitResult = this.checkTakeProfit(position, currentPrice);
+    const takeProfitResult = this.checkTakeProfit(currentPrice);
     if (takeProfitResult.shouldExit) {
-      return { ...takeProfitResult, reason: `takeProfit_tier${this.getTakeProfitTier(position, currentPrice)}` };
+      this.position.emit('takeProfitTriggered', {
+        tier: this.getTakeProfitTier(currentPrice),
+        portion: takeProfitResult.portion
+      });
+      return { ...takeProfitResult, reason: `takeProfit_tier${this.getTakeProfitTier(currentPrice)}` };
     }
 
     // Other exit conditions exit the entire remaining position
-    if (this.checkStopLoss(position, currentPrice)) {
+    if (this.checkStopLoss(currentPrice)) {
       const portion = this.remainingPosition;
       this.remainingPosition = 0;
+      this.position.emit('stopLossTriggered', { portion });
       return { shouldExit: true, reason: 'STOP_LOSS', portion };
     }
 
-    if (this.checkTrailingStop(position, currentPrice)) {
+    if (this.checkTrailingStop(currentPrice)) {
       const portion = this.remainingPosition;
       this.remainingPosition = 0;
+      this.position.emit('trailingStopTriggered', { portion });
       return { shouldExit: true, reason: 'TRAILING_STOP', portion };
     }
 
     if (this.checkVolumeBasedExit(currentVolume)) {
       const portion = this.remainingPosition;
       this.remainingPosition = 0;
+      this.position.emit('volumeExitTriggered', { portion });
       return { shouldExit: true, reason: 'VOLUME_DROP', portion };
     }
 
-    if (this.checkTimeBasedExit(position, currentPrice)) {
+    if (this.checkTimeBasedExit(currentPrice)) {
       const portion = this.remainingPosition;
       this.remainingPosition = 0;
+      this.position.emit('timeExitTriggered', { portion });
       return { shouldExit: true, reason: 'TIME_LIMIT', portion };
     }
 
     return { shouldExit: false };
   }
 
-  checkStopLoss(position, currentPrice) {
+  checkStopLoss(currentPrice) {
     if (!this.config.EXIT_STRATEGIES.STOP_LOSS.ENABLED) return false;
     
-    const percentageChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    const percentageChange = this.position.calculatePnLPercent(currentPrice);
     return percentageChange <= this.config.EXIT_STRATEGIES.STOP_LOSS.THRESHOLD;
   }
 
-  checkTrailingStop(position, currentPrice) {
+  checkTrailingStop(currentPrice) {
     const trailingConfig = this.config.EXIT_STRATEGIES.TRAILING_STOP;
     if (!trailingConfig.ENABLED) return false;
 
-    const percentageChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    const percentageChange = this.position.calculatePnLPercent(currentPrice);
     
     // Initialize trailing stop when profit threshold is reached
     if (percentageChange >= trailingConfig.ACTIVATION_THRESHOLD && !this.trailingStopPrice) {
       const trailPercentage = trailingConfig.BASE_PERCENTAGE;
       this.trailingStopPrice = this.roundToDecimals(currentPrice * (1 - (trailPercentage / 100)));
+      this.position.emit('trailingStopInitialized', { price: this.trailingStopPrice });
       return false;
     }
 
@@ -81,7 +91,7 @@ class ExitStrategies {
       let trailPercentage = trailingConfig.BASE_PERCENTAGE;
       
       if (trailingConfig.DYNAMIC_ADJUSTMENT.ENABLED) {
-        const volatility = this.calculateVolatility();
+        const volatility = this.position.token.getVolatility();
         trailPercentage = Math.min(
           Math.max(
             trailPercentage * (1 + volatility * trailingConfig.DYNAMIC_ADJUSTMENT.VOLATILITY_MULTIPLIER),
@@ -92,6 +102,7 @@ class ExitStrategies {
       }
       
       this.trailingStopPrice = this.roundToDecimals(currentPrice * (1 - (trailPercentage / 100)));
+      this.position.emit('trailingStopUpdated', { price: this.trailingStopPrice });
     }
 
     // Check if price has fallen below trailing stop
@@ -132,13 +143,13 @@ class ExitStrategies {
     return volumeDropPercentage >= volumeConfig.VOLUME_DROP_THRESHOLD;
   }
 
-  checkTimeBasedExit(position, currentPrice) {
+  checkTimeBasedExit(currentPrice) {
     const timeConfig = this.config.EXIT_STRATEGIES.TIME_BASED;
     if (!timeConfig.ENABLED) return false;
 
     const currentTime = Date.now() / 1000;
     const elapsedSeconds = currentTime - this.entryTime;
-    const percentageGain = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    const percentageGain = this.position.calculatePnLPercent(currentPrice);
 
     // Check if we should extend the time limit
     if (!this.timeExtended && percentageGain >= timeConfig.EXTENSION_THRESHOLD) {
@@ -154,13 +165,13 @@ class ExitStrategies {
     return elapsedSeconds >= maxHoldTime;
   }
 
-  checkTakeProfit(position, currentPrice) {
+  checkTakeProfit(currentPrice) {
     const takeProfitConfig = this.config.EXIT_STRATEGIES.TAKE_PROFIT;
     if (!takeProfitConfig.ENABLED || this.remainingPosition === 0) {
       return { shouldExit: false, portion: 0 };
     }
 
-    const percentageGain = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    const percentageGain = this.position.calculatePnLPercent(currentPrice);
     
     // Check tiers in descending order to handle highest profit targets first
     const sortedTiers = [...takeProfitConfig.TIERS].sort((a, b) => b.THRESHOLD - a.THRESHOLD);
@@ -177,8 +188,8 @@ class ExitStrategies {
     return { shouldExit: false, portion: 0 };
   }
 
-  getTakeProfitTier(position, currentPrice) {
-    const percentageGain = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+  getTakeProfitTier(currentPrice) {
+    const percentageGain = this.position.calculatePnLPercent(currentPrice);
     const tiers = this.config.EXIT_STRATEGIES.TAKE_PROFIT.TIERS;
     for (let i = tiers.length - 1; i >= 0; i--) {
       if (percentageGain >= tiers[i].THRESHOLD) {
@@ -189,9 +200,7 @@ class ExitStrategies {
   }
 
   calculateVolatility() {
-    // Implement volatility calculation based on your needs
-    // This could be based on price history, ATR, or other metrics
-    return 0.5; // Placeholder return
+    return this.position?.token?.getVolatility() || 0.5;
   }
 
   reset() {
@@ -203,6 +212,7 @@ class ExitStrategies {
     this.timeExtended = false;
     this.remainingPosition = 1.0;
     this.triggeredTiers = new Set();
+    this.position?.emit('exitStrategiesReset');
   }
 }
 

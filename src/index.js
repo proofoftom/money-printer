@@ -5,10 +5,13 @@ const TokenTracker = require("./TokenTracker");
 const WebSocketManager = require("./WebSocketManager");
 const SafetyChecker = require("./SafetyChecker");
 const PositionManager = require("./PositionManager");
+const PositionStateManager = require("./PositionStateManager");
 const PriceManager = require("./PriceManager");
 const Wallet = require("./Wallet");
 const ErrorLogger = require("./ErrorLogger");
 const Dashboard = require("./Dashboard");
+const TransactionSimulator = require("./TransactionSimulator");
+const StatsLogger = require("./StatsLogger");
 
 // Initialize error logger first
 const errorLogger = new ErrorLogger();
@@ -141,7 +144,13 @@ function initializeComponent(component, context) {
 // Initialize components with error handling
 const wallet = initializeComponent(new Wallet(), 'Wallet');
 const priceManager = initializeComponent(new PriceManager(), 'PriceManager');
-const positionManager = initializeComponent(new PositionManager(wallet), 'PositionManager');
+const transactionSimulator = initializeComponent(new TransactionSimulator(), 'TransactionSimulator');
+const statsLogger = initializeComponent(new StatsLogger(), 'StatsLogger');
+const positionStateManager = initializeComponent(new PositionStateManager(), 'PositionStateManager');
+const positionManager = initializeComponent(
+  new PositionManager(wallet, positionStateManager, transactionSimulator, statsLogger),
+  'PositionManager'
+);
 const safetyChecker = initializeComponent(new SafetyChecker(config.SAFETY, priceManager), 'SafetyChecker');
 
 // Initialize TokenTracker and WebSocketManager
@@ -164,7 +173,7 @@ tokenTracker.webSocketManager = wsManager;
 
 // Create dashboard and store globally for error handler access
 global.dashboard = initializeComponent(
-  new Dashboard(wallet, tokenTracker, positionManager, safetyChecker, priceManager),
+  new Dashboard(wallet, tokenTracker, positionManager, safetyChecker, priceManager, statsLogger),
   'Dashboard'
 );
 
@@ -215,57 +224,121 @@ tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
   }
 });
 
-tokenTracker.on("positionOpened", (token) => {
-  const position = positionManager.getPosition(token.mint);
-  global.dashboard.logStatus(`Opened position for ${token.symbol}`, "info");
-  global.dashboard.logStatus(`Entry price: ${position.entryPrice} SOL`, "info");
-  global.dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
-  global.dashboard.logTrade({
-    type: "BUY",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: 0,
-  });
-});
-
-tokenTracker.on("takeProfitExecuted", ({ token, percentage, portion }) => {
-  global.dashboard.logStatus(`Take profit hit for ${token.symbol}`, "info");
+// Position-specific event handlers
+positionManager.on("positionCreated", (position) => {
   global.dashboard.logStatus(
-    `Sold ${(portion * 100).toFixed(0)}% at ${percentage}% profit`,
+    `New position created for ${position.token.symbol} (${position.id})`,
     "info"
   );
-  global.dashboard.logStatus(`Current market cap: ${token.marketCapSol} SOL`, "info");
-  global.dashboard.logTrade({
-    type: "SELL",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: percentage,
+  statsLogger.logStats({
+    type: 'POSITION_OPEN',
+    position: position,
+    token: position.token
   });
 });
 
-tokenTracker.on("positionClosed", ({ token, reason }) => {
-  global.dashboard.logStatus(`Position closed for ${token.symbol}`, "info");
-  global.dashboard.logStatus(`Reason: ${reason}`, "info");
-  global.dashboard.logStatus(`Final market cap: ${token.marketCapSol} SOL`, "info");
+positionManager.on("positionUpdated", (position) => {
+  statsLogger.logStats({
+    type: 'POSITION_UPDATE',
+    position: position,
+    token: position.token
+  });
+});
+
+positionManager.on("positionClosed", (position) => {
+  global.dashboard.logStatus(
+    `Position closed for ${position.token.symbol} (${position.id})`,
+    "info"
+  );
+  global.dashboard.logStatus(
+    `Final P&L: ${position.calculatePnL().toFixed(4)} SOL`,
+    "info"
+  );
+  statsLogger.logStats({
+    type: 'POSITION_CLOSE',
+    position: position,
+    token: position.token
+  });
+});
+
+// Exit strategy event handlers
+positionManager.on("takeProfitTriggered", ({ position, tier, portion }) => {
+  global.dashboard.logStatus(
+    `Take profit tier ${tier} triggered for ${position.token.symbol}`,
+    "info"
+  );
+  global.dashboard.logStatus(
+    `Selling ${(portion * 100).toFixed(0)}% of position`,
+    "info"
+  );
+  global.dashboard.logTrade({
+    type: "PARTIAL_CLOSE",
+    mint: position.token.mint,
+    symbol: position.token.symbol,
+    profitLoss: position.calculatePnL(),
+    portion: portion
+  });
+});
+
+positionManager.on("stopLossTriggered", ({ position }) => {
+  global.dashboard.logStatus(
+    `Stop loss triggered for ${position.token.symbol}`,
+    "warning"
+  );
   global.dashboard.logTrade({
     type: "CLOSE",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: token.profitLoss,
+    mint: position.token.mint,
+    symbol: position.token.symbol,
+    profitLoss: position.calculatePnL(),
+    reason: "STOP_LOSS"
   });
+});
+
+positionManager.on("trailingStopTriggered", ({ position }) => {
+  global.dashboard.logStatus(
+    `Trailing stop triggered for ${position.token.symbol}`,
+    "info"
+  );
+  global.dashboard.logTrade({
+    type: "CLOSE",
+    mint: position.token.mint,
+    symbol: position.token.symbol,
+    profitLoss: position.calculatePnL(),
+    reason: "TRAILING_STOP"
+  });
+});
+
+// Transaction event handlers
+positionManager.on("transactionDelay", ({ position, details }) => {
+  global.dashboard.logStatus(
+    `Transaction delay for ${position.token.symbol}: ${details.totalDelay}ms`,
+    "info"
+  );
+});
+
+positionManager.on("priceImpact", ({ position, details }) => {
+  global.dashboard.logStatus(
+    `Price impact for ${position.token.symbol}: ${(details.totalSlippage * 100).toFixed(2)}%`,
+    "info"
+  );
+});
+
+// Error handlers
+positionManager.on("error", ({ position, error }) => {
+  handleGlobalError(error, "PositionManager", { position });
 });
 
 tokenTracker.on("error", ({ token, error }) => {
-  global.dashboard.logStatus(
-    `Error with token ${token.symbol}: ${error.message}`,
-    "error"
-  );
+  handleGlobalError(error, "TokenTracker", { token });
 });
 
 // Handle process events for graceful shutdown
 process.on("SIGINT", async () => {
   global.dashboard.logStatus("\nShutting down gracefully...", "info");
-  await wsManager.close();
+  await Promise.all([
+    wsManager.close(),
+    positionStateManager.saveAllPositions()
+  ]);
   process.exit(0);
 });
 

@@ -17,12 +17,14 @@ class Token extends EventEmitter {
     this.signature = tokenData.signature;
     this.bondingCurveKey = tokenData.bondingCurveKey;
 
+    // Token state management
     this.state = "new";
     this.highestMarketCap = this.marketCapSol;
     this.drawdownLow = null;
     this.unsafeReason = null;
+    this.volatility = 0;
 
-    // Optimized price tracking with circular buffer
+    // Price tracking with circular buffer
     this.priceBuffer = {
       data: new Array(30).fill(null),
       head: 0,
@@ -46,7 +48,6 @@ class Token extends EventEmitter {
       price: this.currentPrice,
       timestamp: Date.now()
     }];
-    this.priceVolatility = 0;
 
     // Unified trader/holder tracking
     this.wallets = new Map(); // Key: publicKey, Value: WalletData
@@ -64,16 +65,6 @@ class Token extends EventEmitter {
       });
     }
 
-    // Initialize metrics
-    this.metrics = {
-      volumeData: {
-        lastCleanup: Date.now(),
-        cleanupInterval: 5 * 60 * 1000, // 5 minutes
-        maxWalletVolumePercentage: 0,
-        suspectedWashTradePercentage: 0
-      }
-    };
-
     // Initialize volume tracking
     this.volume1m = 0;
     this.volume5m = 0;
@@ -84,6 +75,7 @@ class Token extends EventEmitter {
     const oldPrice = this.currentPrice;
     const now = Date.now();
     
+    // Update market cap and price data
     if (data.marketCapSol) {
       if (data.marketCapSol > this.highestMarketCap) {
         this.highestMarketCap = data.marketCapSol;
@@ -94,10 +86,10 @@ class Token extends EventEmitter {
       this.marketCapSol = data.marketCapSol;
     }
 
+    // Update bonding curve data
     if (data.vTokensInBondingCurve) {
       this.vTokensInBondingCurve = data.vTokensInBondingCurve;
     }
-
     if (data.vSolInBondingCurve) {
       this.vSolInBondingCurve = data.vSolInBondingCurve;
     }
@@ -121,8 +113,9 @@ class Token extends EventEmitter {
       this.updateWalletBalance(data.traderPublicKey, data.newTokenBalance, now);
     }
 
-    // Update all metrics including volume
-    this.updateMetrics();
+    // Calculate volatility for position sizing
+    const priceStats = this.getPriceStats();
+    this.volatility = priceStats.volatility;
 
     // Emit price and volume updates together
     this.emit('priceUpdate', { 
@@ -131,7 +124,8 @@ class Token extends EventEmitter {
       pumpMetrics: this.pumpMetrics,
       volume1m: this.volume1m,
       volume5m: this.volume5m,
-      volume30m: this.volume30m
+      volume30m: this.volume30m,
+      volatility: this.volatility
     });
   }
 
@@ -558,18 +552,22 @@ class Token extends EventEmitter {
   }
 
   setState(newState) {
+    if (newState === this.state) return;
+
     const oldState = this.state;
     this.state = newState;
-    if (newState === "drawdown") {
-      this.drawdownLow = this.marketCapSol;
-    }
-    // Don't reset minted timestamp when state changes
-    this.emit("stateChanged", { 
-      token: this, 
-      from: oldState, 
-      to: newState,
-      age: Date.now() - this.minted // Include age in state change event
+
+    // Emit state change event
+    this.emit("stateChanged", {
+      token: this,
+      from: oldState,
+      to: newState
     });
+
+    // Emit readyForPosition event when entering drawdown state
+    if (newState === "drawdown" && !this.unsafeReason) {
+      this.emit("readyForPosition", this);
+    }
   }
 
   isHeatingUp(threshold) {
@@ -597,6 +595,37 @@ class Token extends EventEmitter {
       return 0;
     }
     return this.vSolInBondingCurve / this.vTokensInBondingCurve;
+  }
+
+  getVolumeData() {
+    return {
+      volume1m: this.volume1m,
+      volume5m: this.volume5m,
+      volume30m: this.volume30m
+    };
+  }
+
+  getCandleData() {
+    return {
+      timestamp: Date.now(),
+      open: this.priceHistory[0]?.price || this.currentPrice,
+      high: this.getPriceStats().highestPrice,
+      low: this.getPriceStats().lowestPrice,
+      close: this.currentPrice,
+      volume: this.volume5m
+    };
+  }
+
+  getVolatility() {
+    return this.volatility;
+  }
+
+  getCurrentPrice() {
+    return this.currentPrice;
+  }
+
+  getMarketCap() {
+    return this.marketCapSol;
   }
 }
 

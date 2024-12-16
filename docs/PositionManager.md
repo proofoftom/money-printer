@@ -1,180 +1,302 @@
-# Position Manager Documentation
+# Position Manager
 
-## Overview
+The `PositionManager` class orchestrates the lifecycle of all trading positions in the Money Printer system. It coordinates between various components to manage position creation, updates, and closures while ensuring proper state management and event handling.
 
-The Position Manager handles all aspects of trading positions, including dynamic position sizing, entry/exit execution, and performance tracking. It integrates with multiple components to provide comprehensive position management and risk control.
+## Features
 
-## Core Components
+- Position lifecycle management
+- Multi-position coordination
+- State persistence and recovery
+- Transaction simulation integration
+- Advanced metrics tracking
+- Event-driven updates
+- Risk management
+- Performance analytics
 
-### Position Management
+## Class Structure
+
+### Constructor
 ```javascript
-{
-  positions: Map(),           // Active positions
-  wins: Number,              // Win count
-  losses: Number,            // Loss count
-  exitStrategies: Object,    // Exit strategy manager
-  statsLogger: Object,       // Performance tracking
-  transactionSimulator: Object // Transaction simulation
+constructor({
+  wallet,
+  positionStateManager,
+  transactionSimulator,
+  statsLogger,
+  exitStrategies,
+  config = {}
+}) {
+  this.wallet = wallet;
+  this.positionStateManager = positionStateManager;
+  this.transactionSimulator = transactionSimulator;
+  this.statsLogger = statsLogger;
+  this.exitStrategies = exitStrategies;
+  this.config = config;
+  
+  this.positions = new Map();
+  this.metrics = new PositionMetrics();
+  
+  this.initialize();
 }
 ```
 
-## Key Features
+### Core Methods
 
-### Dynamic Position Sizing
+#### Position Management
 ```javascript
-calculatePositionSize(marketCap, volatility)
+async openPosition(token, price, size, options = {})
+async closePosition(mint, price, reason)
+async updatePosition(mint, price, volume)
+async partialExit(mint, portion, price, reason)
+validatePositions()
 ```
-- Base size calculation using market cap ratio
-- Volatility-based size adjustment
-- Min/max size enforcement
-- Dynamic sizing options
 
-### Position Opening
+#### State Management
 ```javascript
-async openPosition(mint, marketCap, volatility)
+async loadPositions()
+async savePositions()
+validateState()
+getPosition(mint)
+getAllPositions()
 ```
-- Dynamic position size calculation
-- Transaction simulation
-- Price impact assessment
-- Balance validation
-- Position tracking initialization
 
-### Position Closing
+#### Risk Management
 ```javascript
-async closePosition(mint, position, exitPrice, reason)
+validateRisk(token, size, price)
+checkExposure(token)
+validateTokenLimits(token)
 ```
-- Profit/loss calculation
-- Performance tracking
-- Stats logging
-- Balance updates
-- Transaction simulation
 
-### Transaction Simulation
-- Realistic delay simulation
-- Price impact calculation
-- Network conditions
-- Slippage estimation
+## Events
 
-## Integration Points
+### Position Lifecycle
+- `positionOpened`: New position created
+- `positionUpdated`: Position state changed
+- `positionClosed`: Position fully closed
+- `partialExit`: Partial position exit
+- `allPositionsUpdated`: Batch position update
 
-### Exit Strategies
-- Multiple exit conditions
-- Take profit management
-- Stop loss enforcement
-- Volume-based exits
+### Risk Events
+- `exposureLimit`: Position size limits
+- `riskAlert`: Risk threshold exceeded
+- `marginCall`: Insufficient margin
 
-### Stats Logger
-- Performance metrics
-- Trade history
-- Win/loss tracking
-- ROI calculations
+### State Events
+- `stateLoaded`: Positions loaded
+- `stateSaved`: Positions saved
+- `stateValidated`: State validation
+- `error`: Error occurred
 
-### Transaction Simulator
-- Network delay simulation
-- Price impact assessment
-- Risk evaluation
-- Execution optimization
+## Integration
 
-## Configuration Options
-
+### With Position Class
 ```javascript
-{
-  POSITION: {
-    MIN_POSITION_SIZE_SOL: Number,
-    MAX_POSITION_SIZE_SOL: Number,
-    POSITION_SIZE_MARKET_CAP_RATIO: Number,
-    USE_DYNAMIC_SIZING: Boolean,
-    VOLATILITY_SCALING_FACTOR: Number
-  },
-  EXIT_STRATEGIES: {
-    // Exit strategy configuration
+// Create and manage position
+async openPosition(token, price, size, options) {
+  // Validate position parameters
+  await this.validateNewPosition(token, size, price);
+  
+  // Create position instance
+  const position = new Position({
+    token,
+    entryPrice: price,
+    size,
+    ...options
+  });
+  
+  // Setup position monitoring
+  this.setupPositionHandlers(position);
+  
+  // Store and persist
+  this.positions.set(token.mint, position);
+  await this.savePositions();
+  
+  return position;
+}
+```
+
+### With PositionStateManager
+```javascript
+// Load and restore positions
+async loadPositions() {
+  const savedPositions = await this.positionStateManager.loadPositions();
+  
+  for (const data of savedPositions) {
+    const position = Position.fromJSON(data);
+    this.positions.set(position.token.mint, position);
+    this.setupPositionHandlers(position);
   }
+  
+  this.emit('stateLoaded', { count: this.positions.size });
 }
 ```
 
-## Position Object Structure
+### With TransactionSimulator
+```javascript
+// Simulate transaction
+async simulateTransaction(position, size, price) {
+  const delay = await this.transactionSimulator.simulateTransactionDelay(position);
+  const impact = await this.transactionSimulator.calculatePriceImpact(
+    position,
+    size,
+    price,
+    position.lastVolume
+  );
+  
+  return { delay, impact };
+}
+```
+
+### With StatsLogger
+```javascript
+// Log position events
+logPositionEvent(type, position, metadata = {}) {
+  this.statsLogger.logStats({
+    type,
+    position: position.id,
+    token: position.token.mint,
+    price: position.currentPrice,
+    size: position.remainingSize,
+    ...metadata
+  });
+}
+```
+
+## Example Usage
+
+```javascript
+// Initialize manager
+const positionManager = new PositionManager({
+  wallet,
+  positionStateManager,
+  transactionSimulator,
+  statsLogger,
+  exitStrategies,
+  config
+});
+
+// Open position
+const position = await positionManager.openPosition(token, 1.5, 2.0, {
+  maxDrawdown: 0.1,
+  exitStrategies: {
+    takeProfit: { tiers: [
+      { price: 1.65, portion: 0.5 },
+      { price: 1.80, portion: 1.0 }
+    ]},
+    stopLoss: { price: 1.35, portion: 1.0 }
+  }
+});
+
+// Update positions
+await positionManager.updatePositions(updates);
+
+// Close position
+await positionManager.closePosition(token.mint, 1.7, 'takeProfit');
+
+// Get position metrics
+const metrics = positionManager.getMetrics();
+```
+
+## Configuration
 
 ```javascript
 {
-  entryPrice: Number,        // Entry execution price
-  size: Number,              // Position size in SOL
-  timestamp: Number,         // Entry timestamp
-  mint: String,             // Token mint address
-  exitStrategies: Object    // Position-specific exit strategies
+  POSITION_MANAGER: {
+    MAX_POSITIONS: 10,
+    MAX_TOKEN_EXPOSURE: 5.0,
+    TOTAL_EXPOSURE_LIMIT: 20.0,
+    VALIDATION_INTERVAL: 60000,
+    RISK_CHECKS: {
+      ENABLED: true,
+      MAX_DRAWDOWN: 0.15,
+      CORRELATION_LIMIT: 0.7
+    },
+    STATE_PERSISTENCE: {
+      ENABLED: true,
+      SAVE_INTERVAL: 300000
+    }
+  }
 }
 ```
 
 ## Error Handling
 
-### Entry Errors
-1. **Insufficient Balance**
-   - Balance validation
-   - Size adjustment
-   - Error reporting
+```javascript
+try {
+  await this.openPosition(token, price, size);
+} catch (error) {
+  this.emit('error', {
+    error,
+    context: 'openPosition',
+    token: token.mint
+  });
+  this.statsLogger.logError(error);
+  throw error;
+}
+```
 
-2. **Transaction Failures**
-   - Retry logic
-   - Error recovery
-   - Position cleanup
+## Advanced Features
 
-3. **Simulation Errors**
-   - Fallback calculations
-   - Conservative estimates
-   - Risk mitigation
+### Portfolio Analysis
+```javascript
+analyzePortfolio() {
+  return {
+    exposure: this.calculateExposure(),
+    correlation: this.calculateCorrelation(),
+    riskMetrics: this.calculateRiskMetrics(),
+    performance: this.calculatePerformance()
+  };
+}
+```
 
-### Exit Errors
-1. **Exit Price Validation**
-   - Price sanity checks
-   - Slippage protection
-   - Minimum value enforcement
+### Risk Management
+```javascript
+validateRisk(token, size, price) {
+  // Check position limits
+  if (!this.checkPositionLimits(size)) {
+    throw new Error('Position size exceeds limits');
+  }
+  
+  // Check token exposure
+  if (!this.checkTokenExposure(token, size)) {
+    throw new Error('Token exposure too high');
+  }
+  
+  // Check correlation
+  if (!this.checkCorrelation(token)) {
+    throw new Error('Portfolio correlation too high');
+  }
+}
+```
 
-2. **Balance Updates**
-   - Atomic updates
-   - Validation checks
-   - Error recovery
+### Performance Monitoring
+```javascript
+monitorPerformance() {
+  setInterval(() => {
+    const metrics = this.calculateMetrics();
+    this.emit('metricsUpdated', metrics);
+    this.statsLogger.logMetrics(metrics);
+  }, this.config.METRICS_INTERVAL);
+}
+```
 
 ## Best Practices
 
-### Position Management
-1. **Size Calculation**
-   - Consider market conditions
-   - Account for volatility
-   - Respect balance limits
+1. Regular state validation
+2. Comprehensive error handling
+3. Event-driven updates
+4. Risk management
+5. Performance monitoring
+6. State persistence
+7. Security considerations
+8. Documentation maintenance
 
-2. **Entry Execution**
-   - Validate conditions
-   - Simulate outcomes
-   - Track performance
+## Security Considerations
 
-3. **Exit Management**
-   - Monitor conditions
-   - Quick execution
-   - Proper cleanup
-
-### Performance Tracking
-1. **Stats Recording**
-   - Accurate metrics
-   - Regular updates
-   - Data validation
-
-2. **Analysis**
-   - Pattern recognition
-   - Performance optimization
-   - Risk assessment
-
-## Future Improvements
-
-1. **Position Sizing**
-   - Advanced volatility metrics
-   - Market condition adaptation
-   - Portfolio-based sizing
-
-2. **Transaction Simulation**
-   - Enhanced price impact models
-   - Network condition analysis
-   - Historical data integration
-
-3. **Performance Analytics**
-   - Advanced metrics
-   - Real-time analysis
-   - Strategy optimization
+1. Input validation
+2. State integrity
+3. Access control
+4. Event validation
+5. Error handling
+6. Audit logging
+7. Rate limiting
+8. Data encryption

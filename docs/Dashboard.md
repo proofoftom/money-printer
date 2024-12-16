@@ -240,3 +240,73 @@ console.error = (...args) => {
    - Error tracking
    - Debug information
    - System status
+
+## Position Management Integration
+
+### Position Manager
+
+```javascript
+class PositionManager {
+  constructor() {
+    this.positions = new Map();
+  }
+
+  addPosition(position) {
+    this.positions.set(position.id, position);
+  }
+
+  removePosition(positionId) {
+    this.positions.delete(positionId);
+  }
+
+  updatePosition(position) {
+    this.positions.set(position.id, position);
+  }
+
+  getPosition(positionId) {
+    return this.positions.get(positionId);
+  }
+}
+```
+
+### Integration with Dashboard
+
+```javascript
+class Dashboard {
+  constructor(positionManager) {
+    this.positionManager = positionManager;
+  }
+
+  updatePositionData(position) {
+    this.positionManager.updatePosition(position);
+  }
+
+  getPositionData(positionId) {
+    return this.positionManager.getPosition(positionId);
+  }
+}
+```
+
+## Example Usage
+
+```javascript
+const positionManager = new PositionManager();
+const dashboard = new Dashboard(positionManager);
+
+// Add a new position
+const position = {
+  id: 1,
+  token: 'ABC',
+  entryPrice: 100,
+  currentPrice: 120,
+  size: 1000
+};
+positionManager.addPosition(position);
+
+// Update a position
+position.currentPrice = 130;
+positionManager.updatePosition(position);
+
+// Get a position
+const positionData = dashboard.getPositionData(1);
+console.log(positionData);

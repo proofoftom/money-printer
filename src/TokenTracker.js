@@ -50,7 +50,8 @@ class TokenTracker extends EventEmitter {
 
       const success = await this.positionManager.openPosition(
         token.mint,
-        token.marketCapSol
+        token.marketCapSol,
+        token.volatility || 0
       );
       if (success) {
         token.setState("inPosition");
@@ -96,8 +97,51 @@ class TokenTracker extends EventEmitter {
 
     // Get current position if exists
     const position = this.positionManager.getPosition(token.mint);
-    if (position && token.state !== "inPosition") {
-      token.setState("inPosition");
+    if (position) {
+      // Ensure token state reflects position existence
+      if (token.state !== "inPosition") {
+        token.setState("inPosition");
+      }
+
+      // Update position with latest token data
+      position.update({
+        currentPrice: token.marketCapSol,
+        volumeData: {
+          volume: token.volume5m || 0,
+          volume1m: token.volume1m || 0,
+          volume30m: token.volume30m || 0
+        },
+        candleData: token.candleData
+      });
+
+      // Check if position needs to be closed
+      if (position.shouldClose()) {
+        const closeResult = this.positionManager.closePosition(token.mint, token.marketCapSol);
+        if (closeResult) {
+          token.setState("closed");
+          this.emit("positionClosed", {
+            token,
+            reason: closeResult.reason || "exit_strategy",
+            profitLoss: closeResult.getProfitLoss()
+          });
+        }
+      }
+      // Check if partial exit is needed
+      else if (position.shouldPartialExit()) {
+        const exitResult = this.positionManager.closePosition(
+          token.mint,
+          token.marketCapSol,
+          position.getRecommendedExitPortion()
+        );
+        if (exitResult) {
+          this.emit("partialExit", {
+            token,
+            profitLoss: exitResult.getProfitLoss(),
+            portion: exitResult.getLastExitPortion(),
+            reason: exitResult.reason || "take_profit"
+          });
+        }
+      }
     }
 
     switch (token.state) {
@@ -135,34 +179,6 @@ class TokenTracker extends EventEmitter {
       case "unsafeRecovery":
         await token.evaluateRecovery(this.safetyChecker);
         break;
-
-      case "inPosition":
-        const result = this.positionManager.updatePosition(
-          token.mint,
-          token.marketCapSol,
-          { 
-            volume: token.volume5m || 0,
-            volume1m: token.volume1m || 0,
-            volume30m: token.volume30m || 0
-          }
-        );
-        if (result) {
-          if (result.portion === 1.0) {
-            token.setState("closed");
-            this.emit("positionClosed", {
-              token,
-              reason: result.reason || "exit_strategy",
-            });
-          } else {
-            this.emit("partialExit", {
-              token,
-              percentage: result.profitPercentage,
-              portion: result.portion,
-              reason: result.reason || "take_profit",
-            });
-          }
-        }
-        break;
     }
 
     // Check for token death in any state
@@ -173,7 +189,11 @@ class TokenTracker extends EventEmitter {
           const closeResult = this.positionManager.closePosition(token.mint, token.marketCapSol);
           if (closeResult) {
             token.setState("dead");
-            this.emit("positionClosed", { token, reason: "dead" });
+            this.emit("positionClosed", { 
+              token, 
+              reason: "dead",
+              profitLoss: closeResult.getProfitLoss()
+            });
           }
         } else {
           token.setState("dead");
