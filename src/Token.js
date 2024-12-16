@@ -35,77 +35,53 @@ class Token extends EventEmitter {
     return this.traders.get(publicKey);
   }
 
-  calculateHolderSupply() {
-    return Array.from(this.traders.values())
-      .reduce((total, trader) => total + trader.getTokenBalance(this.mint), 0);
-  }
-
-  updatePrice(price) {
-    if (!price || price <= 0) {
-      throw new Error('Invalid price update');
-    }
-
-    this.currentPrice = price;
-    this.priceHistory.push(price);
-
-    // Maintain price history window
-    if (this.priceHistory.length > this.config.TOKENS.VOLATILITY_WINDOW) {
-      this.priceHistory.shift();
-    }
-
-    this.emit('priceUpdate', { price });
-  }
-
-  updateSupply(tradeData) {
-    if (!tradeData) return;
-
-    // Update trader's balance
-    if (tradeData.traderPublicKey) {
-      const trader = this.getOrCreateTrader(tradeData.traderPublicKey);
-      trader.addTrade(tradeData);
-    }
-
-    // Update bonding curve tokens and SOL
-    if (tradeData.vTokensInBondingCurve !== undefined) {
-      this.bondingCurveTokens = tradeData.vTokensInBondingCurve;
-    }
-    if (tradeData.vSolInBondingCurve !== undefined) {
-      this.solInBondingCurve = tradeData.vSolInBondingCurve;
-    }
-
-    // Calculate total supply from all holders plus bonding curve
-    const holderSupply = this.calculateHolderSupply();
-    if (holderSupply !== null && this.bondingCurveTokens !== null) {
-      this.supply = holderSupply + this.bondingCurveTokens;
-    }
-  }
-
-  update(tradeData) {
+  update(data) {
     try {
-      if (!tradeData) {
-        throw new Error('Invalid trade data received');
+      if (!data || !data.mint || !data.txType) {
+        throw new Error('Invalid token data received');
       }
 
-      // Update price if available
-      if (tradeData.price) {
-        this.updatePrice(tradeData.price);
+      // Handle token creation
+      if (data.txType === 'create') {
+        this.symbol = data.symbol;
+        this.name = data.name;
+        this.uri = data.uri;
+        
+        const creator = this.getOrCreateTrader(data.traderPublicKey);
+        creator.addTrade({
+          mint: this.mint,
+          txType: 'create',
+          tokenAmount: data.initialBuy,
+          newTokenBalance: data.initialBuy,
+          signature: data.signature
+        });
+      }
+      
+      // Handle buys and sells
+      if (data.txType === 'buy' || data.txType === 'sell') {
+        const trader = this.getOrCreateTrader(data.traderPublicKey);
+        trader.addTrade({
+          mint: this.mint,
+          txType: data.txType,
+          tokenAmount: data.tokenAmount,
+          newTokenBalance: data.newTokenBalance,
+          signature: data.signature
+        });
       }
 
-      // Update volume if this is a trade
-      if (tradeData.txType === 'buy' || tradeData.txType === 'sell') {
-        this.updateVolume({ volume: tradeData.tokenAmount });
+      // Update bonding curve data
+      if (data.vTokensInBondingCurve !== undefined) {
+        this.bondingCurveTokens = data.vTokensInBondingCurve;
+      }
+      if (data.vSolInBondingCurve !== undefined) {
+        this.solInBondingCurve = data.vSolInBondingCurve;
+      }
+      if (data.marketCapSol !== undefined) {
+        this.marketCapSol = data.marketCapSol;
       }
 
-      // Update market cap if available
-      if (tradeData.marketCapSol) {
-        this.marketCapSol = tradeData.marketCapSol;
-      }
-
-      // Update supply components
-      this.updateSupply(tradeData);
-
-      this.updateTraderData(tradeData);
-      this.addToRecentTrades(tradeData);
+      // Calculate and update derived metrics
+      this.calculateSupply();
       this.emit('tokenUpdated', this);
     } catch (error) {
       this.emit('error', {
@@ -117,109 +93,10 @@ class Token extends EventEmitter {
     }
   }
 
-  updateVolume(volumeData) {
-    if (!volumeData || volumeData.volume === undefined || volumeData.volume === null || volumeData.volume < 0) {
-      throw new Error('Invalid volume update');
-    }
-
-    this.volume = volumeData.volume;
-    if (volumeData.volume1m) this.volume1m = volumeData.volume1m;
-    if (volumeData.volume5m) this.volume5m = volumeData.volume5m;
-    if (volumeData.volume30m) this.volume30m = volumeData.volume30m;
-
-    this.volumeHistory.push({
-      ...volumeData,
-      timestamp: Date.now()
-    });
-
-    // Maintain volume history window
-    if (this.volumeHistory.length > this.config.TOKENS.VOLUME_WINDOW) {
-      this.volumeHistory.shift();
-    }
-
-    this.emit('volumeUpdate', {
-      volume: volumeData.volume,
-      timestamp: Date.now()
-    });
-  }
-
-  updateTraderData(tradeData) {
-    try {
-      const { traderPublicKey, tokenAmount, price, timestamp, type } = tradeData;
-      
-      if (!this.traders.has(traderPublicKey)) {
-        this.traders.set(traderPublicKey, {
-          trades: [],
-          balance: 0,
-          firstTrade: timestamp,
-          lastTrade: timestamp,
-          totalVolume: 0
-        });
-      }
-
-      const trader = this.traders.get(traderPublicKey);
-      trader.lastTrade = timestamp;
-      trader.totalVolume += tokenAmount * price;
-      
-      if (type === 'buy') {
-        trader.balance += tokenAmount;
-      } else if (type === 'sell') {
-        trader.balance -= tokenAmount;
-      }
-
-      trader.trades.push({
-        type,
-        amount: tokenAmount,
-        price,
-        timestamp,
-        priceImpact: this.calculatePriceImpact(tradeData)
-      });
-    } catch (error) {
-      this.emit('error', {
-        component: 'Token',
-        method: 'updateTraderData',
-        error: error.message,
-        mint: this.mint
-      });
-    }
-  }
-
-  addToRecentTrades(tradeData) {
-    try {
-      this.recentTrades.unshift({
-        ...tradeData,
-        priceImpact: this.calculatePriceImpact(tradeData)
-      });
-
-      if (this.recentTrades.length > this.maxRecentTrades) {
-        this.recentTrades.pop();
-      }
-    } catch (error) {
-      this.emit('error', {
-        component: 'Token',
-        method: 'addToRecentTrades',
-        error: error.message,
-        mint: this.mint
-      });
-    }
-  }
-
-  calculatePriceImpact(tradeData) {
-    try {
-      if (!this.recentTrades.length) return 0;
-      
-      const prevPrice = this.recentTrades[0]?.price || this.currentPrice;
-      const currentPrice = tradeData.price;
-      
-      return ((currentPrice - prevPrice) / prevPrice) * 100;
-    } catch (error) {
-      this.emit('error', {
-        component: 'Token',
-        method: 'calculatePriceImpact',
-        error: error.message,
-        mint: this.mint
-      });
-      return 0;
+  calculateSupply() {
+    if (this.bondingCurveTokens !== null) {
+      this.supply = this.bondingCurveTokens + Array.from(this.traders.values())
+        .reduce((total, trader) => total + trader.getTokenBalance(this.mint), 0);
     }
   }
 

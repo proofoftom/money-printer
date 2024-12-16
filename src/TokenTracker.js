@@ -94,11 +94,16 @@ class TokenTracker extends EventEmitter {
 
   async handleTokenUpdate(tokenData) {
     try {
+      if (!tokenData || !tokenData.mint) {
+        throw new Error('Invalid token data received');
+      }
+
       const token = this.tokens.get(tokenData.mint);
       if (!token || typeof token.update !== 'function') {
         throw new Error('Invalid token object received');
       }
-      await token.update();
+
+      await token.update(tokenData);
       this.emit('tokenUpdated', token);
     } catch (error) {
       this.emit('error', {
