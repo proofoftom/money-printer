@@ -340,6 +340,24 @@ Partial Exit:
       }))
     };
   }
+
+  validatePositions() {
+    const invalidPositions = this.stateManager.validatePositions();
+    
+    if (invalidPositions.length > 0) {
+      console.warn(`Found ${invalidPositions.length} invalid positions:`);
+      
+      for (const { mint, reason, position } of invalidPositions) {
+        console.warn(`- ${mint}: ${reason}`);
+        
+        // Auto-close stale positions
+        if (reason === 'stale') {
+          console.warn(`Auto-closing stale position for ${mint}`);
+          this.closePosition(mint, position.currentPrice);
+        }
+      }
+    }
+  }
 }
 
 module.exports = PositionManager;
