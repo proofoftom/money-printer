@@ -25,16 +25,29 @@ const tokenTracker = new TokenTracker(
 const wsManager = new WebSocketManager(tokenTracker, priceManager, errorLogger);
 
 // Create dashboard first to capture all logs
-const dashboard = new Dashboard(wallet, tokenTracker, positionManager, safetyChecker);
+const dashboard = new Dashboard(
+  wallet,
+  tokenTracker,
+  positionManager,
+  safetyChecker
+);
 
 // Initialize price manager before starting
 async function start() {
   try {
     await priceManager.initialize();
-    dashboard.logStatus("Money Printer initialized and ready to trade!", "info");
+    dashboard.logStatus(
+      "Money Printer initialized and ready to trade!",
+      "info"
+    );
   } catch (error) {
-    errorLogger.logError(error, 'Initialization', { component: 'PriceManager' });
-    dashboard.logStatus(`Failed to initialize Money Printer: ${error.message}`, "error");
+    errorLogger.logError(error, "Initialization", {
+      component: "PriceManager",
+    });
+    dashboard.logStatus(
+      `Failed to initialize Money Printer: ${error.message}`,
+      "error"
+    );
     process.exit(1);
   }
 }
@@ -45,18 +58,35 @@ tokenTracker.on("tokenAdded", (token) => {
 });
 
 tokenTracker.on("tokenHeatingUp", (token) => {
-  dashboard.logStatus(`Token ${token.symbol} (${token.mint}) is heating up!`, "info");
+  dashboard.logStatus(
+    `Token ${token.symbol} (${token.mint}) is heating up!`,
+    "info"
+  );
   dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
 });
 
 tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
-  dashboard.logStatus(`Token ${token.symbol} state changed: ${from} -> ${to}`, "info");
-  dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
+  dashboard.logStatus(
+    `Token ${token.symbol} state changed: ${from} -> ${to}`,
+    "info"
+  );
+  dashboard.logStatus(
+    `Market cap: ${priceManager
+      .solToUSD(token.marketCapSol)
+      .toFixed(2)} USD / ${token.marketCapSol} SOL`,
+    "info"
+  );
   if (to === "drawdown") {
-    dashboard.logStatus(`Drawdown from peak: ${token.getDrawdownPercentage().toFixed(2)}%`, "info");
+    dashboard.logStatus(
+      `Drawdown from peak: ${token.getDrawdownPercentage().toFixed(2)}%`,
+      "info"
+    );
   } else if (to === "inPosition") {
     const position = positionManager.getPosition(token.mint);
-    dashboard.logStatus(`Position opened at: ${position.entryPrice} SOL`, "info");
+    dashboard.logStatus(
+      `Position opened at: ${position.entryPrice} SOL`,
+      "info"
+    );
   }
 });
 
@@ -65,23 +95,26 @@ tokenTracker.on("positionOpened", (token) => {
   dashboard.logStatus(`Opened position for ${token.symbol}`, "info");
   dashboard.logStatus(`Entry price: ${position.entryPrice} SOL`, "info");
   dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
-  dashboard.logTrade({ 
-    type: "BUY", 
-    mint: token.mint, 
+  dashboard.logTrade({
+    type: "BUY",
+    mint: token.mint,
     symbol: token.symbol,
-    profitLoss: 0 
+    profitLoss: 0,
   });
 });
 
 tokenTracker.on("takeProfitExecuted", ({ token, percentage, portion }) => {
   dashboard.logStatus(`Take profit hit for ${token.symbol}`, "info");
-  dashboard.logStatus(`Sold ${(portion * 100).toFixed(0)}% at ${percentage}% profit`, "info");
+  dashboard.logStatus(
+    `Sold ${(portion * 100).toFixed(0)}% at ${percentage}% profit`,
+    "info"
+  );
   dashboard.logStatus(`Current market cap: ${token.marketCapSol} SOL`, "info");
-  dashboard.logTrade({ 
-    type: "SELL", 
-    mint: token.mint, 
+  dashboard.logTrade({
+    type: "SELL",
+    mint: token.mint,
     symbol: token.symbol,
-    profitLoss: percentage 
+    profitLoss: percentage,
   });
 });
 
@@ -89,16 +122,19 @@ tokenTracker.on("positionClosed", ({ token, reason }) => {
   dashboard.logStatus(`Position closed for ${token.symbol}`, "info");
   dashboard.logStatus(`Reason: ${reason}`, "info");
   dashboard.logStatus(`Final market cap: ${token.marketCapSol} SOL`, "info");
-  dashboard.logTrade({ 
-    type: "CLOSE", 
-    mint: token.mint, 
+  dashboard.logTrade({
+    type: "CLOSE",
+    mint: token.mint,
     symbol: token.symbol,
-    profitLoss: token.profitLoss 
+    profitLoss: token.profitLoss,
   });
 });
 
 tokenTracker.on("error", ({ token, error }) => {
-  dashboard.logStatus(`Error with token ${token.symbol}: ${error.message}`, "error");
+  dashboard.logStatus(
+    `Error with token ${token.symbol}: ${error.message}`,
+    "error"
+  );
 });
 
 // Handle process events for graceful shutdown
