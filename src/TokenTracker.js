@@ -8,13 +8,15 @@ class TokenTracker extends EventEmitter {
     safetyChecker,
     positionManager,
     priceManager,
-    webSocketManager
+    webSocketManager,
+    statsLogger
   ) {
     super();
     this.safetyChecker = safetyChecker;
     this.positionManager = positionManager;
     this.priceManager = priceManager;
     this.webSocketManager = webSocketManager;
+    this.statsLogger = statsLogger;
     this.tokens = new Map();
     this.traders = new Map(); // Track traders across all tokens
   }
@@ -33,13 +35,24 @@ class TokenTracker extends EventEmitter {
   }
 
   handleNewToken(tokenData) {
-    const token = new Token(tokenData);
+    if (!tokenData || !tokenData.mint || tokenData.txType !== 'create') {
+      console.error('Invalid token creation data received:', tokenData);
+      return null;
+    }
+
+    const token = new Token({
+      mint: tokenData.mint,
+      symbol: tokenData.symbol,
+      config: config,
+      priceManager: this.priceManager,
+      statsLogger: this.statsLogger
+    });
 
     // Check market cap threshold before processing
-    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+    const marketCapUSD = this.priceManager.solToUSD(tokenData.marketCapSol);
     if (marketCapUSD >= config.THRESHOLDS.MAX_MARKET_CAP_USD) {
       console.info(
-        `Ignoring new token ${token.symbol || token.mint.slice(0, 8)} - Market cap too high: $${marketCapUSD.toFixed(2)} (${token.marketCapSol.toFixed(2)} SOL)`
+        `Ignoring new token ${tokenData.symbol || tokenData.mint.slice(0, 8)} - Market cap too high: $${marketCapUSD.toFixed(2)} (${tokenData.marketCapSol.toFixed(2)} SOL)`
       );
       return null;
     }
@@ -49,7 +62,6 @@ class TokenTracker extends EventEmitter {
     token.on("stateChanged", ({ token, from, to }) => {
       this.emit("tokenStateChanged", { token, from, to });
       
-      // Unsubscribe from WebSocket updates when token enters dead state
       if (to === "dead") {
         console.log(`Token ${token.symbol || token.mint.slice(0, 8)} marked as dead, unsubscribing from updates`);
         this.webSocketManager.unsubscribeFromToken(token.mint);
@@ -57,7 +69,6 @@ class TokenTracker extends EventEmitter {
     });
 
     token.on("readyForPosition", async (token) => {
-      // Check if we already have a position for this token
       if (this.positionManager.getPosition(token.mint)) {
         console.log(`Position already exists for ${token.symbol || token.mint.slice(0, 8)}, skipping`);
         return;
@@ -86,8 +97,8 @@ class TokenTracker extends EventEmitter {
       );
     });
 
-    // Let handleTokenUpdate manage all state transitions
-    this.handleTokenUpdate(tokenData);
+    // Initialize token with creation data
+    token.update(tokenData);
     this.emit("tokenAdded", token);
     return token;
   }
@@ -99,8 +110,12 @@ class TokenTracker extends EventEmitter {
       }
 
       const token = this.tokens.get(tokenData.mint);
-      if (!token || typeof token.update !== 'function') {
-        throw new Error('Invalid token object received');
+      if (!token) {
+        // If this is a create message, handle it through handleNewToken
+        if (tokenData.txType === 'create') {
+          return this.handleNewToken(tokenData);
+        }
+        throw new Error(`Token not found: ${tokenData.mint}`);
       }
 
       await token.update(tokenData);
