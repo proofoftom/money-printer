@@ -16,122 +16,152 @@ The Safety Checker is responsible for validating token safety through comprehens
 
 ## Security Checks
 
-### Market Cap Validation
+### Minimum Requirements
 ```javascript
-checkMarketCap(token)
+checkMinimumRequirements(token)
 ```
-- Minimum/maximum thresholds
-- USD value calculation
-- Market size assessment
+- Token age validation (20s minimum)
+- Minimum liquidity check (1.5 SOL)
+- Basic safety thresholds
 
-### Token Age Check
+### Rug Pull Detection
 ```javascript
-checkTokenAge(token)
+checkRugSignals(token)
 ```
-- Minimum age requirement
-- Creation time validation
-- Age-based risk assessment
+- Real-time creator behavior monitoring
+- Suspicious dump detection after pumps
+- Dynamic holder concentration analysis
+- Liquidity removal tracking
 
-### Price Action Analysis
+### Pump Pattern Analysis
 ```javascript
-checkPriceAction(token)
+checkPumpDynamics(token)
 ```
-- Volatility measurement
-- Pump detection
-- Price movement patterns
+- Price acceleration analysis (>0.5 threshold)
+- Volume spike detection (>200% increase)
+- Pump frequency monitoring
+- Gain rate validation
 
-### Trading Pattern Analysis
-```javascript
-checkTradingPatterns(token)
-```
-- Wash trading detection
-- Manipulation patterns
-- Volume correlation
+## Advanced Detection Metrics
 
-### Holder Distribution
-```javascript
-checkHolderDistribution(token)
-```
-- Concentration analysis
-- Whale detection
-- Distribution fairness
-
-### Volume Pattern Analysis
-```javascript
-checkVolumePatterns(token)
-```
-- Wash trade percentage
-- Volume correlation
-- Trading authenticity
-
-## Security Results
-
-### Check Result Structure
+### Price Acceleration
 ```javascript
 {
-  approved: Boolean,
-  rejectionCategory: String,
-  rejectionReason: String,
-  details: Object,
-  duration: Number
+  priceAcceleration: Number,  // Rate of price change
+  gainRate: Number,          // %/second price increase
+  volumeCorrelation: Number  // Price-volume correlation
 }
 ```
 
-### Rejection Categories
-1. **Market Cap**
-   - `high`: Exceeds maximum cap
-   - `low`: Below minimum threshold
+### Volume Spikes
+```javascript
+{
+  timestamp: Number,
+  volume: Number,
+  priceChange: Number,
+  correlation: Number
+}
+```
 
-2. **Age**
-   - `tooNew`: Insufficient age
+### Creator Behavior
+```javascript
+{
+  recentSells: Array,         // Recent sell transactions
+  sellVolume: Number,         // Total sell volume
+  liquidityImpact: Number     // Impact on bonding curve
+}
+```
 
-3. **Price Action**
-   - `volatilityTooHigh`: Excessive volatility
-   - `pumpTooHigh`: Suspicious price movement
+## Optimized Parameters
 
-4. **Trading Patterns**
-   - `washTrading`: Suspicious trading
-   - `manipulation`: Market manipulation
+### Entry Thresholds
+```javascript
+{
+  MIN_TOKEN_AGE_SECONDS: 20,
+  MIN_LIQUIDITY_SOL: 1.5,
+  MAX_CREATOR_HOLDINGS: 20,
+  MIN_HOLDERS: 40
+}
+```
 
-5. **Holders**
-   - `concentration`: High holder concentration
-   - `whales`: Large holder dominance
+### Pump Detection
+```javascript
+{
+  MIN_PRICE_ACCELERATION: 0.5,
+  MIN_VOLUME_SPIKE: 200,
+  MIN_GAIN_RATE: 2,
+  MAX_PRICE_VOLATILITY: 175
+}
+```
 
-6. **Volume**
-   - `excessiveWashTrading`: Wash trade detection
-   - `lowCorrelation`: Volume anomalies
+### Exit Signals
+```javascript
+{
+  SUSPICIOUS_DUMP: -30,        // % drop
+  MAX_CREATOR_SELL: 10,       // % of liquidity
+  MAX_DRAWDOWN: 25,           // % from peak
+  RECOVERY_THRESHOLD: 8        // % recovery needed
+}
+```
 
-## Configuration Options
+## Performance Optimizations
+
+### Real-time Monitoring
+- Continuous creator behavior tracking
+- Instant pump pattern detection
+- Dynamic safety threshold adjustment
+
+### Memory Efficiency
+- Optimized data structures
+- Efficient metric calculations
+- Smart event handling
+
+### Response Time
+- Fast pump detection algorithm
+- Quick exit signal generation
+- Efficient safety validation
+
+## Integration
+
+### Token Component
+- Real-time price metrics
+- Volume spike detection
+- Wallet activity monitoring
+
+### Price Manager
+- Dynamic price calculations
+- Volatility tracking
+- Market impact analysis
+
+## Configuration
+
+Updated configuration parameters for optimized performance:
 
 ```javascript
 {
   SAFETY: {
-    MAX_MARKET_CAP_USD: Number,
-    MIN_MARKET_CAP_USD: Number,
-    MAX_PRICE_VOLATILITY: Number,
-    MAX_WASH_TRADE_PERCENTAGE: Number,
-    MIN_TOKEN_AGE: Number,
-    MAX_HOLDER_CONCENTRATION: Number
+    MIN_LIQUIDITY_SOL: 1.5,
+    MIN_VOLUME_SOL: 0.3,
+    MAX_WALLET_VOLUME_PERCENTAGE: 40,
+    MIN_VOLUME_PRICE_CORRELATION: 0.25,
+    MAX_WASH_TRADE_PERCENTAGE: 45,
+    
+    MIN_TOKEN_AGE_SECONDS: 20,
+    MAX_HOLD_TIME_SECONDS: 240,
+    
+    MAX_PRICE_CHANGE_PERCENT: 250,
+    MIN_PRICE_CHANGE_PERCENT: -35,
+    MAX_PRICE_VOLATILITY: 175,
+    
+    MIN_HOLDERS: 40,
+    MAX_TOP_HOLDER_CONCENTRATION: 45,
+    MAX_CREATOR_HOLDINGS_PERCENT: 20,
+    
+    RECOVERY_THRESHOLD_PERCENT: 8,
+    MAX_DRAWDOWN_PERCENT: 25
   }
 }
 ```
-
-## Integration Points
-
-### Safety Logger
-- Check results recording
-- Rejection tracking
-- Performance monitoring
-
-### Price Manager
-- USD conversions
-- Value calculations
-- Market cap validation
-
-### Token Tracker
-- Token state updates
-- Safety status tracking
-- Trading decisions
 
 ## Error Handling
 

@@ -86,6 +86,28 @@ setState(newState);
 - Emits state change events
 - Updates related metrics (e.g., drawdown tracking)
 
+### Price Analysis
+
+```javascript
+updatePriceMetrics();
+```
+
+- Updates circular price buffer
+- Calculates price acceleration
+- Detects pump conditions
+- Tracks volume spikes
+- Emits price updates with metrics
+
+### Volume Analysis
+
+```javascript
+getRecentVolume(timeWindow);
+```
+
+- Calculates volume within specified time window
+- Uses optimized wallet data structure
+- Filters by timestamp for efficiency
+
 ## Events
 
 The Token component emits the following events:
@@ -93,6 +115,9 @@ The Token component emits the following events:
 - `stateChanged`: When token state transitions
 - `holderUpdated`: When holder balances change
 - `volumeUpdated`: When new trades are recorded
+- `priceUpdate`: Emits price with acceleration and pump metrics
+- `volumeSpike`: When significant volume increase detected
+- `pumpDetected`: When pump conditions are met
 
 ## Data Structure
 
@@ -120,7 +145,24 @@ The Token component emits the following events:
 
   // Holder Data
   holders: Map<String, Number>,
-  creatorInitialHoldings: Number
+  creatorInitialHoldings: Number,
+
+  // Price Tracking
+  priceBuffer: {
+    data: Array(30),    // Fixed-size circular buffer
+    head: Number,       // Current buffer position
+    size: Number,       // Buffer size (30 data points)
+    count: Number       // Current number of entries
+  },
+
+  // Pump Metrics
+  pumpMetrics: {
+    lastPumpTime: Number,      // Timestamp of last pump
+    pumpCount: Number,         // Number of pumps detected
+    highestGainRate: Number,   // Highest %/second gain rate
+    volumeSpikes: Array,       // Volume spike history
+    priceAcceleration: Number  // Current price acceleration
+  }
 }
 ```
 
@@ -135,6 +177,19 @@ The Token component emits the following events:
   lastCleanup: Timestamp,
   cleanupInterval: Number
 }
+```
+
+### Wallet Data Structure
+
+```javascript
+wallets: Map<String, {
+  balance: Number,
+  initialBalance: Number,
+  trades: Array,
+  firstSeen: Number,
+  lastActive: Number,
+  isCreator: Boolean
+}>
 ```
 
 ## Integration Points
@@ -195,9 +250,26 @@ The Token component emits the following events:
    - Proper event ordering
    - Synchronized holder updates
 
+## Performance Optimizations
+
+### Circular Buffer
+- O(1) price updates
+- Constant memory usage
+- Efficient historical analysis
+
+### Pump Detection
+- Real-time price acceleration tracking
+- Volume spike correlation
+- Pattern recognition for pump dynamics
+
+### Memory Management
+- Automatic data cleanup
+- Optimized data structures
+- Efficient event handling
+
 ## Configuration
 
-Token behavior can be configured through:
+Key configuration parameters:
 
 ```javascript
 {
@@ -208,6 +280,10 @@ Token behavior can be configured through:
   holders: {
     maxConcentration: 80,     // 80%
     minHolders: 10
-  }
+  },
+  BUFFER_SIZE: 30,            // Price buffer size
+  PUMP_THRESHOLD: 25,         // % increase for pump
+  MIN_VOLUME_SPIKE: 200,      // % increase for volume spike
+  CLEANUP_INTERVAL: 300000    // 5-minute data cleanup
 }
 ```
