@@ -1,6 +1,7 @@
 const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
+const config = require('./config');
 
 class PositionStateManager extends EventEmitter {
   constructor() {
@@ -8,10 +9,16 @@ class PositionStateManager extends EventEmitter {
     this.positions = new Map();
     this.stateFile = path.join(process.cwd(), 'data', 'positions.json');
     this.ensureDataDirectory();
+    
+    // Clear positions on startup if configured
+    if (config.POSITION_MANAGER.CLEAR_ON_STARTUP) {
+      this.clearPositions();
+    }
+    
     this.loadPositions();
     
     // Periodic state persistence
-    setInterval(() => this.savePositions(), 30000); // Save every 30 seconds
+    setInterval(() => this.savePositions(), config.POSITION_MANAGER.SAVE_INTERVAL);
   }
 
   ensureDataDirectory() {
@@ -189,6 +196,17 @@ class PositionStateManager extends EventEmitter {
         return sum + pl;
       }, 0)
     };
+  }
+
+  clearPositions() {
+    this.positions.clear();
+    try {
+      if (fs.existsSync(this.stateFile)) {
+        fs.unlinkSync(this.stateFile);
+      }
+    } catch (error) {
+      console.error('Error clearing positions file:', error);
+    }
   }
 }
 

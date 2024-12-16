@@ -95,6 +95,12 @@ module.exports = {
     PEAK_VOLUME_WINDOW: 300, // Reduced from 600 for faster reaction
   },
 
+  // Position Manager configuration
+  POSITION_MANAGER: {
+    CLEAR_ON_STARTUP: false, // Set to true to clear positions on startup (for testing)
+    SAVE_INTERVAL: 30000, // Save positions every 30 seconds
+  },
+
   // Exit strategies configuration
   EXIT_STRATEGIES: {
     STOP_LOSS: {
