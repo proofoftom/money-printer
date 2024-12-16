@@ -119,15 +119,13 @@ class SafetyChecker {
     }
     
     // Check creator behavior during pump
-    const creatorWallet = Array.from(token.wallets.values()).find(w => w.isCreator);
+    const creatorWallet = token.traderManager.getTrader(token.traderPublicKey);
     if (creatorWallet) {
-      const recentCreatorTrades = creatorWallet.trades.filter(t => 
-        Date.now() - t.timestamp < 5 * 60 * 1000
-      );
+      const recentCreatorTrades = creatorWallet.getTradesInTimeWindow(token.mint, 5 * 60 * 1000);
       
       if (recentCreatorTrades.length > 0) {
         const totalSellVolume = recentCreatorTrades.reduce((sum, trade) => 
-          sum + (trade.amount < 0 ? Math.abs(trade.volumeInSol) : 0), 0
+          sum + (trade.type === 'sell' ? Math.abs(trade.volumeInSol) : 0), 0
         );
         
         if (totalSellVolume > token.vSolInBondingCurve * 0.1) { // Creator selling >10% of liquidity
@@ -141,51 +139,94 @@ class SafetyChecker {
   }
 
   checkPumpDynamics(token) {
-    // Fast check for pump characteristics
     const pumpMetrics = token.pumpMetrics;
     const pumpConfig = config.SAFETY.PUMP_DETECTION;
     
-    // Check price acceleration
+    // Check price acceleration and trading activity
     if (pumpMetrics.priceAcceleration > pumpConfig.MIN_PRICE_ACCELERATION) {
-      // Strong positive acceleration indicates potential pump
       const volumeSpikes = pumpMetrics.volumeSpikes;
       if (volumeSpikes.length > 0) {
-        // Analyze volume spikes pattern
         const recentSpike = volumeSpikes[volumeSpikes.length - 1];
-        const volumeIncrease = recentSpike.volume / token.getRecentVolume(pumpConfig.PUMP_WINDOW_MS) * 100;
         
+        // Get unique traders during spike
+        const traderCount = token.traderManager.getUniqueTraderCount(
+          recentSpike.startTime,
+          recentSpike.endTime
+        );
+        
+        // Check if enough unique traders participated
+        if (traderCount < pumpConfig.MIN_TRADER_PARTICIPATION) {
+          this.setFailureReason("Insufficient trader participation", traderCount);
+          return false;
+        }
+        
+        // Analyze volume spike pattern with trader context
+        const volumeIncrease = recentSpike.volume / token.getRecentVolume(pumpConfig.PUMP_WINDOW_MS) * 100;
         if (volumeIncrease > pumpConfig.MIN_VOLUME_SPIKE) {
-          // Check if price movement correlates with volume
           const priceChange = recentSpike.priceChange;
           if (priceChange > 0 && priceChange/volumeIncrease > pumpConfig.MIN_PRICE_VOLUME_CORRELATION) {
-            // Price movement correlates well with volume
+            // Check for suspicious trading relationships
+            const tradingGroupRisk = token.traderManager.analyzeTradingRelationships(
+              recentSpike.startTime,
+              recentSpike.endTime
+            );
+            
+            if (tradingGroupRisk > pumpConfig.MAX_GROUP_RISK) {
+              this.setFailureReason("Suspicious trading group activity", tradingGroupRisk);
+              return false;
+            }
             return true;
           }
         }
       }
     }
     
-    // Check gain rate
+    // Check gain rate with volatility context
     if (pumpMetrics.highestGainRate > pumpConfig.MIN_GAIN_RATE) {
       const priceStats = token.getPriceStats();
       if (priceStats.volatility < config.SAFETY.MAX_PRICE_VOLATILITY) {
+        // Analyze trader behavior during gain period
+        const riskMetrics = token.traderManager.analyzeTraderBehavior(
+          pumpMetrics.gainStartTime,
+          Date.now()
+        );
+        
+        if (riskMetrics.washTradingScore > config.SAFETY.WASH_TRADE_THRESHOLD) {
+          this.setFailureReason("Potential wash trading detected", riskMetrics.washTradingScore);
+          return false;
+        }
         return true;
       }
     }
     
-    // Check market cap momentum
+    // Check market cap momentum with trader analysis
     const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
     if (marketCapUSD > pumpConfig.LARGE_TOKEN_MC_USD) {
       const mcGainRate = pumpMetrics.marketCapGainRate || 0;
       if (mcGainRate > pumpConfig.MIN_MC_GAIN_RATE) {
+        // Analyze top trader concentration
+        const topTraderConcentration = token.traderManager.getTopTraderConcentration(5);
+        if (topTraderConcentration > config.SAFETY.MAX_TOP_TRADER_CONCENTRATION) {
+          this.setFailureReason("High top trader concentration", topTraderConcentration);
+          return false;
+        }
         return true;
       }
     }
     
-    // Check pump frequency
+    // Check pump frequency with trader participation
     if (pumpMetrics.pumpCount >= pumpConfig.MIN_PUMP_COUNT) {
       const timeSinceLastPump = Date.now() - pumpMetrics.lastPumpTime;
       if (timeSinceLastPump < pumpConfig.PUMP_WINDOW_MS) {
+        // Check for repeat pump participants
+        const repeatParticipants = token.traderManager.getRepeatPumpParticipants(
+          pumpMetrics.pumpTimes
+        );
+        
+        if (repeatParticipants.length > pumpConfig.MAX_REPEAT_PARTICIPANTS) {
+          this.setFailureReason("High number of repeat pump participants", repeatParticipants.length);
+          return false;
+        }
         return true;
       }
     }

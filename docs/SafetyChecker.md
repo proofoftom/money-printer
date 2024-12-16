@@ -10,7 +10,8 @@ The Safety Checker is responsible for validating token safety through comprehens
 ```javascript
 {
   safetyLogger: SafetyLogger,  // Logging component
-  priceManager: PriceManager   // Price conversion utility
+  priceManager: PriceManager,  // Price conversion utility
+  traderManager: TraderManager // Trader management system
 }
 ```
 
@@ -28,10 +29,11 @@ checkMinimumRequirements(token)
 ```javascript
 checkRugSignals(token)
 ```
-- Real-time creator behavior monitoring
+- Real-time creator behavior monitoring through TraderManager
 - Suspicious dump detection after pumps
 - Dynamic holder concentration analysis
 - Liquidity removal tracking
+- Trader relationship analysis
 
 ### Pump Pattern Analysis
 ```javascript
@@ -41,6 +43,7 @@ checkPumpDynamics(token)
 - Volume spike detection (>200% increase)
 - Pump frequency monitoring
 - Gain rate validation
+- Trading pattern correlation
 
 ## Advanced Detection Metrics
 
@@ -59,16 +62,24 @@ checkPumpDynamics(token)
   timestamp: Number,
   volume: Number,
   priceChange: Number,
-  correlation: Number
+  correlation: Number,
+  traderCount: Number       // Number of unique traders involved
 }
 ```
 
-### Creator Behavior
+### Trader Behavior
 ```javascript
 {
-  recentSells: Array,         // Recent sell transactions
-  sellVolume: Number,         // Total sell volume
-  liquidityImpact: Number     // Impact on bonding curve
+  recentTrades: Array,       // Recent trading activity
+  tradeVolume: Number,       // Total trade volume
+  buyToSellRatio: Number,    // Ratio of buy/sell volume
+  tradingPattern: String,    // Identified trading pattern
+  relationshipScore: Number, // Score based on trading relationships
+  riskMetrics: {
+    washTradingScore: Number,
+    pumpParticipation: Number,
+    rugPullInvolvement: Number
+  }
 }
 ```
 
@@ -80,7 +91,8 @@ checkPumpDynamics(token)
   MIN_TOKEN_AGE_SECONDS: 20,
   MIN_LIQUIDITY_SOL: 1.5,
   MAX_CREATOR_HOLDINGS: 20,
-  MIN_HOLDERS: 40
+  MIN_HOLDERS: 40,
+  MIN_TRADER_COUNT: 25      // Minimum unique traders
 }
 ```
 
@@ -90,7 +102,8 @@ checkPumpDynamics(token)
   MIN_PRICE_ACCELERATION: 0.5,
   MIN_VOLUME_SPIKE: 200,
   MIN_GAIN_RATE: 2,
-  MAX_PRICE_VOLATILITY: 175
+  MAX_PRICE_VOLATILITY: 175,
+  MIN_TRADER_PARTICIPATION: 15  // Minimum traders in pump
 }
 ```
 
@@ -99,8 +112,40 @@ checkPumpDynamics(token)
 {
   SUSPICIOUS_DUMP: -30,        // % drop
   MAX_CREATOR_SELL: 10,       // % of liquidity
-  MAX_DRAWDOWN: 25,           // % from peak
-  RECOVERY_THRESHOLD: 8        // % recovery needed
+  WASH_TRADE_THRESHOLD: 0.9,   // Buy/sell ratio for wash trading
+  RELATIONSHIP_THRESHOLD: 3    // Min trades for trader relationship
+}
+```
+
+## Trading Pattern Analysis
+
+### Wash Trading Detection
+```javascript
+{
+  timeWindow: Number,          // Analysis window in ms
+  minTradeCount: Number,       // Minimum trades to analyze
+  volumeThreshold: Number,     // Minimum volume for analysis
+  relationshipStrength: Number // Minimum relationship score
+}
+```
+
+### Pump Coordination
+```javascript
+{
+  participationThreshold: Number,  // Min traders involved
+  timeWindow: Number,              // Analysis window
+  volumeConcentration: Number,     // Max volume per trader
+  relationshipDensity: Number      // Min relationships between traders
+}
+```
+
+### Risk Scoring
+```javascript
+{
+  traderReputation: Number,     // Individual trader score
+  groupRiskScore: Number,       // Trading group risk
+  patternConfidence: Number,    // Pattern detection confidence
+  overallRiskLevel: String      // Combined risk assessment
 }
 ```
 
