@@ -55,15 +55,15 @@ module.exports = {
 
     // Pump pattern detection thresholds
     PUMP_DETECTION: {
-      MIN_PRICE_ACCELERATION: 0.25,    // Lowered from 0.3 to catch slower pumps
-      MIN_VOLUME_SPIKE: 120,          // Lowered from 150% to catch more gradual volume increases
+      MIN_PRICE_ACCELERATION: 0.25, // Lowered from 0.3 to catch slower pumps
+      MIN_VOLUME_SPIKE: 120, // Lowered from 150% to catch more gradual volume increases
       MIN_PRICE_VOLUME_CORRELATION: 0.15, // Lowered from 0.2 to allow for slight market inefficiencies
-      MIN_GAIN_RATE: 0.8,            // Lowered from 1.0% per second for smoother pumps
-      MIN_MC_GAIN_RATE: 0.4,         // Lowered from 0.5 for large tokens
-      LARGE_TOKEN_MC_USD: 25000,     // Increased from 20k to include more mid-sized tokens
-      MIN_PUMP_COUNT: 1,             // Keep at 1 to catch first pump
-      PUMP_WINDOW_MS: 360000,        // Increased from 300k (5 min) to 360k (6 min) for better pattern detection
-    }
+      MIN_GAIN_RATE: 0.8, // Lowered from 1.0% per second for smoother pumps
+      MIN_MC_GAIN_RATE: 0.4, // Lowered from 0.5 for large tokens
+      LARGE_TOKEN_MC_USD: 25000, // Increased from 20k to include more mid-sized tokens
+      MIN_PUMP_COUNT: 1, // Keep at 1 to catch first pump
+      PUMP_WINDOW_MS: 360000, // Increased from 300k (5 min) to 360k (6 min) for better pattern detection
+    },
   },
 
   // Position sizing
@@ -97,7 +97,7 @@ module.exports = {
 
   // Position Manager configuration
   POSITION_MANAGER: {
-    CLEAR_ON_STARTUP: false, // Set to true to clear positions on startup (for testing)
+    CLEAR_ON_STARTUP: true, // Set to true to clear positions on startup (for testing)
     SAVE_INTERVAL: 30000, // Save positions every 30 seconds
   },
 
