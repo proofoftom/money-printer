@@ -73,6 +73,9 @@ class TokenTracker extends EventEmitter {
 
     token.update(tradeData);
 
+    // Update missed opportunity tracking
+    this.safetyChecker.updateTrackedTokens(token);
+
     // Convert market cap to USD for threshold comparisons
     const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
 

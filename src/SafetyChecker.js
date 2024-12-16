@@ -1,9 +1,11 @@
 const config = require("./config");
 const SafetyLogger = require("./SafetyLogger");
+const MissedOpportunityLogger = require("./MissedOpportunityLogger");
 
 class SafetyChecker {
   constructor(priceManager, safetyConfig = {}) {
     this.safetyLogger = new SafetyLogger();
+    this.missedOpportunityLogger = new MissedOpportunityLogger();
     this.priceManager = priceManager;
     this.safetyConfig = safetyConfig;
     this.lastFailureReason = null;
@@ -57,6 +59,12 @@ class SafetyChecker {
         details,
         duration,
       });
+
+      // Track the token for missed opportunity analysis
+      if (!approved) {
+        this.missedOpportunityLogger.trackToken(token, rejectionReason);
+        token.unsafeReason = rejectionReason;
+      }
 
       return approved;
     } catch (error) {
@@ -177,6 +185,11 @@ class SafetyChecker {
     
     this.setFailureReason("No clear pump pattern detected");
     return false;
+  }
+
+  updateTrackedTokens(token) {
+    // Update metrics for tracked tokens that failed safety checks
+    this.missedOpportunityLogger.updateTokenMetrics(token);
   }
 
   getSafetyMetrics() {
