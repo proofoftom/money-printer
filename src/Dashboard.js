@@ -20,6 +20,10 @@ class Dashboard {
       y: [],
     };
 
+    // Store original console methods
+    this.originalConsoleLog = console.log;
+    this.originalConsoleError = console.error;
+
     this.initializeDashboard();
   }
 
@@ -101,20 +105,17 @@ class Dashboard {
     });
 
     // Redirect console.log to status box
-    const originalConsoleLog = console.log;
-    const originalConsoleError = console.error;
-
     console.log = (...args) => {
       this.logStatus(args.join(" "));
       // Keep original logging for debugging
-      originalConsoleLog.apply(console, args);
+      this.originalConsoleLog.apply(console, args);
     };
 
     console.error = (...args) => {
       const errorMessage = args.join(" ");
       this.logStatus(errorMessage, "error");
       // Keep original error logging for debugging
-      originalConsoleError.apply(console, args);
+      this.originalConsoleError.apply(console, args);
     };
 
     // Token state boxes in second row, extending to bottom
@@ -183,8 +184,8 @@ class Dashboard {
     // Basic event handler for quitting
     this.screen.key(["escape", "q", "C-c"], () => {
       // Restore original console methods before exiting
-      console.log = originalConsoleLog;
-      console.error = originalConsoleError;
+      console.log = this.originalConsoleLog;
+      console.error = this.originalConsoleError;
       return process.exit(0);
     });
 
