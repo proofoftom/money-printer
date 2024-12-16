@@ -1,0 +1,249 @@
+const EventEmitter = require('events');
+const config = require('./config');
+
+class Trader extends EventEmitter {
+  constructor(publicKey, isCreator = false) {
+    super();
+    this.publicKey = publicKey;
+    this.isCreator = isCreator;
+    this.firstSeen = Date.now();
+    this.lastActive = Date.now();
+    
+    // Track balances per token
+    this.tokenBalances = new Map(); // mint -> { balance, initialBalance }
+    
+    // Trading history with time windows
+    this.tradeHistory = {
+      all: [],
+      '1m': [],
+      '5m': [],
+      '30m': []
+    };
+
+    // Reputation and scoring
+    this.reputation = {
+      score: 100, // Base score
+      washTradingIncidents: 0,
+      rugPullInvolvements: 0,
+      successfulPumps: 0,
+      failedPumps: 0,
+      averageHoldTime: 0,
+      totalTrades: 0,
+      profitableTrades: 0
+    };
+
+    // Relationship tracking
+    this.commonTraders = new Map(); // publicKey -> frequency of trading together
+    
+    // Pattern detection state
+    this.patterns = {
+      washTrading: {
+        suspiciousTransactions: [],
+        lastWarning: null
+      },
+      pumpAndDump: {
+        participations: [],
+        coordinationScore: 0
+      },
+      tradingBehavior: {
+        buyToSellRatio: 1,
+        averageTradeSize: 0,
+        tradeFrequency: 0
+      }
+    };
+  }
+
+  recordTrade(tradeData) {
+    const {
+      mint,
+      amount,
+      price,
+      type, // 'buy' or 'sell'
+      timestamp = Date.now(),
+      otherParty // public key of counter-party
+    } = tradeData;
+
+    // Update last active
+    this.lastActive = timestamp;
+
+    // Update token balance
+    this.updateTokenBalance(mint, amount, type);
+
+    // Record trade in history
+    const trade = { mint, amount, price, type, timestamp, otherParty };
+    this.tradeHistory.all.push(trade);
+    
+    // Update time-windowed histories
+    this.updateTimeWindowedHistory(trade);
+
+    // Update trading patterns
+    this.updateTradingPatterns(trade);
+
+    // Check for wash trading
+    if (this.detectWashTrading(trade)) {
+      this.reputation.washTradingIncidents++;
+      this.reputation.score = Math.max(0, this.reputation.score - 5);
+      this.emit('washTradingDetected', { trader: this, trade });
+    }
+
+    // Update relationships
+    if (otherParty) {
+      this.updateTraderRelationship(otherParty);
+    }
+
+    // Emit trade event
+    this.emit('trade', { trader: this, trade });
+  }
+
+  updateTokenBalance(mint, amount, type) {
+    let balance = this.tokenBalances.get(mint) || { balance: 0, initialBalance: 0 };
+    
+    if (type === 'buy') {
+      balance.balance += amount;
+      if (!this.tokenBalances.has(mint)) {
+        balance.initialBalance = amount;
+      }
+    } else if (type === 'sell') {
+      balance.balance -= amount;
+    }
+
+    this.tokenBalances.set(mint, balance);
+  }
+
+  updateTimeWindowedHistory(trade) {
+    const now = Date.now();
+    const windows = {
+      '1m': 60 * 1000,
+      '5m': 5 * 60 * 1000,
+      '30m': 30 * 60 * 1000
+    };
+
+    // Update each time window
+    for (const [window, duration] of Object.entries(windows)) {
+      // Remove old trades
+      this.tradeHistory[window] = this.tradeHistory[window]
+        .filter(t => now - t.timestamp < duration);
+      
+      // Add new trade
+      this.tradeHistory[window].push(trade);
+    }
+  }
+
+  updateTradingPatterns(trade) {
+    const patterns = this.patterns.tradingBehavior;
+    const recentTrades = this.tradeHistory['5m'];
+    
+    // Update buy/sell ratio
+    const buys = recentTrades.filter(t => t.type === 'buy').length;
+    const sells = recentTrades.filter(t => t.type === 'sell').length;
+    patterns.buyToSellRatio = sells > 0 ? buys / sells : buys;
+
+    // Update average trade size
+    patterns.averageTradeSize = recentTrades.reduce((sum, t) => sum + t.amount, 0) / recentTrades.length;
+
+    // Update trade frequency (trades per minute)
+    patterns.tradeFrequency = recentTrades.length / 5; // 5-minute window
+  }
+
+  detectWashTrading(trade) {
+    const recentTrades = this.tradeHistory['1m'];
+    const suspiciousPatterns = recentTrades.filter(t => 
+      t.otherParty === trade.otherParty && 
+      t.type !== trade.type &&
+      Math.abs(t.amount - trade.amount) / trade.amount < 0.1 // Within 10% of each other
+    );
+
+    if (suspiciousPatterns.length > 0) {
+      this.patterns.washTrading.suspiciousTransactions.push({
+        trade,
+        relatedTrades: suspiciousPatterns,
+        timestamp: Date.now()
+      });
+      return true;
+    }
+    return false;
+  }
+
+  updateTraderRelationship(otherPartyKey) {
+    const frequency = this.commonTraders.get(otherPartyKey) || 0;
+    this.commonTraders.set(otherPartyKey, frequency + 1);
+
+    // Emit event if frequency crosses threshold
+    if ((frequency + 1) >= config.TRADER.RELATIONSHIP_THRESHOLD) {
+      this.emit('frequentTraderRelationship', {
+        trader: this,
+        otherParty: otherPartyKey,
+        frequency: frequency + 1
+      });
+    }
+  }
+
+  getTradeStats(timeWindow = '5m') {
+    const trades = this.tradeHistory[timeWindow];
+    const totalTrades = trades.length;
+    
+    if (totalTrades === 0) return null;
+
+    return {
+      totalTrades,
+      buyCount: trades.filter(t => t.type === 'buy').length,
+      sellCount: trades.filter(t => t.type === 'sell').length,
+      averageTradeSize: trades.reduce((sum, t) => sum + t.amount, 0) / totalTrades,
+      uniqueTokens: new Set(trades.map(t => t.mint)).size,
+      patterns: this.patterns.tradingBehavior
+    };
+  }
+
+  getReputationScore() {
+    return {
+      overall: this.reputation.score,
+      details: {
+        ...this.reputation,
+        riskLevel: this.calculateRiskLevel()
+      }
+    };
+  }
+
+  calculateRiskLevel() {
+    if (this.reputation.score < 30) return 'HIGH_RISK';
+    if (this.reputation.score < 70) return 'MEDIUM_RISK';
+    return 'LOW_RISK';
+  }
+
+  getTradesForToken(mint, cutoffTime) {
+    return this.tradeHistory.all.filter(trade => 
+      trade.mint === mint && (!cutoffTime || trade.timestamp > cutoffTime)
+    );
+  }
+
+  getTradesInTimeWindow(mint, timeWindow) {
+    const now = Date.now();
+    const cutoff = now - timeWindow;
+    return this.getTradesForToken(mint, cutoff);
+  }
+
+  getTokenBalance(mint) {
+    const balance = this.tokenBalances.get(mint);
+    return balance ? balance.balance : 0;
+  }
+
+  getInitialTokenBalance(mint) {
+    const balance = this.tokenBalances.get(mint);
+    return balance ? balance.initialBalance : 0;
+  }
+
+  toJSON() {
+    return {
+      publicKey: this.publicKey,
+      isCreator: this.isCreator,
+      firstSeen: this.firstSeen,
+      lastActive: this.lastActive,
+      tokenBalances: Array.from(this.tokenBalances.entries()),
+      reputation: this.reputation,
+      patterns: this.patterns,
+      relationships: Array.from(this.commonTraders.entries())
+    };
+  }
+}
+
+module.exports = Trader;

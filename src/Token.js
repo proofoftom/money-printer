@@ -1,5 +1,6 @@
 const EventEmitter = require("events");
 const config = require("./config");
+const TraderManager = require("./TraderManager");
 
 class Token extends EventEmitter {
   constructor(tokenData) {
@@ -48,19 +49,22 @@ class Token extends EventEmitter {
     }];
     this.priceVolatility = 0;
 
-    // Unified trader/holder tracking
-    this.wallets = new Map(); // Key: publicKey, Value: WalletData
+    // Initialize TraderManager
+    this.traderManager = new TraderManager();
     
     // Initialize creator as holder if initial balance provided
     if (tokenData.newTokenBalance || tokenData.initialBuy) {
       const balance = tokenData.newTokenBalance || tokenData.initialBuy;
-      this.wallets.set(tokenData.traderPublicKey, {
-        balance,
-        initialBalance: balance,
-        trades: [],
-        firstSeen: Date.now(),
-        lastActive: Date.now(),
-        isCreator: true
+      this.traderManager.getOrCreateTrader(tokenData.traderPublicKey, {
+        isCreator: true,
+        tokens: {
+          [this.mint]: {
+            balance,
+            initialBalance: balance,
+            firstSeen: Date.now(),
+            lastActive: Date.now()
+          }
+        }
       });
     }
 
@@ -202,11 +206,10 @@ class Token extends EventEmitter {
     const cutoff = now - timeWindow;
     let volume = 0;
     
-    for (const [_, wallet] of this.wallets) {
-      // Filter trades within timeWindow and sum their volumes
-      const recentTrades = wallet.trades.filter(trade => trade.timestamp > cutoff);
+    const traders = this.traderManager.getTraders();
+    for (const trader of traders) {
+      const recentTrades = trader.getTradesForToken(this.mint, cutoff);
       volume += recentTrades.reduce((sum, trade) => {
-        // Ensure we're using absolute values for volume calculation
         return sum + Math.abs(trade.volumeInSol || 0);
       }, 0);
     }
@@ -215,98 +218,54 @@ class Token extends EventEmitter {
   }
 
   updateWalletActivity(publicKey, tradeData) {
-    let wallet = this.wallets.get(publicKey);
     const now = tradeData.timestamp;
+    const trader = this.traderManager.getOrCreateTrader(publicKey);
 
-    // Create new wallet data if doesn't exist
-    if (!wallet) {
-      wallet = {
-        balance: 0,
-        initialBalance: tradeData.newBalance || 0,
-        trades: [],
-        firstSeen: now,
-        lastActive: now,
-        isCreator: false
-      };
-      this.wallets.set(publicKey, wallet);
-    }
-
-    // Update wallet data
-    wallet.lastActive = now;
-    wallet.balance = tradeData.newBalance !== undefined ? tradeData.newBalance : wallet.balance;
-    wallet.trades.push({
+    // Update trader data for this token
+    trader.updateTokenBalance(this.mint, tradeData.newBalance);
+    trader.recordTrade({
+      mint: this.mint,
       amount: tradeData.amount,
-      volumeInSol: tradeData.volumeInSol,
-      priceChange: tradeData.priceChange,
-      timestamp: now
+      price: this.currentPrice,
+      type: tradeData.amount > 0 ? 'buy' : 'sell',
+      timestamp: now,
+      volumeInSol: tradeData.volumeInSol
     });
 
-    // Cleanup old trades
+    // Cleanup old trades periodically
     if (now - this.metrics.volumeData.lastCleanup > this.metrics.volumeData.cleanupInterval) {
       const cutoff = now - 30 * 60 * 1000; // 30 minutes
-      for (const [_, walletData] of this.wallets) {
-        walletData.trades = walletData.trades.filter(t => t.timestamp > cutoff);
-      }
+      this.traderManager.cleanupOldTrades(cutoff);
       this.metrics.volumeData.lastCleanup = now;
     }
   }
 
   updateWalletBalance(publicKey, newBalance, timestamp) {
-    let wallet = this.wallets.get(publicKey);
-
     if (newBalance > 0) {
-      if (!wallet) {
-        wallet = {
-          balance: newBalance,
-          initialBalance: newBalance,
-          trades: [],
-          firstSeen: timestamp,
-          lastActive: timestamp,
-          isCreator: false
-        };
-        this.wallets.set(publicKey, wallet);
-      } else {
-        wallet.balance = newBalance;
-        wallet.lastActive = timestamp;
-      }
+      const trader = this.traderManager.getOrCreateTrader(publicKey);
+      trader.updateTokenBalance(this.mint, newBalance, timestamp);
     } else {
-      // Only delete if wallet exists and has no recent trades
-      if (wallet) {
-        const hasRecentTrades = wallet.trades.some(t => 
-          t.timestamp > timestamp - 30 * 60 * 1000
-        );
-        if (!hasRecentTrades) {
-          this.wallets.delete(publicKey);
-        } else {
-          wallet.balance = 0;
-          wallet.lastActive = timestamp;
-        }
+      const trader = this.traderManager.getTrader(publicKey);
+      if (trader) {
+        trader.updateTokenBalance(this.mint, 0, timestamp);
       }
     }
   }
 
   getHolderCount() {
-    return Array.from(this.wallets.values()).filter(w => w.balance > 0).length;
+    return this.traderManager.getHolderCountForToken(this.mint);
   }
 
   getTotalTokensHeld() {
-    return Array.from(this.wallets.values())
-      .reduce((sum, wallet) => sum + wallet.balance, 0);
+    return this.traderManager.getTotalTokensHeldForToken(this.mint);
   }
 
   getTopHolderConcentration(topN = 10) {
     const totalSupply = this.getTotalSupply();
     if (totalSupply === 0) return 0;
 
-    // Get holder balances and sort by balance
-    const holderBalances = Array.from(this.wallets.values())
-      .filter(w => w.balance > 0)
-      .map(w => w.balance)
-      .sort((a, b) => b - a);
-
-    // Take top N holders
-    const topBalances = holderBalances.slice(0, Math.min(topN, holderBalances.length));
-    const topHoldersBalance = topBalances.reduce((sum, balance) => sum + balance, 0);
+    const topHolders = this.traderManager.getTopHoldersForToken(this.mint, topN);
+    const topHoldersBalance = topHolders.reduce((sum, holder) => sum + holder.balance, 0);
 
     return (topHoldersBalance / totalSupply) * 100;
   }
@@ -314,68 +273,38 @@ class Token extends EventEmitter {
   getTraderStats(interval = "5m") {
     const now = Date.now();
     const cutoffTime = now - (parseInt(interval) * 60 * 1000);
-    let totalVolume = 0;
-    const traderStats = new Map();
+    const stats = this.traderManager.getTokenTraderStats(this.mint, cutoffTime);
 
-    // Analyze each wallet's trading activity
-    for (const [publicKey, wallet] of this.wallets) {
-      const recentTrades = wallet.trades.filter(t => t.timestamp > cutoffTime);
-      if (recentTrades.length === 0) continue;
-
-      const stats = {
-        volumeTotal: 0,
-        tradeCount: recentTrades.length,
-        buyVolume: 0,
-        sellVolume: 0,
-        currentBalance: wallet.balance,
-        walletAge: now - wallet.firstSeen
-      };
-
-      for (const trade of recentTrades) {
-        stats.volumeTotal += trade.volumeInSol;
-        if (trade.priceChange >= 0) {
-          stats.buyVolume += trade.volumeInSol;
-        } else {
-          stats.sellVolume += trade.volumeInSol;
-        }
-      }
-
-      traderStats.set(publicKey, stats);
-      totalVolume += stats.volumeTotal;
-    }
-
-    // Calculate suspicious activity metrics
-    let totalSuspiciousVolume = 0;
+    // Calculate suspicious activity metrics based on stats
     const suspiciousTraders = new Map();
+    let totalSuspiciousVolume = 0;
 
-    for (const [publicKey, stats] of traderStats) {
-      const volumePercentage = (stats.volumeTotal / totalVolume) * 100;
-      const buyToSellRatio = stats.buyVolume / (stats.sellVolume || 1);
+    for (const [publicKey, traderStats] of Object.entries(stats.traderStats)) {
+      const volumePercentage = (traderStats.volumeTotal / stats.totalVolume) * 100;
+      const buyToSellRatio = traderStats.buyVolume / (traderStats.sellVolume || 1);
       const isSuspicious = (
         (volumePercentage > config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE) ||
-        (stats.tradeCount > 10 && buyToSellRatio > 0.9 && buyToSellRatio < 1.1)
+        (traderStats.tradeCount > 10 && buyToSellRatio > 0.9 && buyToSellRatio < 1.1)
       );
 
       if (isSuspicious) {
         suspiciousTraders.set(publicKey, {
           volumePercentage,
           buyToSellRatio,
-          tradeCount: stats.tradeCount,
-          balance: stats.currentBalance,
-          walletAge: stats.walletAge
+          tradeCount: traderStats.tradeCount,
+          balance: traderStats.currentBalance,
+          walletAge: traderStats.walletAge
         });
-        totalSuspiciousVolume += stats.volumeTotal;
+        totalSuspiciousVolume += traderStats.volumeTotal;
       }
     }
 
     return {
-      totalVolume,
-      uniqueTraders: traderStats.size,
-      maxWalletVolumePercentage: Math.max(
-        0,
-        ...Array.from(traderStats.values()).map(s => (s.volumeTotal / totalVolume) * 100)
-      ),
-      suspectedWashTradePercentage: totalVolume > 0 ? (totalSuspiciousVolume / totalVolume) * 100 : 0,
+      totalVolume: stats.totalVolume,
+      uniqueTraders: stats.uniqueTraders,
+      maxWalletVolumePercentage: stats.maxWalletVolumePercentage,
+      suspectedWashTradePercentage: stats.totalVolume > 0 ? 
+        (totalSuspiciousVolume / stats.totalVolume) * 100 : 0,
       suspiciousTraders: Object.fromEntries(suspiciousTraders)
     };
   }
@@ -409,15 +338,16 @@ class Token extends EventEmitter {
   }
 
   hasCreatorSoldAll() {
-    const creatorWallet = this.wallets.get(this.traderPublicKey);
-    return creatorWallet ? creatorWallet.balance === 0 : true;
+    const creatorWallet = this.traderManager.getTrader(this.traderPublicKey);
+    return creatorWallet ? creatorWallet.getTokenBalance(this.mint) === 0 : true;
   }
 
   getCreatorSellPercentage() {
-    const creatorWallet = this.wallets.get(this.traderPublicKey);
+    const creatorWallet = this.traderManager.getTrader(this.traderPublicKey);
     if (!creatorWallet) return 0;
-    const initialBalance = creatorWallet.initialBalance;
-    const currentBalance = creatorWallet.balance;
+
+    const initialBalance = creatorWallet.getInitialTokenBalance(this.mint);
+    const currentBalance = creatorWallet.getTokenBalance(this.mint);
     return (
       ((initialBalance - currentBalance) /
         initialBalance) *
@@ -426,10 +356,7 @@ class Token extends EventEmitter {
   }
 
   getTopHolders(count = 5) {
-    return Array.from(this.wallets.entries())
-      .sort(([, a], [, b]) => b.balance - a.balance)
-      .slice(0, count)
-      .map(([address, balance]) => ({ address, balance }));
+    return this.traderManager.getTopHoldersForToken(this.mint, count);
   }
 
   getTotalSupply() {
@@ -597,6 +524,52 @@ class Token extends EventEmitter {
       return 0;
     }
     return this.vSolInBondingCurve / this.vTokensInBondingCurve;
+  }
+
+  analyzeHolders() {
+    if (!this.traderManager) return null;
+
+    const now = Date.now();
+    const holders = this.traderManager.getHoldersForToken(this.mint);
+    const totalHolders = holders.length;
+    
+    // Get creator behavior
+    const creatorStats = {
+      sellPercentage: this.getCreatorSellPercentage(),
+      hasExited: this.hasCreatorSoldAll()
+    };
+
+    // Analyze top holders
+    const topHolders = this.getTopHolders(5);
+    const topHolderConcentration = this.getTopHolderConcentration(5);
+
+    // Analyze trading patterns
+    const traderStats = this.getTraderStats("5m");
+    
+    // Calculate holder turnover (percentage of holders who have traded in last 5 minutes)
+    const recentlyActiveHolders = holders.filter(holder => 
+      holder.lastActive > now - 5 * 60 * 1000
+    ).length;
+    
+    const holderTurnover = (recentlyActiveHolders / totalHolders) * 100;
+
+    return {
+      totalHolders,
+      topHolderConcentration,
+      holderTurnover,
+      creatorBehavior: creatorStats,
+      tradingActivity: {
+        uniqueTraders: traderStats.uniqueTraders,
+        tradeCount: traderStats.totalTrades,
+        averageTradeSize: traderStats.averageTradeSize,
+        buyToSellRatio: traderStats.buyToSellRatio
+      },
+      topHolders: topHolders.map(holder => ({
+        balance: holder.balance,
+        percentageHeld: (holder.balance / this.getTotalTokensHeld()) * 100,
+        isCreator: holder.isCreator || false
+      }))
+    };
   }
 }
 

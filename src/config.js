@@ -4,6 +4,15 @@ module.exports = {
     INITIAL_BALANCE: 3.0, // Initial wallet balance in SOL
   },
 
+  // Trader configuration
+  TRADER: {
+    SAVE_INTERVAL: 60000, // Save trader data every minute
+    ANALYSIS_INTERVAL: 300000, // Analyze patterns every 5 minutes
+    MAX_TRADES_AGE: 1800000, // Keep trades for 30 minutes
+    RELATIONSHIP_THRESHOLD: 3, // Minimum number of common trades to establish relationship
+    WASH_TRADE_THRESHOLD: 0.9, // Ratio of buy/sell volume to consider wash trading
+  },
+
   // Market thresholds
   THRESHOLDS: {
     // Market Cap Thresholds (in USD)
