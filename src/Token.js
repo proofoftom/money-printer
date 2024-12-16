@@ -22,6 +22,7 @@ class Token extends EventEmitter {
     this.drawdownLow = null;
     this.holders = new Map();
     this.creatorInitialHoldings = 0;
+    this.unsafeReason = null;
 
     // Volume and trade tracking
     this.volumeData = {
@@ -215,7 +216,13 @@ class Token extends EventEmitter {
           this.emit("readyForPosition", this);
         } else {
           this.setState("unsafeRecovery");
-          this.emit("unsafeRecovery", { token: this, marketCap: this.marketCapSol });
+          this.unsafeReason = safetyChecker.getFailureReason();
+          this.emit("unsafeRecovery", { 
+            token: this, 
+            marketCap: this.marketCapSol, 
+            reason: this.unsafeReason.reason,
+            value: this.unsafeReason.value 
+          });
         }
         return;
       }
@@ -236,6 +243,9 @@ class Token extends EventEmitter {
               marketCap: this.marketCapSol
             });
           }
+        } else {
+          // Update unsafe reason if it changed
+          this.unsafeReason = safetyChecker.getFailureReason();
         }
       }
     } catch (error) {

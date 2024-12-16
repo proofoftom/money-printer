@@ -2,9 +2,19 @@ const config = require("./config");
 const SafetyLogger = require("./SafetyLogger");
 
 class SafetyChecker {
-  constructor(priceManager) {
+  constructor(priceManager, safetyConfig = {}) {
     this.safetyLogger = new SafetyLogger();
     this.priceManager = priceManager;
+    this.safetyConfig = safetyConfig;
+    this.lastFailureReason = null;
+  }
+
+  getFailureReason() {
+    return this.lastFailureReason;
+  }
+
+  setFailureReason(reason, value = null) {
+    this.lastFailureReason = { reason, value };
   }
 
   async runSecurityChecks(token) {
@@ -15,6 +25,9 @@ class SafetyChecker {
     let details = {};
 
     try {
+      // Reset failure reason at start of checks
+      this.lastFailureReason = null;
+
       // Run all checks
       if (!this.checkMarketCap(token)) {
         approved = false;
@@ -24,10 +37,13 @@ class SafetyChecker {
           config.SAFETY.MAX_MARKET_CAP_USD
             ? "high"
             : "low";
+        this.setFailureReason(rejectionReason, token.marketCapSol);
       } else if (!this.checkTokenAge(token)) {
         approved = false;
         rejectionCategory = "age";
         rejectionReason = "tooNew";
+        const tokenAge = (Date.now() - token.minted) / 1000;
+        this.setFailureReason(rejectionReason, tokenAge);
       } else if (!this.checkPriceAction(token)) {
         approved = false;
         rejectionCategory = "priceAction";
@@ -35,14 +51,17 @@ class SafetyChecker {
           token.priceVolatility > config.SAFETY.MAX_PRICE_VOLATILITY
             ? "volatilityTooHigh"
             : "pumpTooHigh";
+        this.setFailureReason(rejectionReason, token.priceVolatility);
       } else if (!this.checkTradingPatterns(token)) {
         approved = false;
         rejectionCategory = "tradingPatterns";
         rejectionReason = this.getTradingPatternRejectionReason(token);
+        this.setFailureReason(rejectionReason, token.uniqueBuyers);
       } else if (!this.checkHolderDistribution(token)) {
         approved = false;
         rejectionCategory = "holders";
         rejectionReason = this.getHolderDistributionRejectionReason(token);
+        this.setFailureReason(rejectionReason, token.holderCount);
       } else if (!this.checkVolumePatterns(token)) {
         approved = false;
         rejectionCategory = "volume";
@@ -51,6 +70,7 @@ class SafetyChecker {
           config.SAFETY.MAX_WASH_TRADE_PERCENTAGE
             ? "excessiveWashTrading"
             : "lowCorrelation";
+        this.setFailureReason(rejectionReason, token.suspectedWashTradePercentage);
       }
 
       // Log the check results
@@ -77,6 +97,7 @@ class SafetyChecker {
         duration: Date.now() - startTime,
       });
 
+      this.setFailureReason("Error running checks");
       return false;
     }
   }
