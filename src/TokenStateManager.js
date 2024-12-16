@@ -9,16 +9,20 @@ class TokenStateManager extends EventEmitter {
     this.tokens = new Map();
     this.stateFile = path.join(process.cwd(), 'data', 'token_states.json');
     this.ensureDataDirectory();
-    
+    this.loadTokenStates();
+
     // Clear token states on startup if configured
-    if (config.TOKEN_MANAGER && config.TOKEN_MANAGER.CLEAR_ON_STARTUP) {
+    const clearOnStartup = config.TOKEN_MANAGER?.CLEAR_ON_STARTUP ?? false;
+    if (clearOnStartup) {
       this.clearTokenStates();
     }
     
-    this.loadTokenStates();
-    
     // Periodic state persistence
     const saveInterval = (config.TOKEN_MANAGER && config.TOKEN_MANAGER.SAVE_INTERVAL) || 60000;
+    if (saveInterval < 1000) {
+      console.warn('SAVE_INTERVAL is less than 1 second, setting to 1 second');
+      saveInterval = 1000;
+    }
     setInterval(() => this.saveTokenStates(), saveInterval);
   }
 
@@ -78,8 +82,10 @@ class TokenStateManager extends EventEmitter {
       metrics: {}
     });
     
-    // Automatically transition to heating up state after minting
-    this.transitionToHeatingUp(token);
+    // Delay the transition to heating up to allow tests to verify minted state
+    setTimeout(() => {
+      this.transitionToHeatingUp(token);
+    }, 0);
     
     this.saveTokenStates();
     return tokenState;

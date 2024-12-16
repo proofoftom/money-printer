@@ -55,14 +55,14 @@ module.exports = {
 
     // Pump pattern detection thresholds
     PUMP_DETECTION: {
-      MIN_PRICE_ACCELERATION: 0.25, // Lowered from 0.3 to catch slower pumps
-      MIN_VOLUME_SPIKE: 120, // Lowered from 150% to catch more gradual volume increases
-      MIN_PRICE_VOLUME_CORRELATION: 0.15, // Lowered from 0.2 to allow for slight market inefficiencies
-      MIN_GAIN_RATE: 0.8, // Lowered from 1.0% per second for smoother pumps
-      MIN_MC_GAIN_RATE: 0.4, // Lowered from 0.5 for large tokens
-      LARGE_TOKEN_MC_USD: 25000, // Increased from 20k to include more mid-sized tokens
-      MIN_PUMP_COUNT: 1, // Keep at 1 to catch first pump
-      PUMP_WINDOW_MS: 360000, // Increased from 300k (5 min) to 360k (6 min) for better pattern detection
+      MIN_PRICE_ACCELERATION: 0.25,
+      MIN_VOLUME_SPIKE: 120,
+      MIN_PRICE_VOLUME_CORRELATION: 0.15,
+      MIN_GAIN_RATE: 0.8,
+      MIN_MC_GAIN_RATE: 0.4,
+      LARGE_TOKEN_MC_USD: 25000,
+      MIN_PUMP_COUNT: 1,
+      PUMP_WINDOW_MS: 360000,
     },
   },
 
@@ -72,85 +72,48 @@ module.exports = {
     SAVE_INTERVAL: 60000, // Save state every minute
     HEATING_PERIOD: 300000, // 5 minutes in heating up state
     VOLUME_THRESHOLD: 1, // Minimum volume in SOL to transition to active
+    PRICE_HISTORY_LENGTH: 1000, // Maximum number of price points to keep
+    VOLUME_HISTORY_LENGTH: 1000, // Maximum number of volume points to keep
     
     // State transition thresholds
     DRAWDOWN_THRESHOLD: 0.7, // Market strength threshold for entering drawdown
     RECOVERY_THRESHOLD: 0.5, // Market strength threshold for recovery
   },
 
-  // Position sizing
-  POSITION: {
-    MAX_POSITION_SIZE_SOL: 2.5, // Increased maximum position
-    MIN_POSITION_SIZE_SOL: 0.1,
-    POSITION_SIZE_MARKET_CAP_RATIO: 0.015, // Increased for larger positions
-    MAX_PRICE_IMPACT_BPS: 120, // Allow higher price impact
-
-    // Dynamic position sizing
-    USE_DYNAMIC_SIZING: true,
-    VOLATILITY_SCALING_FACTOR: 0.008, // Reduced impact of volatility
-    LIQUIDITY_SCALING_FACTOR: 0.8, // Increased liquidity scaling
-
-    // Exit parameters
-    STOP_LOSS_PERCENTAGE: 12, // Tighter stop loss
-    TRAILING_STOP_ACTIVATION: 4, // Earlier trailing stop
-    TRAILING_STOP_DISTANCE: 2.5, // Tighter trailing stop
-
-    // Take profit tiers
-    TAKE_PROFIT_TIERS: [
-      { percentage: 15, size: 0.3 }, // Take profits earlier
-      { percentage: 40, size: 0.4 }, // Take more at medium gains
-      { percentage: 80, size: 0.3 }, // Take final profits sooner
-    ],
-
-    // Volume-based exit
-    VOLUME_DROP_EXIT_THRESHOLD: 0.6, // Increased from 0.5 to be less sensitive
-    PEAK_VOLUME_WINDOW: 300, // Reduced from 600 for faster reaction
-  },
-
-  // Position Manager configuration
+  // Position manager configuration
   POSITION_MANAGER: {
-    CLEAR_ON_STARTUP: true, // Set to true to clear positions on startup (for testing)
-    SAVE_INTERVAL: 30000, // Save positions every 30 seconds
+    CLEAR_ON_STARTUP: false,
+    SAVE_INTERVAL: 60000, // Save state every minute
+    MAX_HISTORY_ITEMS: 1000,
   },
 
-  // Exit strategies configuration
-  EXIT_STRATEGIES: {
-    STOP_LOSS: {
-      ENABLED: true,
-      THRESHOLD: -7.5, // Exit when loss exceeds 7.5%
-      TRAILING: false,
-    },
-    TRAILING_STOP: {
-      ENABLED: true,
-      ACTIVATION_THRESHOLD: 5, // Start trailing after 5% profit
-      BASE_PERCENTAGE: 3, // Base trailing distance is 3%
-      DYNAMIC_ADJUSTMENT: {
-        ENABLED: true,
-        VOLATILITY_MULTIPLIER: 0.5, // Increase trail by 0.5x volatility
-        MIN_PERCENTAGE: 2, // Minimum trail percentage
-        MAX_PERCENTAGE: 10, // Maximum trail percentage
-      },
-    },
-    VOLUME_BASED: {
-      ENABLED: true,
-      VOLUME_DROP_THRESHOLD: 60, // Exit if volume drops below 60% of peak
-      MEASUREMENT_PERIOD: 300, // Look at volume over 5 minutes (300 seconds)
-      MIN_PEAK_VOLUME: 1000, // Minimum peak volume in SOL to consider
-    },
-    TIME_BASED: {
-      ENABLED: true,
-      MAX_HOLD_TIME: 7200, // 2 hours in seconds
-      EXTENSION_THRESHOLD: 40, // Extend time if profit > 40%
-      EXTENSION_TIME: 900, // Add 15 minutes if above threshold
-    },
-    TAKE_PROFIT: {
-      ENABLED: true,
-      TIERS: [
-        { THRESHOLD: 10, PORTION: 0.3 }, // At 10% profit, take 30%
-        { THRESHOLD: 20, PORTION: 0.3 }, // At 20% profit, take another 30%
-        { THRESHOLD: 30, PORTION: 0.4 }, // At 30% profit, take final 40%
-      ],
-    },
+  // Position configuration
+  POSITION: {
+    MAX_POSITION_SIZE_SOL: 2.5,
+    MIN_POSITION_SIZE_SOL: 0.1,
+    POSITION_SIZE_MARKET_CAP_RATIO: 0.015,
+    MAX_PRICE_IMPACT_BPS: 120,
+    USE_DYNAMIC_SIZING: true,
+    VOLATILITY_SCALING_FACTOR: 0.008,
+    LIQUIDITY_SCALING_FACTOR: 0.8,
+    STOP_LOSS_PERCENTAGE: 12,
+    TRAILING_STOP_ACTIVATION: 4,
+    TRAILING_STOP_DISTANCE: 2.5,
+    TAKE_PROFIT_TIERS: [
+      { percentage: 15, size: 0.3 },
+      { percentage: 40, size: 0.4 },
+      { percentage: 100, size: 0.3 }
+    ]
+  },
+
+  // Storage configuration
+  STORAGE: {
+    CLEAR_ON_STARTUP: false, // Whether to clear stored data on startup
+    PERSIST_INTERVAL: 300000, // How often to save state to disk (5 minutes)
+    MAX_HISTORY_ITEMS: 1000, // Maximum number of historical items to keep
+    BACKUP_ENABLED: true, // Whether to create backups
+    BACKUP_INTERVAL: 3600000, // Backup interval (1 hour)
+    MAX_BACKUPS: 24, // Maximum number of backup files to keep
   },
 
   // WebSocket configuration
@@ -179,4 +142,32 @@ module.exports = {
       },
     },
   },
+
+  // Exit strategies configuration
+  EXIT_STRATEGIES: {
+    STOP_LOSS: {
+      ENABLED: true,
+      THRESHOLD: -7.5,
+      TRAILING: false
+    },
+    TAKE_PROFIT: {
+      ENABLED: true,
+      TIERS: [
+        { threshold: 15, percentage: 30 },
+        { threshold: 40, percentage: 40 },
+        { threshold: 100, percentage: 30 }
+      ]
+    },
+    VOLUME_BASED: {
+      ENABLED: true,
+      VOLUME_DROP_THRESHOLD: 50,
+      TIME_WINDOW: 300000
+    },
+    TIME_BASED: {
+      ENABLED: true,
+      MAX_HOLD_TIME: 3600000,
+      PROFIT_EXTENSION_THRESHOLD: 20,
+      EXTENSION_TIME: 1800000
+    }
+  }
 };

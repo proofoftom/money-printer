@@ -94,10 +94,10 @@ class Token extends EventEmitter {
             // State transition logic
             if (currentState.state === 'heatingUp') {
               const timeInState = Date.now() - currentState.stateEnteredAt;
-              const volumeThreshold = this.config.TOKEN_MANAGER.VOLUME_THRESHOLD || 1; // SOL
+              const volumeThreshold = this.config.TOKEN_MANAGER?.VOLUME_THRESHOLD ?? 1; // SOL
+              const heatingPeriod = this.config.TOKEN_MANAGER?.HEATING_PERIOD ?? 300000; // 5 minutes
               
-              if (timeInState >= (this.config.TOKEN_MANAGER.HEATING_PERIOD || 300000) && // 5 minutes
-                  this.volume > volumeThreshold) {
+              if (timeInState >= heatingPeriod && this.volume > volumeThreshold) {
                 this.stateManager.updateTokenState(this, 'active', metrics);
               }
             } else if (currentState.state === 'active') {
@@ -311,6 +311,43 @@ class Token extends EventEmitter {
 
     const denominator = Math.sqrt(tokenDenominator * marketDenominator);
     return denominator === 0 ? 0 : numerator / denominator;
+  }
+
+  updatePrice(price) {
+    this.currentPrice = price;
+    this.priceHistory.push(price);
+    
+    // Keep price history within window
+    const maxHistoryLength = this.config.TOKEN_MANAGER?.PRICE_HISTORY_LENGTH ?? 1000;
+    if (this.priceHistory.length > maxHistoryLength) {
+      this.priceHistory.shift();
+    }
+    
+    this.emit('priceUpdate', {
+      mint: this.mint,
+      price: price,
+      timestamp: new Date()
+    });
+  }
+
+  updateVolume(volume) {
+    this.volume = volume;
+    this.volumeHistory.push({
+      volume,
+      timestamp: new Date()
+    });
+    
+    // Keep volume history within window
+    const maxHistoryLength = this.config.TOKEN_MANAGER?.VOLUME_HISTORY_LENGTH ?? 1000;
+    if (this.volumeHistory.length > maxHistoryLength) {
+      this.volumeHistory.shift();
+    }
+    
+    this.emit('volumeUpdate', {
+      mint: this.mint,
+      volume: volume,
+      timestamp: new Date()
+    });
   }
 }
 

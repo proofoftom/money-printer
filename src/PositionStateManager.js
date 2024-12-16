@@ -10,16 +10,17 @@ class PositionStateManager extends EventEmitter {
     this.positions = new Map();
     this.stateFile = path.join(process.cwd(), 'data', 'positions.json');
     this.ensureDataDirectory();
-    
+    this.loadPositions();
+
     // Clear positions on startup if configured
-    if (config.POSITION_MANAGER.CLEAR_ON_STARTUP) {
+    const clearOnStartup = config.POSITION_MANAGER?.CLEAR_ON_STARTUP ?? false;
+    if (clearOnStartup) {
       this.clearPositions();
     }
     
-    this.loadPositions();
-    
     // Periodic state persistence
-    setInterval(() => this.savePositions(), config.POSITION_MANAGER.SAVE_INTERVAL);
+    const saveInterval = config.POSITION_MANAGER?.SAVE_INTERVAL ?? 60000;
+    setInterval(() => this.savePositions(), saveInterval);
   }
 
   ensureDataDirectory() {
