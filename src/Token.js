@@ -2,13 +2,14 @@ const EventEmitter = require('events');
 const Trader = require('./Trader');
 
 class Token extends EventEmitter {
-  constructor({ mint, symbol, config, priceManager, statsLogger }) {
+  constructor({ mint, symbol, config, priceManager, statsLogger, stateManager }) {
     super();
     this.mint = mint;
     this.symbol = symbol;
     this.config = config;
     this.priceManager = priceManager;
     this.statsLogger = statsLogger;
+    this.stateManager = stateManager;
 
     this.currentPrice = null;
     this.priceHistory = [];
@@ -26,6 +27,11 @@ class Token extends EventEmitter {
     this.traders = new Map(); // publicKey -> Trader
     this.recentTrades = [];
     this.maxRecentTrades = 1000; // Keep last 1000 trades
+
+    // Initialize token state
+    if (this.stateManager) {
+      this.stateManager.addToken(this);
+    }
   }
 
   getOrCreateTrader(publicKey) {
@@ -55,6 +61,8 @@ class Token extends EventEmitter {
           newTokenBalance: data.initialBuy,
           signature: data.signature
         });
+
+        // Token state is already initialized in constructor
       }
       
       // Handle buys and sells
@@ -67,6 +75,44 @@ class Token extends EventEmitter {
           newTokenBalance: data.newTokenBalance,
           signature: data.signature
         });
+
+        // Update token state based on market conditions
+        if (this.stateManager) {
+          const currentState = this.stateManager.getTokenState(this.mint);
+          if (currentState) {
+            const marketConditions = this.getMarketConditions();
+            const volumeProfile = this.getVolumeProfile();
+            
+            // Update metrics
+            const metrics = {
+              marketConditions,
+              volumeProfile,
+              currentPrice: this.currentPrice,
+              marketCapSol: this.marketCapSol
+            };
+
+            // State transition logic
+            if (currentState.state === 'heatingUp') {
+              const timeInState = Date.now() - currentState.stateEnteredAt;
+              const volumeThreshold = this.config.TOKEN_MANAGER.VOLUME_THRESHOLD || 1; // SOL
+              
+              if (timeInState >= (this.config.TOKEN_MANAGER.HEATING_PERIOD || 300000) && // 5 minutes
+                  this.volume > volumeThreshold) {
+                this.stateManager.updateTokenState(this, 'active', metrics);
+              }
+            } else if (currentState.state === 'active') {
+              // Check for potential drawdown
+              if (marketConditions.trend === 'bearish' && marketConditions.strength > 0.7) {
+                this.stateManager.updateTokenState(this, 'drawdown', metrics);
+              }
+            } else if (currentState.state === 'drawdown') {
+              // Check for recovery
+              if (marketConditions.trend === 'bullish' && marketConditions.strength > 0.5) {
+                this.stateManager.updateTokenState(this, 'active', metrics);
+              }
+            }
+          }
+        }
       }
 
       // Update bonding curve data

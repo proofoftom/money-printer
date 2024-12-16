@@ -66,6 +66,18 @@ module.exports = {
     },
   },
 
+  // Token state management configuration
+  TOKEN_MANAGER: {
+    CLEAR_ON_STARTUP: false,
+    SAVE_INTERVAL: 60000, // Save state every minute
+    HEATING_PERIOD: 300000, // 5 minutes in heating up state
+    VOLUME_THRESHOLD: 1, // Minimum volume in SOL to transition to active
+    
+    // State transition thresholds
+    DRAWDOWN_THRESHOLD: 0.7, // Market strength threshold for entering drawdown
+    RECOVERY_THRESHOLD: 0.5, // Market strength threshold for recovery
+  },
+
   // Position sizing
   POSITION: {
     MAX_POSITION_SIZE_SOL: 2.5, // Increased maximum position

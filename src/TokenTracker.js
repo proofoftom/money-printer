@@ -1,6 +1,7 @@
 const EventEmitter = require("events");
 const Token = require("./Token");
 const Trader = require("./Trader");
+const TokenStateManager = require("./TokenStateManager");
 const config = require("./config");
 
 class TokenTracker extends EventEmitter {
@@ -19,6 +20,12 @@ class TokenTracker extends EventEmitter {
     this.statsLogger = statsLogger;
     this.tokens = new Map();
     this.traders = new Map(); // Track traders across all tokens
+    this.stateManager = new TokenStateManager();
+
+    // Listen for token state changes
+    this.stateManager.on('tokenStateChanged', ({ token, from, to, metrics }) => {
+      this.emit('tokenStateChanged', { token, from, to, metrics });
+    });
   }
 
   getOrCreateTrader(publicKey) {
@@ -45,7 +52,8 @@ class TokenTracker extends EventEmitter {
       symbol: tokenData.symbol,
       config: config,
       priceManager: this.priceManager,
-      statsLogger: this.statsLogger
+      statsLogger: this.statsLogger,
+      stateManager: this.stateManager
     });
 
     // Check market cap threshold before processing
