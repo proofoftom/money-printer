@@ -2,7 +2,7 @@ const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
 const Trader = require('./Trader');
-const config = require('./config');
+const config = require('../../utils/config');
 
 class TraderManager extends EventEmitter {
   constructor() {

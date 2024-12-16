@@ -1,14 +1,14 @@
 // Entry point for the Money Printer trading bot
 
-const config = require("./config");
-const TokenManager = require("./TokenManager");
-const WebSocketManager = require("./WebSocketManager");
-const SafetyChecker = require("./SafetyChecker");
-const PositionManager = require("./PositionManager");
-const PriceManager = require("./PriceManager");
-const Wallet = require("./Wallet");
-const ErrorLogger = require("./ErrorLogger");
-const Dashboard = require("./Dashboard");
+const config = require("./utils/config");
+const TokenManager = require("./core/token/TokenManager");
+const WebSocketManager = require("./services/websocket/WebSocketManager");
+const SafetyChecker = require("./services/safety/SafetyChecker");
+const PositionManager = require("./core/position/PositionManager");
+const PriceManager = require("./services/price/PriceManager");
+const Wallet = require("./utils/Wallet");
+const ErrorLogger = require("./monitoring/ErrorLogger");
+const Dashboard = require("./monitoring/Dashboard");
 
 // Initialize error logger first
 const errorLogger = new ErrorLogger();

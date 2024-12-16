@@ -1,6 +1,6 @@
 const WebSocket = require("ws");
 const EventEmitter = require("events");
-const config = require("./config");
+const config = require("../../utils/config");
 
 class WebSocketManager extends EventEmitter {
   constructor(tokenManager, priceManager) {

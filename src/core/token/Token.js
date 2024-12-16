@@ -1,6 +1,6 @@
 const EventEmitter = require("events");
-const config = require("./config");
-const TraderManager = require("./TraderManager");
+const config = require("../../utils/config");
+const TraderManager = require("../trader/TraderManager");
 const TokenStateManager = require("./TokenStateManager");
 
 class Token extends EventEmitter {

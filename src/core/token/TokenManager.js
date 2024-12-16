@@ -1,6 +1,6 @@
 const EventEmitter = require("events");
 const Token = require("./Token");
-const config = require("./config");
+const config = require("../../utils/config");
 
 class TokenManager extends EventEmitter {
   constructor(

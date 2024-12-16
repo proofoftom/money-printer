@@ -1,7 +1,7 @@
 const EventEmitter = require('events');
+const config = require('../../utils/config');
 const fs = require('fs');
 const path = require('path');
-const config = require('./config');
 const Position = require('./Position');
 
 class PositionStateManager extends EventEmitter {

@@ -1,11 +1,11 @@
 // PositionManager component
-const EventEmitter = require("events");
-const Wallet = require("./Wallet");
-const config = require("./config");
-const ExitStrategies = require("./ExitStrategies");
-const TransactionSimulator = require("./TransactionSimulator");
-const PositionStateManager = require("./PositionStateManager");
+const EventEmitter = require('events');
 const Position = require('./Position');
+const config = require('../../utils/config');
+const Wallet = require('../../utils/Wallet');
+const ExitStrategies = require('./ExitStrategies');
+const TransactionSimulator = require('../../utils/TransactionSimulator');
+const PositionStateManager = require('./PositionStateManager');
 
 class PositionManager extends EventEmitter {
   constructor(wallet) {

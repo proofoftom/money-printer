@@ -1,5 +1,5 @@
-const config = require("./config");
-const MissedOpportunityLogger = require("./MissedOpportunityLogger");
+const config = require("../../utils/config");
+const MissedOpportunityLogger = require("../../monitoring/MissedOpportunityLogger");
 
 class SafetyChecker {
   constructor(config, priceManager, safetyConfig = {}) {

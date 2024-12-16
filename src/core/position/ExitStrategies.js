@@ -1,3 +1,5 @@
+const config = require('../../utils/config');
+
 class ExitStrategies {
   constructor(config) {
     this.config = config;

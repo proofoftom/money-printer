@@ -1,5 +1,5 @@
 const EventEmitter = require('events');
-const config = require('./config');
+const config = require('../../utils/config');
 
 class Trader extends EventEmitter {
   constructor(publicKey, isCreator = false) {
