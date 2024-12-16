@@ -73,6 +73,11 @@ class Token extends EventEmitter {
         suspectedWashTradePercentage: 0
       }
     };
+
+    // Initialize volume tracking
+    this.volume1m = 0;
+    this.volume5m = 0;
+    this.volume30m = 0;
   }
 
   update(data) {
@@ -382,6 +387,11 @@ class Token extends EventEmitter {
   }
 
   updateMetrics() {
+    // Update volume metrics
+    this.volume1m = this.getRecentVolume(60 * 1000);     // 1 minute
+    this.volume5m = this.getRecentVolume(5 * 60 * 1000); // 5 minutes
+    this.volume30m = this.getRecentVolume(30 * 60 * 1000); // 30 minutes
+
     // Update price stats
     const priceStats = this.getPriceStats();
     this.priceVolatility = priceStats.volatility;
