@@ -409,42 +409,56 @@ class Dashboard {
         return "No tokens in this state";
       }
 
+      // Find the longest symbol for padding
+      const maxSymbolLength = Math.max(...tokens.map(t => (t.symbol || t.mint.slice(0, 8)).length));
+
       return tokens
         .map((token) => {
           try {
-            // Convert values to USD
-            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-            const highestMarketCapUSD = this.priceManager.solToUSD(token.highestMarketCap);
-            const drawdownLowUSD = token.drawdownLow ? this.priceManager.solToUSD(token.drawdownLow) : null;
-            const volumeUSD = this.priceManager.solToUSD(token.getVolume("5m"));
-
-            // Format market caps with k/m format
+            // Format USD values
             const formatUSD = (value) => {
-              if (value >= 1000000) {
-                return `$${(value / 1000000).toFixed(1)}m`;
-              }
-              if (value >= 1000) {
-                return `$${(value / 1000).toFixed(1)}k`;
-              }
+              if (!value) return "$0";
+              if (value >= 1000000) return `$${(value / 1000000).toFixed(1)}m`;
+              if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
               return `$${Math.floor(value)}`;
             };
 
-            const mcStr = formatUSD(marketCapUSD);
-            const highStr = formatUSD(highestMarketCapUSD);
-            const lowStr = drawdownLowUSD ? formatUSD(drawdownLowUSD) : "N/A";
-            const volStr = formatUSD(volumeUSD);
+            // Format age
+            const getFormattedAge = () => {
+              const ageInSeconds = Math.floor((Date.now() - token.minted) / 1000);
+              if (ageInSeconds < 60) return `${ageInSeconds}s`;
+              const ageInMinutes = Math.floor(ageInSeconds / 60);
+              if (ageInMinutes < 60) return `${ageInMinutes}m`;
+              const ageInHours = Math.floor(ageInMinutes / 60);
+              return `${ageInHours}h`;
+            };
 
-            let firstRow, secondRow, thirdRow;
+            // Get token data
+            const symbol = token.symbol || token.mint.slice(0, 8);
+            const age = getFormattedAge();
+            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+            const holderCount = token.getHolderCount();
+            const topHolderConcentration = token.getTopHolderConcentration(10);
+
+            // Get volumes for different timeframes
+            const vol1m = this.priceManager.solToUSD(token.getVolume("1m"));
+            const vol5m = this.priceManager.solToUSD(token.getVolume("5m"));
+            const vol30m = this.priceManager.solToUSD(token.getVolume("30m"));
 
             if (state === "unsafeRecovery") {
-              firstRow = `${token.symbol || token.mint.slice(0, 8)}... | MC: ${mcStr} | Vol: ${volStr}`;
-              secondRow = `High: ${highStr} | Low: ${lowStr}`;
-              
+              const mcStr = formatUSD(marketCapUSD);
+              const highStr = formatUSD(this.priceManager.solToUSD(token.highestMarketCap));
+              const lowStr = token.drawdownLow ? formatUSD(this.priceManager.solToUSD(token.drawdownLow)) : "N/A";
+              const volStr = formatUSD(vol5m);
+
+              let rows = [
+                `${symbol}... | MC: ${mcStr} | Vol: ${volStr}`,
+                `High: ${highStr} | Low: ${lowStr}`
+              ];
+
               if (token.unsafeReason) {
                 const { reason, value } = token.unsafeReason;
                 let valueStr = value;
-                
-                // Format the value based on the reason
                 switch (reason) {
                   case "High holder concentration":
                     valueStr = `${value.toFixed(1)}%`;
@@ -461,27 +475,21 @@ class Dashboard {
                   default:
                     valueStr = value ? value.toString() : "N/A";
                 }
-                
-                thirdRow = `Unsafe: ${reason} (${valueStr})`;
+                rows.push(`Unsafe: ${reason} (${valueStr})`);
               } else {
-                thirdRow = "Unsafe: Unknown reason";
+                rows.push("Unsafe: Unknown reason");
               }
-            } else {
-              // Original format for other states
-              const holderCount = token.getHolderCount();
-              const topHolderConcentration = token.getTopHolderConcentration(10);
-              
-              firstRow = `${token.symbol || token.mint.slice(0, 8)}... | MC: ${mcStr}`;
-              secondRow = `High: ${highStr} | Low: ${lowStr}`;
-              thirdRow = `Vol: ${volStr} | Holders: ${holderCount} | Top10: ${topHolderConcentration.toFixed(1)}%`;
-            }
 
-            return [
-              firstRow,
-              secondRow,
-              thirdRow,
-              "─".repeat(50), // Add horizontal rule between tokens
-            ].join("\n");
+              return rows.join("\n");
+            } else {
+              // Pad symbol to align columns
+              const symbolPadded = symbol.padEnd(maxSymbolLength);
+              
+              return [
+                `${symbolPadded}  ${age.padStart(4)} | MC: ${formatUSD(marketCapUSD).padStart(8)} | H: ${holderCount.toString().padStart(4)} | T: ${topHolderConcentration.toFixed(1).padStart(4)}%`,
+                `VOL  1m: ${formatUSD(vol1m).padStart(8)} | 5m: ${formatUSD(vol5m).padStart(8)} | 30m: ${formatUSD(vol30m).padStart(8)}`
+              ].join("\n");
+            }
           } catch (err) {
             this.handleError(err, "token formatting");
             return `Error formatting token ${
@@ -489,6 +497,7 @@ class Dashboard {
             }: ${err.message}`;
           }
         })
+        .map(display => display + "\n" + "─".repeat(80))  // Longer separator for better alignment
         .join("\n");
     } catch (error) {
       this.handleError(error, `getting ${state} tokens`);
