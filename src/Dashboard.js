@@ -285,13 +285,13 @@ class Dashboard {
 
       // Format velocity indicator
       const velocityIndicator = velocity > 0 
-        ? '%{green-fg}↑' + velocity.toFixed(1) + '%/m%{/green-fg}' 
-        : '%{red-fg}↓' + Math.abs(velocity).toFixed(1) + '%/m%{/red-fg}';
+        ? '{green-fg}↑' + velocity.toFixed(1) + '%/m{/green-fg}' 
+        : '{red-fg}↓' + Math.abs(velocity).toFixed(1) + '%/m{/red-fg}';
 
       // Format volume trend indicator
       const volumeIndicator = volumeTrend > 0
-        ? '%{green-fg}↑' + volumeTrend.toFixed(0) + '%%{/green-fg}'
-        : '%{red-fg}↓' + Math.abs(volumeTrend).toFixed(0) + '%%{/red-fg}';
+        ? '{green-fg}↑' + volumeTrend.toFixed(0) + '%{/green-fg}'
+        : '{red-fg}↓' + Math.abs(volumeTrend).toFixed(0) + '%{/red-fg}';
 
       // Calculate profit trend
       const profitTrend = pos.profitHistory || [];
@@ -302,7 +302,7 @@ class Dashboard {
 
       // Format P/L with color and trend
       const plColor = pnl >= 0 ? 'green' : 'red';
-      const plStr = `%{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(1)}%%{/${plColor}-fg}`;
+      const plStr = `{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(1)}%{/${plColor}-fg}`;
 
       // Get volume in USD
       const volumeUSD = this.priceManager.solToUSD(pos.volume);
@@ -362,7 +362,7 @@ class Dashboard {
               tradeColor = trade.profitLoss >= 0 ? "green" : "red";
             }
 
-            return `{${tradeColor}-fg}[${trade.timestamp}] ${trade.type.padEnd(5)} ${symbol.padEnd(12)} ${profitLossStr}{/}`;
+            return `{${tradeColor}-fg}[${trade.timestamp}] {${tradeColor}-fg}${trade.type.padEnd(5)} {/${tradeColor}-fg}{white-fg} ${symbol.padEnd(12)} {/${tradeColor}-fg}{${tradeColor}-fg} ${profitLossStr}{/${tradeColor}-fg}`;
           } catch (err) {
             return `Error formatting trade: ${err.message}`;
           }
