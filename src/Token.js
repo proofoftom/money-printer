@@ -38,7 +38,8 @@ class Token extends EventEmitter {
       pumpCount: 0,
       highestGainRate: 0,
       volumeSpikes: [],
-      priceAcceleration: 0
+      priceAcceleration: 0,
+      pumpTimes: []  // Array to track pump event timestamps
     };
 
     // Price tracking
@@ -186,6 +187,7 @@ class Token extends EventEmitter {
         (!this.pumpMetrics.lastPumpTime || now - this.pumpMetrics.lastPumpTime > timeWindow)) {
       this.pumpMetrics.pumpCount++;
       this.pumpMetrics.lastPumpTime = now;
+      this.pumpMetrics.pumpTimes.push(now);  // Record pump timestamp
       
       const gainRate = priceChange / (timeWindow / 1000); // %/second
       this.pumpMetrics.highestGainRate = Math.max(this.pumpMetrics.highestGainRate, gainRate);
