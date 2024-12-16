@@ -3,10 +3,11 @@ const EventEmitter = require("events");
 const config = require("./config");
 
 class WebSocketManager extends EventEmitter {
-  constructor(tokenTracker, priceManager) {
+  constructor(tokenTracker, priceManager, errorLogger) {
     super();
     this.tokenTracker = tokenTracker;
     this.priceManager = priceManager;
+    this.errorLogger = errorLogger;
     this.subscriptions = new Set();
     this.isConnected = false;
     this.ws = null;
@@ -37,7 +38,7 @@ class WebSocketManager extends EventEmitter {
     }
 
     try {
-      this.ws = new WebSocket(config.WEBSOCKET.URL);
+      this.ws = new WebSocket(config.WS_URL);
 
       this.ws.on("open", () => {
         console.log("WebSocket connection established");
@@ -45,6 +46,15 @@ class WebSocketManager extends EventEmitter {
         this.emit("connected");
         this.subscribeToNewTokens();
         this.resubscribeToTokens();
+      });
+
+      this.ws.on("error", (error) => {
+        this.errorLogger.logError(error, 'WebSocketManager', {
+          connectionState: this.isConnected ? 'connected' : 'disconnected',
+          subscriptionCount: this.subscriptions.size
+        });
+        console.error("WebSocket error:", error);
+        this.emit("error", error);
       });
 
       this.ws.on("close", () => {
@@ -59,20 +69,23 @@ class WebSocketManager extends EventEmitter {
         }
       });
 
-      this.ws.on("error", (error) => {
-        console.error("WebSocket error:", error);
-        this.emit("error", error);
-      });
-
       this.ws.on("message", (data) => {
         try {
           const message = JSON.parse(data.toString());
           this.handleMessage(message);
         } catch (error) {
+          this.errorLogger.logError(error, 'WebSocketManager', {
+            event: 'messageProcessing',
+            rawData: data.toString()
+          });
           console.error("Error parsing message:", error);
         }
       });
     } catch (error) {
+      this.errorLogger.logError(error, 'WebSocketManager', {
+        event: 'connectionAttempt',
+        wsUrl: config.WS_URL
+      });
       console.error("Error creating WebSocket:", error);
       this.emit("error", error);
       if (process.env.NODE_ENV !== "test") {

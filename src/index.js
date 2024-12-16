@@ -7,8 +7,10 @@ const SafetyChecker = require("./SafetyChecker");
 const PositionManager = require("./PositionManager");
 const PriceManager = require("./PriceManager");
 const Wallet = require("./Wallet");
+const ErrorLogger = require("./ErrorLogger");
 
 // Initialize components
+const errorLogger = new ErrorLogger();
 const wallet = new Wallet();
 const priceManager = new PriceManager();
 const positionManager = new PositionManager(wallet);
@@ -16,9 +18,10 @@ const safetyChecker = new SafetyChecker(config.SAFETY);
 const tokenTracker = new TokenTracker(
   safetyChecker,
   positionManager,
-  priceManager
+  priceManager,
+  errorLogger
 );
-const wsManager = new WebSocketManager(tokenTracker, priceManager);
+const wsManager = new WebSocketManager(tokenTracker, priceManager, errorLogger);
 
 // Initialize price manager before starting
 async function start() {
@@ -26,6 +29,7 @@ async function start() {
     await priceManager.initialize();
     console.log("Money Printer initialized and ready to trade!");
   } catch (error) {
+    errorLogger.logError(error, 'Initialization', { component: 'PriceManager' });
     console.error("Failed to initialize Money Printer:", error);
     process.exit(1);
   }
