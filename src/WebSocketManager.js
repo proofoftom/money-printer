@@ -147,8 +147,12 @@ class WebSocketManager extends EventEmitter {
 
     // Handle trade messages
     if (message.txType === "buy" || message.txType === "sell") {
-      this.emit("trade", message);
-      this.tokenManager.handleTokenUpdate(message);
+      // Check if token exists and is not dead before processing trade
+      const token = this.tokenManager.getToken(message.mint);
+      if (token && token.state !== "dead") {
+        this.emit("trade", message);
+        this.tokenManager.handleTokenUpdate(message);
+      }
       return;
     }
 

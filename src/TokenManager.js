@@ -174,9 +174,11 @@ class TokenManager extends EventEmitter {
           if (closeResult) {
             token.setState("dead");
             this.emit("positionClosed", { token, reason: "dead" });
+            this.webSocketManager.unsubscribeFromToken(token.mint);
           }
         } else {
           token.setState("dead");
+          this.webSocketManager.unsubscribeFromToken(token.mint);
         }
       }
     }
