@@ -173,6 +173,11 @@ class Token extends EventEmitter {
     };
   }
 
+  getRecoveryPercentage() {
+    if (!this.drawdownLow || !this.marketCapSol) return 0;
+    return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
+  }
+
   getDrawdownPercentage() {
     if (!this.highestMarketCap || !this.marketCapSol) return 0;
     return (
@@ -181,10 +186,26 @@ class Token extends EventEmitter {
     );
   }
 
-  getRecoveryPercentage() {
-    if (this.state !== "drawdown" || !this.drawdownLow || !this.marketCapSol)
-      return 0;
-    return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
+  async evaluateRecovery(safetyChecker) {
+    if (this.state !== "drawdown" && this.state !== "unsafeRecovery") {
+      return;
+    }
+
+    if (this.marketCapSol > this.drawdownLow) {
+      const recoveryPercentage = this.getRecoveryPercentage();
+      if (recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
+        const isSecure = await safetyChecker.runSecurityChecks(this);
+        if (isSecure) {
+          this.emit("readyForPosition", this);
+        } else {
+          this.setState("unsafeRecovery");
+          this.emit("unsafeRecovery", { token: this, marketCap: this.marketCapSol });
+        }
+      }
+    } else if (this.state === "unsafeRecovery") {
+      this.setState("drawdown");
+      this.drawdownLow = this.marketCapSol;
+    }
   }
 
   getHolderCount() {

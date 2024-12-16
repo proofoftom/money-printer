@@ -26,6 +26,21 @@ class TokenTracker extends EventEmitter {
         this.emit("tokenStateChanged", { token, from, to });
       });
 
+      token.on("readyForPosition", async (token) => {
+        const success = await this.positionManager.openPosition(
+          token.mint,
+          token.marketCapSol
+        );
+        if (success) {
+          token.setState("inPosition");
+          this.emit("positionOpened", token);
+        }
+      });
+
+      token.on("unsafeRecovery", (data) => {
+        this.emit("unsafeRecovery", data);
+      });
+
       // Let handleTokenUpdate manage all state transitions
       this.handleTokenUpdate(tokenData);
       this.emit("tokenAdded", token);
@@ -86,25 +101,11 @@ class TokenTracker extends EventEmitter {
           break;
 
         case "drawdown":
-          if (marketCapUSD > token.drawdownLow) {
-            const recoveryPercentage =
-              ((marketCapUSD - token.drawdownLow) / token.drawdownLow) * 100;
-            if (recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
-              const isSecure = await this.safetyChecker.runSecurityChecks(
-                token
-              );
-              if (isSecure) {
-                const success = this.positionManager.openPosition(
-                  token.mint,
-                  token.marketCapSol
-                );
-                if (success) {
-                  token.setState("inPosition");
-                  this.emit("positionOpened", token);
-                }
-              }
-            }
-          }
+          await token.evaluateRecovery(this.safetyChecker);
+          break;
+
+        case "unsafeRecovery":
+          await token.evaluateRecovery(this.safetyChecker);
           break;
 
         case "inPosition":
