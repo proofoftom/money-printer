@@ -90,7 +90,11 @@ Partial Exit:
         maxUpside: 0,
         volumeHistory: [],
         candleHistory: [],
-        simulatedDelay: delay
+        simulatedDelay: delay,
+        priceHistory: [executionPrice],
+        volumeHistory: [],
+        profitHistory: [0],
+        highPrice: executionPrice
       };
 
       this.stateManager.addPosition(position);
@@ -138,29 +142,47 @@ Partial Exit:
   }
 
   updatePosition(mint, currentPrice, volumeData = null, candleData = null) {
-    return this.stateManager.updatePosition(mint, {
-      currentPrice,
-      volumeHistory: volumeData ? [...(this.getPosition(mint)?.volumeHistory || []), volumeData] : undefined,
-      candleHistory: candleData ? [...(this.getPosition(mint)?.candleHistory || []), candleData] : undefined
-    });
-  }
+    // Get existing position data
+    const position = this.getPosition(mint);
+    if (!position) return null;
 
-  validatePositions() {
-    const invalidPositions = this.stateManager.validatePositions();
-    
-    if (invalidPositions.length > 0) {
-      console.warn(`Found ${invalidPositions.length} invalid positions:`);
-      
-      for (const { mint, reason, position } of invalidPositions) {
-        console.warn(`- ${mint}: ${reason}`);
-        
-        // Auto-close stale positions
-        if (reason === 'stale') {
-          console.warn(`Auto-closing stale position for ${mint}`);
-          this.closePosition(mint, position.currentPrice);
-        }
+    // Update price history (keep last 10 minutes of data)
+    const priceHistory = position.priceHistory || [];
+    priceHistory.push(currentPrice);
+    if (priceHistory.length > 60) { // 60 data points at ~10s intervals = 10 minutes
+      priceHistory.shift();
+    }
+
+    // Update volume history (keep last 5 minutes of data)
+    const volumeHistory = position.volumeHistory || [];
+    if (volumeData) {
+      volumeHistory.push(volumeData);
+      if (volumeHistory.length > 30) { // 30 data points = 5 minutes
+        volumeHistory.shift();
       }
     }
+
+    // Update profit history
+    const profitHistory = position.profitHistory || [];
+    const currentProfit = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    profitHistory.push(currentProfit);
+    if (profitHistory.length > 30) {
+      profitHistory.shift();
+    }
+
+    // Update high price if needed
+    const highPrice = Math.max(position.highPrice || position.entryPrice, currentPrice);
+
+    return this.stateManager.updatePosition(mint, {
+      currentPrice,
+      priceHistory,
+      volumeHistory,
+      profitHistory,
+      highPrice,
+      volume: volumeData,
+      volumeHistory: volumeData ? [...(position.volumeHistory || []), volumeData] : undefined,
+      candleHistory: candleData ? [...(position.candleHistory || []), candleData] : undefined
+    });
   }
 
   getPosition(mint) {
