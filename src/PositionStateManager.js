@@ -2,6 +2,7 @@ const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const Position = require('./Position');
 
 class PositionStateManager extends EventEmitter {
   constructor() {
@@ -32,12 +33,31 @@ class PositionStateManager extends EventEmitter {
     try {
       if (fs.existsSync(this.stateFile)) {
         const data = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
-        data.positions.forEach(pos => {
-          this.positions.set(pos.mint, {
-            ...pos,
-            entryTime: new Date(pos.entryTime),
-            lastUpdate: new Date(pos.lastUpdate)
+        data.positions.forEach(posData => {
+          const position = new Position({
+            mint: posData.mint,
+            entryPrice: posData.entryPrice,
+            size: posData.size,
+            entryTime: new Date(posData.entryTime).getTime(),
+            symbol: posData.symbol
           });
+          
+          // Restore position state
+          position.currentPrice = posData.currentPrice;
+          position.remainingSize = posData.remainingSize;
+          position.highPrice = posData.highPrice;
+          position.priceHistory = posData.priceHistory || [];
+          position.volumeHistory = posData.volumeHistory || [];
+          position.candleHistory = posData.candleHistory || [];
+          position.profitHistory = posData.profitHistory || [];
+          position.partialExits = posData.partialExits || [];
+          
+          // Set up event listeners
+          position.on('updated', (pos) => this.emit('positionUpdated', pos));
+          position.on('partialExit', (pos) => this.emit('partialExit', pos));
+          position.on('closed', (pos) => this.emit('positionClosed', pos));
+          
+          this.positions.set(position.mint, position);
         });
         console.log(`Loaded ${this.positions.size} positions from state file`);
       }
@@ -49,7 +69,21 @@ class PositionStateManager extends EventEmitter {
   savePositions() {
     try {
       const data = {
-        positions: Array.from(this.positions.values()),
+        positions: Array.from(this.positions.values()).map(position => ({
+          mint: position.mint,
+          entryPrice: position.entryPrice,
+          size: position.size,
+          currentPrice: position.currentPrice,
+          remainingSize: position.remainingSize,
+          highPrice: position.highPrice,
+          entryTime: position.entryTime,
+          symbol: position.symbol,
+          priceHistory: position.priceHistory,
+          volumeHistory: position.volumeHistory,
+          candleHistory: position.candleHistory,
+          profitHistory: position.profitHistory,
+          partialExits: position.partialExits
+        })),
         lastSaved: new Date().toISOString()
       };
       fs.writeFileSync(this.stateFile, JSON.stringify(data, null, 2));
@@ -59,68 +93,18 @@ class PositionStateManager extends EventEmitter {
   }
 
   addPosition(position) {
-    const enrichedPosition = {
-      ...position,
-      state: 'active',
-      lastUpdate: new Date(),
-      updates: [],
-      partialExits: []
-    };
+    if (!(position instanceof Position)) {
+      throw new Error('Position must be an instance of Position class');
+    }
     
-    this.positions.set(position.mint, enrichedPosition);
-    this.emit('positionAdded', enrichedPosition);
+    // Set up event listeners
+    position.on('updated', (pos) => this.emit('positionUpdated', pos));
+    position.on('partialExit', (pos) => this.emit('partialExit', pos));
+    position.on('closed', (pos) => this.emit('positionClosed', pos));
+    
+    this.positions.set(position.mint, position);
+    this.emit('positionAdded', position);
     this.savePositions();
-    
-    return enrichedPosition;
-  }
-
-  updatePosition(mint, updates) {
-    const position = this.positions.get(mint);
-    if (!position) return null;
-
-    const updatedPosition = {
-      ...position,
-      ...updates,
-      lastUpdate: new Date()
-    };
-
-    // Track price history
-    if (updates.currentPrice) {
-      updatedPosition.updates.push({
-        timestamp: new Date(),
-        price: updates.currentPrice,
-        type: 'priceUpdate'
-      });
-    }
-
-    // Update max drawdown and upside
-    if (updates.currentPrice > position.highestPrice) {
-      updatedPosition.highestPrice = updates.currentPrice;
-      updatedPosition.maxUpside = ((updates.currentPrice - position.entryPrice) / position.entryPrice) * 100;
-    }
-    if (updates.currentPrice < position.lowestPrice) {
-      updatedPosition.lowestPrice = updates.currentPrice;
-      updatedPosition.maxDrawdown = ((position.entryPrice - updates.currentPrice) / position.entryPrice) * 100;
-    }
-
-    this.positions.set(mint, updatedPosition);
-    this.emit('positionUpdated', updatedPosition);
-    
-    return updatedPosition;
-  }
-
-  recordPartialExit(mint, exitData) {
-    const position = this.positions.get(mint);
-    if (!position) return null;
-
-    position.partialExits.push({
-      ...exitData,
-      timestamp: new Date()
-    });
-    
-    position.remainingSize = exitData.remainingSize;
-    this.positions.set(mint, position);
-    this.emit('partialExit', position);
     
     return position;
   }
@@ -129,45 +113,42 @@ class PositionStateManager extends EventEmitter {
     const position = this.positions.get(mint);
     if (!position) return null;
 
-    position.state = 'closed';
-    position.closedAt = new Date();
-    
-    this.emit('positionClosed', position);
     this.positions.delete(mint);
     this.savePositions();
     
     return position;
   }
 
+  getPosition(mint) {
+    return this.positions.get(mint);
+  }
+
+  getActivePositions() {
+    return Array.from(this.positions.values());
+  }
+
+  getPositionStats() {
+    const positions = this.getActivePositions();
+    const totalValue = positions.reduce((sum, pos) => 
+      sum + (pos.currentPrice * pos.size * pos.remainingSize), 0);
+    
+    return {
+      activePositions: positions.length,
+      totalValue
+    };
+  }
+
   validatePositions() {
+    const now = Date.now();
     const invalidPositions = [];
     
-    for (const [mint, position] of this.positions) {
-      // Check for stale positions (no updates in 5 minutes)
-      const staleThreshold = 5 * 60 * 1000; // 5 minutes
-      if (Date.now() - position.lastUpdate > staleThreshold) {
+    for (const [mint, position] of this.positions.entries()) {
+      // Check for stale positions (no updates in last 5 minutes)
+      if (now - position.lastUpdate > 5 * 60 * 1000) {
         invalidPositions.push({
           mint,
-          reason: 'stale',
-          position
-        });
-      }
-      
-      // Check for invalid state transitions
-      if (position.state !== 'active' && position.state !== 'closed') {
-        invalidPositions.push({
-          mint,
-          reason: 'invalidState',
-          position
-        });
-      }
-      
-      // Check for inconsistent remaining size
-      if (position.remainingSize < 0 || position.remainingSize > 1) {
-        invalidPositions.push({
-          mint,
-          reason: 'invalidSize',
-          position
+          position,
+          reason: 'stale'
         });
       }
     }
@@ -175,38 +156,9 @@ class PositionStateManager extends EventEmitter {
     return invalidPositions;
   }
 
-  getActivePositions() {
-    return Array.from(this.positions.values())
-      .filter(p => p.state === 'active')
-      .sort((a, b) => b.entryTime - a.entryTime);
-  }
-
-  getPosition(mint) {
-    return this.positions.get(mint);
-  }
-
-  getPositionStats() {
-    const positions = Array.from(this.positions.values());
-    return {
-      totalActive: positions.filter(p => p.state === 'active').length,
-      totalValue: positions.reduce((sum, p) => sum + (p.size * p.currentPrice), 0),
-      averageHoldTime: positions.reduce((sum, p) => sum + (Date.now() - p.entryTime), 0) / positions.length,
-      totalProfitLoss: positions.reduce((sum, p) => {
-        const pl = ((p.currentPrice - p.entryPrice) / p.entryPrice) * p.size;
-        return sum + pl;
-      }, 0)
-    };
-  }
-
   clearPositions() {
     this.positions.clear();
-    try {
-      if (fs.existsSync(this.stateFile)) {
-        fs.unlinkSync(this.stateFile);
-      }
-    } catch (error) {
-      console.error('Error clearing positions file:', error);
-    }
+    this.savePositions();
   }
 }
 

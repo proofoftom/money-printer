@@ -5,6 +5,7 @@ const config = require("./config");
 const ExitStrategies = require("./ExitStrategies");
 const TransactionSimulator = require("./TransactionSimulator");
 const PositionStateManager = require("./PositionStateManager");
+const Position = require('./Position');
 
 class PositionManager extends EventEmitter {
   constructor(wallet) {
@@ -37,23 +38,21 @@ New Position Added:
   }
 
   handlePositionUpdated(position) {
-    const pl = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
     console.log(`
 Position Updated:
 - Mint: ${position.mint}
 - Current Price: ${position.currentPrice} SOL
-- P/L: ${pl.toFixed(2)}%
+- P/L: ${position.getProfitLoss().toFixed(2)}%
 - Max Upside: ${position.maxUpside.toFixed(2)}%
 - Max Drawdown: ${position.maxDrawdown.toFixed(2)}%
     `);
   }
 
   handlePositionClosed(position) {
-    const pl = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
     console.log(`
 Position Closed:
 - Mint: ${position.mint}
-- Final P/L: ${pl.toFixed(2)}%
+- Final P/L: ${position.getProfitLoss().toFixed(2)}%
 - Hold Time: ${Math.round((position.closedAt - position.entryTime) / 1000)}s
     `);
   }
@@ -79,38 +78,26 @@ Partial Exit:
         0
       );
 
-      const position = {
+      const position = new Position({
         mint,
         entryPrice: executionPrice,
-        size: positionSize,
-        highestPrice: executionPrice,
-        lowestPrice: executionPrice,
-        remainingSize: 1.0,
-        currentPrice: executionPrice,
-        entryTime: Date.now(),
-        maxDrawdown: 0,
-        maxUpside: 0,
-        volumeHistory: [],
-        candleHistory: [],
-        simulatedDelay: delay,
-        priceHistory: [executionPrice],
-        volume: 0,
-        volume1m: 0,
-        volume5m: 0,
-        volume30m: 0,
-        profitHistory: [0],
-        highPrice: executionPrice
-      };
+        size: positionSize
+      });
 
       this.stateManager.addPosition(position);
       this.wallet.updateBalance(-positionSize);
+
+      // Set up position event listeners
+      position.on('updated', this.handlePositionUpdated.bind(this));
+      position.on('partialExit', this.handlePartialExit.bind(this));
+      position.on('closed', this.handlePositionClosed.bind(this));
 
       // Emit trade event for opening position
       this.emit('trade', {
         type: 'BUY',
         mint,
         profitLoss: 0,
-        symbol: position.symbol || mint.slice(0, 8),
+        symbol: position.symbol,
         timestamp: Date.now()
       });
 
@@ -135,29 +122,18 @@ Partial Exit:
     const executionPrice = this.transactionSimulator.calculatePriceImpact(
       sizeToClose,
       exitPrice,
-      position.volumeHistory[position.volumeHistory.length - 1]?.volume || 0
+      position.volume
     );
 
-    const priceDiff = executionPrice - position.entryPrice;
-    const profitLoss = (priceDiff / position.entryPrice) * 100;
-    const profitLossAmount = (priceDiff / position.entryPrice) * sizeToClose;
-    
+    const profitLossAmount = (position.getProfitLoss() / 100) * sizeToClose;
     this.wallet.updateBalance(sizeToClose + profitLossAmount);
-    this.wallet.recordTrade(profitLoss > 0 ? 1 : -1);
-
-    // Emit trade event with complete information
-    this.emit('trade', {
-      type: portion === 1.0 ? 'CLOSE' : 'PARTIAL',
-      mint,
-      profitLoss,
-      symbol: position.symbol || mint.slice(0, 8),
-      timestamp: Date.now()
-    });
+    this.wallet.recordTrade(profitLossAmount > 0 ? 1 : -1);
 
     if (portion === 1.0) {
-      if (profitLoss > 0) this.wins++;
-      else if (profitLoss < 0) this.losses++;
+      if (profitLossAmount > 0) this.wins++;
+      else if (profitLossAmount < 0) this.losses++;
       
+      position.close(executionPrice);
       const closedPosition = this.stateManager.closePosition(mint);
       if (!closedPosition) {
         console.error(`Failed to close position for ${mint}`);
@@ -165,78 +141,17 @@ Partial Exit:
       }
       return closedPosition;
     } else {
-      const updatedPosition = this.stateManager.recordPartialExit(mint, {
-        portion,
-        remainingSize: position.remainingSize - portion,
-        exitPrice: executionPrice,
-        profitLoss
-      });
-      if (!updatedPosition) {
-        console.error(`Failed to record partial exit for ${mint}`);
-        return null;
-      }
-      return updatedPosition;
+      position.recordPartialExit(portion, executionPrice);
+      return position;
     }
   }
 
   updatePosition(mint, currentPrice, volumeData = null, candleData = null) {
-    // Get existing position data
     const position = this.getPosition(mint);
     if (!position) return null;
 
-    // Update price history (keep last 10 minutes of data)
-    const priceHistory = position.priceHistory || [];
-    priceHistory.push(currentPrice);
-    if (priceHistory.length > 60) { // 60 data points at ~10s intervals = 10 minutes
-      priceHistory.shift();
-    }
-
-    // Update volume history (keep last 5 minutes of data)
-    const volumeHistory = position.volumeHistory || [];
-    if (volumeData) {
-      volumeHistory.push({
-        timestamp: Date.now(),
-        volume: volumeData.volume || 0,
-        volume1m: volumeData.volume1m || 0,
-        volume5m: volumeData.volume5m || 0,
-        volume30m: volumeData.volume30m || 0
-      });
-      if (volumeHistory.length > 30) { // 30 data points = 5 minutes
-        volumeHistory.shift();
-      }
-    }
-
-    // Update profit history
-    const profitHistory = position.profitHistory || [];
-    const currentProfit = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
-    profitHistory.push(currentProfit);
-    if (profitHistory.length > 30) {
-      profitHistory.shift();
-    }
-
-    // Update high price if needed
-    const highPrice = Math.max(position.highPrice || position.entryPrice, currentPrice);
-
-    // Update position with new data
-    const updatedPosition = this.stateManager.updatePosition(mint, {
-      currentPrice,
-      priceHistory,
-      volumeHistory,
-      profitHistory,
-      highPrice,
-      volume: volumeData?.volume || position.volume || 0,
-      volume1m: volumeData?.volume1m || position.volume1m || 0,
-      volume5m: volumeData?.volume5m || position.volume5m || 0,
-      volume30m: volumeData?.volume30m || position.volume30m || 0,
-      candleHistory: candleData ? [...(position.candleHistory || []), candleData] : undefined
-    });
-
-    if (!updatedPosition) {
-      console.error(`Failed to update position for ${mint}`);
-      return null;
-    }
-
-    return updatedPosition;
+    position.update(currentPrice, volumeData, candleData);
+    return position;
   }
 
   getPosition(mint) {
@@ -273,126 +188,6 @@ Partial Exit:
     }
 
     return size;
-  }
-
-  calculateVolatility(candleHistory) {
-    if (!candleHistory || candleHistory.length < 2) return 0;
-    
-    const returns = [];
-    for (let i = 1; i < candleHistory.length; i++) {
-      const returnVal = (candleHistory[i].close - candleHistory[i-1].close) / candleHistory[i-1].close;
-      returns.push(returnVal);
-    }
-    
-    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
-    return Math.sqrt(variance);
-  }
-
-  analyzeVolumeProfile(volumeHistory) {
-    if (!volumeHistory || volumeHistory.length === 0) return null;
-    
-    const volumeData = volumeHistory.map(v => v.volume);
-    const maxVolume = Math.max(...volumeData);
-    const minVolume = Math.min(...volumeData);
-    const avgVolume = volumeData.reduce((a, b) => a + b, 0) / volumeData.length;
-    
-    return {
-      maxVolume,
-      minVolume,
-      avgVolume,
-      volumeStability: (maxVolume - minVolume) / avgVolume
-    };
-  }
-
-  calculateTimeToMaxPrice(position) {
-    if (!position.candleHistory || position.candleHistory.length === 0) return null;
-    
-    const maxPriceCandle = position.candleHistory.find(c => c.high === position.highestPrice);
-    if (!maxPriceCandle) return null;
-    
-    return Math.round((maxPriceCandle.timestamp - position.entryTime) / 1000); // in seconds
-  }
-
-  calculateAverageVolume(volumeHistory) {
-    if (!volumeHistory || volumeHistory.length === 0) return 0;
-    return volumeHistory.reduce((sum, v) => sum + v.volume, 0) / volumeHistory.length;
-  }
-
-  calculateTrendDirection(candleHistory) {
-    if (!candleHistory || candleHistory.length < 2) return 'neutral';
-    
-    const prices = candleHistory.map(c => c.close);
-    const firstHalf = prices.slice(0, Math.floor(prices.length / 2));
-    const secondHalf = prices.slice(Math.floor(prices.length / 2));
-    
-    const firstHalfAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
-    const secondHalfAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
-    
-    if (secondHalfAvg > firstHalfAvg * 1.05) return 'uptrend';
-    if (secondHalfAvg < firstHalfAvg * 0.95) return 'downtrend';
-    return 'neutral';
-  }
-
-  calculateVolumeStrength(volumeHistory) {
-    if (!volumeHistory || volumeHistory.length < 2) return 'neutral';
-    
-    const volumes = volumeHistory.map(v => v.volume);
-    const firstHalf = volumes.slice(0, Math.floor(volumes.length / 2));
-    const secondHalf = volumes.slice(Math.floor(volumes.length / 2));
-    
-    const firstHalfAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
-    const secondHalfAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
-    
-    if (secondHalfAvg > firstHalfAvg * 1.2) return 'increasing';
-    if (secondHalfAvg < firstHalfAvg * 0.8) return 'decreasing';
-    return 'stable';
-  }
-
-  analyzeHolders(token) {
-    if (!token || !token.wallets) return null;
-
-    const now = Date.now();
-    const holders = Array.from(token.wallets.entries());
-    const totalHolders = holders.length;
-    
-    // Get creator behavior
-    const creatorStats = {
-      sellPercentage: token.getCreatorSellPercentage(),
-      hasExited: token.hasCreatorSoldAll()
-    };
-
-    // Analyze top holders
-    const topHolders = token.getTopHolders(5);
-    const topHolderConcentration = token.getTopHolderConcentration(5);
-
-    // Analyze trading patterns
-    const traderStats = token.getTraderStats("5m");
-    
-    // Calculate holder turnover (percentage of holders who have traded in last 5 minutes)
-    const recentlyActiveHolders = holders.filter(([_, wallet]) => 
-      wallet.lastActive > now - 5 * 60 * 1000
-    ).length;
-    
-    const holderTurnover = (recentlyActiveHolders / totalHolders) * 100;
-
-    return {
-      totalHolders,
-      topHolderConcentration,
-      holderTurnover,
-      creatorBehavior: creatorStats,
-      tradingActivity: {
-        uniqueTraders: traderStats.uniqueTraders,
-        tradeCount: traderStats.totalTrades,
-        averageTradeSize: traderStats.averageTradeSize,
-        buyToSellRatio: traderStats.buyToSellRatio
-      },
-      topHolders: topHolders.map(holder => ({
-        balance: holder.balance,
-        percentageHeld: (holder.balance / token.getTotalTokensHeld()) * 100,
-        isCreator: holder.isCreator || false
-      }))
-    };
   }
 
   validatePositions() {
