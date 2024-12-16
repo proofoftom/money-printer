@@ -173,14 +173,16 @@ Partial Exit:
     // Update high price if needed
     const highPrice = Math.max(position.highPrice || position.entryPrice, currentPrice);
 
+    // Get latest volume from volumeData or keep existing
+    const volume = volumeData?.volume || position.volume || 0;
+
     return this.stateManager.updatePosition(mint, {
       currentPrice,
       priceHistory,
       volumeHistory,
       profitHistory,
       highPrice,
-      volume: volumeData,
-      volumeHistory: volumeData ? [...(position.volumeHistory || []), volumeData] : undefined,
+      volume,
       candleHistory: candleData ? [...(position.candleHistory || []), candleData] : undefined
     });
   }

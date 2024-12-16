@@ -287,13 +287,22 @@ class Dashboard {
 
           // Format velocity indicator
           const velocityIndicator = velocity > 0 
-            ? `{green-fg}↑${velocity.toFixed(1)}%/m{/}` 
-            : `{red-fg}↓${Math.abs(velocity).toFixed(1)}%/m{/}`;
+            ? '%{green-fg}↑' + velocity.toFixed(1) + '%/m%{/green-fg}' 
+            : '%{red-fg}↓' + Math.abs(velocity).toFixed(1) + '%/m%{/red-fg}';
 
           // Format volume trend indicator
           const volumeIndicator = volumeTrend > 0
-            ? `{green-fg}↑${volumeTrend.toFixed(0)}%{/}`
-            : `{red-fg}↓${Math.abs(volumeTrend).toFixed(0)}%{/}`;
+            ? '%{green-fg}↑' + volumeTrend.toFixed(0) + '%%{/green-fg}'
+            : '%{red-fg}↓' + Math.abs(volumeTrend).toFixed(0) + '%%{/red-fg}';
+
+          // Format P/L with color and trend
+          const plColor = pnl >= 0 ? 'green' : 'red';
+          const plStr = `%{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(1)}%%{/${plColor}-fg}`;
+
+          // Get volume in USD, handle undefined/NaN cases
+          const volume = pos.volume || 0;
+          const volumeUSD = this.priceManager?.solToUSD?.(volume) || 0;
+          const volumeStr = volumeUSD.toFixed(0);
 
           // Calculate profit trend
           const profitTrend = pos.profitHistory || [];
@@ -302,15 +311,11 @@ class Dashboard {
             ? recentProfit[recentProfit.length - 1] > recentProfit[0] ? "▲" : "▼"
             : "─";
 
-          // Format P/L with color and trend
-          const plColor = pnl >= 0 ? "green" : "red";
-          const plStr = `{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(1)}%{/}`;
-
           // Build the display string with dynamic data
           return [
             `${pos.mint?.slice(0, 8)}... | ${holdTimeStr} | P/L: ${plStr}`,
             `Price: ${pos.currentPrice?.toFixed(4)} SOL ${velocityIndicator}`,
-            `Vol: ${this.priceManager.solToUSD(pos.volume || 0).toFixed(0)}$ ${volumeIndicator}`,
+            `Vol: ${volumeStr}$ ${volumeIndicator}`,
             `Entry: ${pos.entryPrice?.toFixed(4)} | High: ${pos.highPrice?.toFixed(4)}`,
             "─".repeat(50) // Separator
           ].join("\n");
