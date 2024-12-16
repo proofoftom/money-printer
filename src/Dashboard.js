@@ -1,5 +1,6 @@
 const blessed = require("blessed");
 const contrib = require("blessed-contrib");
+const ErrorLogger = require("./ErrorLogger");
 
 class Dashboard {
   constructor(
@@ -19,7 +20,30 @@ class Dashboard {
       x: [],
       y: [],
     };
+    this.errorLogger = new ErrorLogger();
 
+    try {
+      this.initializeDashboard();
+    } catch (error) {
+      this.handleError(error, "initialization");
+    }
+  }
+
+  handleError(error, context, additionalInfo = {}) {
+    this.errorLogger.logError(error, "Dashboard", {
+      context,
+      ...additionalInfo,
+    });
+    
+    // Log to dashboard if available, otherwise fallback to console
+    if (this.statusBox) {
+      this.logStatus(`Error in ${context}: ${error.message}`, "error");
+    } else {
+      console.error(`Dashboard error in ${context}:`, error);
+    }
+  }
+
+  initializeDashboard() {
     // Initialize screen
     this.screen = blessed.screen({
       smartCSR: true,
@@ -33,6 +57,23 @@ class Dashboard {
       screen: this.screen,
     });
 
+    this.initializeComponents();
+    this.setupEventHandlers();
+    
+    // Set up periodic updates with error handling
+    setInterval(() => {
+      try {
+        this.updateDashboard();
+      } catch (error) {
+        this.handleError(error, "periodic update");
+      }
+    }, 1000);
+
+    // Initial render
+    this.screen.render();
+  }
+
+  initializeComponents() {
     // Create wallet status box (1 col)
     this.walletBox = this.grid.set(0, 0, 3, 3, blessed.box, {
       label: " Wallet Status ",
@@ -159,7 +200,9 @@ class Dashboard {
         label: { bold: true },
       },
     });
+  }
 
+  setupEventHandlers() {
     // Basic event handler for quitting
     this.screen.key(["escape", "q", "C-c"], () => {
       // Restore original console methods before exiting
@@ -178,12 +221,6 @@ class Dashboard {
     //     "error"
     //   );
     // });
-
-    // Set up periodic updates
-    setInterval(() => this.updateDashboard(), 1000);
-
-    // Initial render
-    this.screen.render();
   }
 
   getWalletStatus() {
@@ -198,7 +235,7 @@ class Dashboard {
         }%`,
       ].join("\n");
     } catch (error) {
-      this.logStatus("Error getting wallet status: " + error.message, "error");
+      this.handleError(error, "wallet status");
       return [
         `Balance:   N/A SOL`,
         `P/L Today: N/A SOL`,
@@ -235,7 +272,7 @@ class Dashboard {
         this.balanceChart.setData([displayData]);
       }
     } catch (error) {
-      this.logStatus("Error updating balance chart: " + error.message, "error");
+      this.handleError(error, "balance history");
     }
   }
 
@@ -267,52 +304,81 @@ class Dashboard {
             `Time:    ${holdTime}m`,
           ].join(" | ");
         } catch (err) {
-          this.logStatus(`Error formatting position: ${err.message}`, "error");
+          this.handleError(err, "position formatting");
           return "Error formatting position";
         }
       });
 
       return positionStrings.join("\n");
     } catch (error) {
-      this.logStatus("Error getting positions: " + error.message, "error");
+      this.handleError(error, "positions");
       return "Waiting for positions...";
     }
   }
 
   logTrade({ type, mint, profitLoss, symbol }) {
-    const timestamp = new Date().toLocaleTimeString();
-    const trade = {
-      timestamp,
-      type,
-      mint,
-      profitLoss,
-      symbol,
-    };
-    this.trades.unshift(trade);
-    // Keep only last 50 trades
-    if (this.trades.length > 50) {
-      this.trades.pop();
+    try {
+      const timestamp = new Date().toLocaleTimeString();
+      const trade = {
+        timestamp,
+        type,
+        mint,
+        profitLoss,
+        symbol,
+      };
+      this.trades.unshift(trade);
+      // Keep only last 50 trades
+      if (this.trades.length > 50) {
+        this.trades.pop();
+      }
+    } catch (error) {
+      this.handleError(error, "logging trade", { type, mint, profitLoss, symbol });
     }
   }
 
   getTradeHistory() {
-    if (this.trades.length === 0) {
-      return "No trades yet";
-    }
+    try {
+      if (this.trades.length === 0) {
+        return "No trades yet";
+      }
 
-    return this.trades
-      .map((trade) => {
-        const profitLossStr =
-          typeof trade.profitLoss === "number"
-            ? `${
-                trade.profitLoss === 0 ? "" : trade.profitLoss > 0 ? "+" : ""
-              }${trade.profitLoss.toFixed(4)} SOL`
-            : "N/A";
-        return `[${trade.timestamp}] ${trade.type.padEnd(4)} | ${
-          trade.symbol || trade.mint.slice(0, 8)
-        } | ${profitLossStr}`;
-      })
-      .join("\n");
+      return this.trades
+        .map(
+          (trade) =>
+            `${trade.timestamp} | ${trade.type} | ${trade.symbol} | ${
+              trade.profitLoss > 0 ? "+" : ""
+            }${trade.profitLoss.toFixed(4)} SOL`
+        )
+        .join("\n");
+    } catch (error) {
+      this.handleError(error, "trade history");
+      return "Error loading trade history";
+    }
+  }
+
+  formatVolume(vol) {
+    try {
+      if (typeof vol !== "number" || isNaN(vol)) return "0";
+      if (vol >= 1000) {
+        return (vol / 1000).toFixed(1) + "k";
+      }
+      return Math.floor(vol).toString();
+    } catch (error) {
+      this.handleError(error, "volume formatting", { volume: vol });
+      return "0";
+    }
+  }
+
+  logStatus(message, type = "info") {
+    try {
+      const timestamp = new Date().toLocaleTimeString();
+      const prefix = type === "error" ? "🔴" : type === "warning" ? "⚠️" : "ℹ️";
+      this.statusBox.log(`${timestamp} ${prefix} ${message}`);
+    } catch (error) {
+      // Use console.error as fallback if statusBox fails
+      console.error("Error logging to status box:", error);
+      console.error("Original message:", message);
+    }
   }
 
   updateDashboard() {
@@ -329,7 +395,7 @@ class Dashboard {
       this.updateBalanceHistory();
       this.screen.render();
     } catch (error) {
-      this.logStatus("Error updating dashboard: " + error.message, "error");
+      this.handleError(error, "dashboard update");
     }
   }
 
@@ -389,6 +455,7 @@ class Dashboard {
               "─".repeat(50), // Add horizontal rule between tokens
             ].join("\n");
           } catch (err) {
+            this.handleError(err, "token formatting");
             return `Error formatting token ${
               token.symbol || token.mint.slice(0, 8)
             }: ${err.message}`;
@@ -396,18 +463,9 @@ class Dashboard {
         })
         .join("\n");
     } catch (error) {
-      this.logStatus(
-        `Error getting ${state} tokens: ${error.message}`,
-        "error"
-      );
+      this.handleError(error, `getting ${state} tokens`);
       return "Error loading tokens";
     }
-  }
-
-  logStatus(message, type = "info") {
-    const timestamp = new Date().toLocaleTimeString();
-    this.statusBox.log(`[${timestamp}] ${message}`);
-    this.screen.render();
   }
 }
 
