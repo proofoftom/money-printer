@@ -2,7 +2,13 @@ const blessed = require("blessed");
 const contrib = require("blessed-contrib");
 
 class Dashboard {
-  constructor(wallet, tokenTracker, positionManager, safetyChecker, priceManager) {
+  constructor(
+    wallet,
+    tokenTracker,
+    positionManager,
+    safetyChecker,
+    priceManager
+  ) {
     this.wallet = wallet;
     this.tokenTracker = tokenTracker;
     this.positionManager = positionManager;
@@ -82,12 +88,12 @@ class Dashboard {
     // Redirect console.log to status box
     const originalConsoleLog = console.log;
     const originalConsoleError = console.error;
-    
+
     console.log = (...args) => {
       this.logStatus(args.join(" "));
       // originalConsoleLog.apply(console, args);
     };
-    
+
     console.error = (...args) => {
       this.logStatus(args.join(" "), "error");
       // originalConsoleError.apply(console, args);
@@ -315,7 +321,9 @@ class Dashboard {
       this.heatingUpBox.setContent(this.getTokensByState("heatingUp"));
       this.firstPumpBox.setContent(this.getTokensByState("firstPump"));
       this.drawdownBox.setContent(this.getTokensByState("drawdown"));
-      this.supplyRecoveryBox.setContent(this.getTokensByState("unsafeRecovery"));
+      this.supplyRecoveryBox.setContent(
+        this.getTokensByState("unsafeRecovery")
+      );
       this.activePositionsBox.setContent(this.getActivePositions());
       this.tradeBox.setContent(this.getTradeHistory());
       this.updateBalanceHistory();
@@ -338,37 +346,59 @@ class Dashboard {
             // Calculate token age in seconds
             const now = Date.now();
             const tokenAge = Math.floor((now - token.created) / 1000);
-            const ageStr = `${tokenAge}s`;
+            const ageStr =
+              tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
 
-            // Format market cap in USD
+            // Format market cap in USD with k format
             const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-            const mcStr = `MC: $${marketCapUSD.toFixed(4)}`;
+            const mcFormatted =
+              marketCapUSD >= 1000
+                ? `${(marketCapUSD / 1000).toFixed(1)}k`
+                : marketCapUSD.toFixed(1);
+            const mcStr = `MC: $${mcFormatted}`;
 
             // Get holder info
             const holderCount = token.getHolderCount();
             const topConcentration = token.getTopHolderConcentration(10);
-            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
+            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(
+              0
+            )}%`;
 
-            // Get volume data in USD
-            const vol1m = this.priceManager.solToUSD(token.getVolume('1m')).toFixed(4);
-            const vol5m = this.priceManager.solToUSD(token.getVolume('5m')).toFixed(4);
-            const vol1h = this.priceManager.solToUSD(token.getVolume('30m')).toFixed(4);
+            // Get volume data in USD with 1 decimal
+            const vol1m = this.priceManager
+              .solToUSD(token.getVolume("1m"))
+              .toFixed(1);
+            const vol5m = this.priceManager
+              .solToUSD(token.getVolume("5m"))
+              .toFixed(1);
+            const vol1h = this.priceManager
+              .solToUSD(token.getVolume("30m"))
+              .toFixed(1);
             const volumeStr = `VOL 1m: $${vol1m} | 5m: $${vol5m} | 1h: $${vol1h}`;
 
             // Format the token info string
             const symbol = token.symbol || token.mint.slice(0, 8);
             return [
-              `${symbol.padEnd(12)} ${ageStr.padEnd(6)} | ${mcStr}`,
-              `${holdersStr}`,
-              `${volumeStr}`
-            ].join('\n');
+              `${symbol.padEnd(16)} ${ageStr.padEnd(
+                3
+              )} | MC: $${mcFormatted.padEnd(7)} | ${holdersStr}`,
+              `VOL     1m: $${vol1m.padEnd(7)} | 5m: $${vol5m.padEnd(
+                7
+              )} | 1h: $${vol1h}`,
+              "─".repeat(50), // Add horizontal rule between tokens
+            ].join("\n");
           } catch (err) {
-            return `Error formatting token ${token.symbol || token.mint.slice(0, 8)}: ${err.message}`;
+            return `Error formatting token ${
+              token.symbol || token.mint.slice(0, 8)
+            }: ${err.message}`;
           }
         })
-        .join("\n\n");
+        .join("\n");
     } catch (error) {
-      this.logStatus(`Error getting ${state} tokens: ${error.message}`, "error");
+      this.logStatus(
+        `Error getting ${state} tokens: ${error.message}`,
+        "error"
+      );
       return "Error loading tokens";
     }
   }
