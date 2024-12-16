@@ -100,9 +100,20 @@ class Token extends EventEmitter {
       if (data.marketCapSol > this.highestMarketCap) {
         this.highestMarketCap = data.marketCapSol;
       }
-      if (this.state === "drawdown" && data.marketCapSol < this.drawdownLow) {
-        this.drawdownLow = data.marketCapSol;
+      
+      // Check if we're in drawdown and need to update drawdownLow
+      if (this.state === "drawdown" || this.state === "unsafeRecovery") {
+        // Initialize drawdownLow if not set
+        if (this.drawdownLow === null) {
+          this.drawdownLow = data.marketCapSol;
+          console.warn(`Initialized drawdownLow for token ${this.mint} in ${this.state} state`);
+        }
+        // Update drawdownLow if new market cap is lower
+        else if (data.marketCapSol < this.drawdownLow) {
+          this.drawdownLow = data.marketCapSol;
+        }
       }
+      
       this.marketCapSol = data.marketCapSol;
     }
 
@@ -434,8 +445,19 @@ class Token extends EventEmitter {
 
   async evaluateRecovery(safetyChecker) {
     try {
+      if (!safetyChecker) {
+        console.error('SafetyChecker is required for evaluateRecovery');
+        return;
+      }
+
       if (this.state !== "drawdown" && this.state !== "unsafeRecovery") {
         return;
+      }
+
+      // Initialize drawdownLow if not set (this should never happen, but let's be safe)
+      if (this.drawdownLow === null) {
+        console.warn(`drawdownLow was null for token ${this.mint} in ${this.state} state. Initializing with current market cap.`);
+        this.drawdownLow = this.marketCapSol;
       }
 
       // Check for new drawdown in either state
@@ -459,8 +481,8 @@ class Token extends EventEmitter {
           this.emit("unsafeRecovery", { 
             token: this, 
             marketCap: this.marketCapSol, 
-            reason: this.unsafeReason.reason,
-            value: this.unsafeReason.value 
+            reason: this.unsafeReason?.reason || 'Unknown',
+            value: this.unsafeReason?.value 
           });
         }
         return;
@@ -492,15 +514,15 @@ class Token extends EventEmitter {
             this.unsafeReason = newReason;
             this.emit("unsafeRecoveryUpdate", {
               token: this,
-              reason: this.unsafeReason.reason,
-              value: this.unsafeReason.value
+              reason: this.unsafeReason?.reason || 'Unknown',
+              value: this.unsafeReason?.value
             });
           }
         }
       }
     } catch (error) {
-      console.error("Error evaluating recovery:", error);
-      // If we encounter an error during recovery evaluation, stay in current state
+      console.error('Error in evaluateRecovery:', error);
+      this.emit('recoveryError', { token: this, error: error.message });
     }
   }
 

@@ -11,7 +11,7 @@ class SafetyChecker {
   }
 
   getFailureReason() {
-    return this.lastFailureReason;
+    return this.lastFailureReason || { reason: 'Unknown failure', value: null };
   }
 
   setFailureReason(reason, value = null) {

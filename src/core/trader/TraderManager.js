@@ -392,6 +392,12 @@ class TraderManager extends EventEmitter {
 
     return Array.from(repeatParticipants);
   }
+
+  getUniqueTraderCount(token) {
+    return Array.from(this.traders.values())
+      .filter(trader => trader.tokenBalances.has(token.mint))
+      .length;
+  }
 }
 
 module.exports = TraderManager;
