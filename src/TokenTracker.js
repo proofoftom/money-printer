@@ -47,6 +47,11 @@ class TokenTracker extends EventEmitter {
       const token = this.tokens.get(tradeData.mint);
       if (!token) return;
 
+      // Add trade amount for volume tracking if this is a trade
+      if (tradeData.txType === "buy" || tradeData.txType === "sell") {
+        tradeData.tradeAmount = tradeData.tokenAmount;
+      }
+
       token.update(tradeData);
 
       // Convert market cap to USD for threshold comparisons
