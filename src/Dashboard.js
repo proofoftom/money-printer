@@ -2,11 +2,12 @@ const blessed = require("blessed");
 const contrib = require("blessed-contrib");
 
 class Dashboard {
-  constructor(wallet, tokenTracker, positionManager, safetyChecker) {
+  constructor(wallet, tokenTracker, positionManager, safetyChecker, priceManager) {
     this.wallet = wallet;
     this.tokenTracker = tokenTracker;
     this.positionManager = positionManager;
     this.safetyChecker = safetyChecker;
+    this.priceManager = priceManager;
     this.trades = [];
     this.balanceHistory = {
       x: [],
@@ -333,11 +334,39 @@ class Dashboard {
 
       return tokens
         .map((token) => {
-          const marketCap = token.marketCapSol?.toFixed(2) || "N/A";
-          const symbol = token.symbol || token.mint.slice(0, 8);
-          return `${symbol}: ${marketCap} SOL`;
+          try {
+            // Calculate token age in seconds
+            const now = Date.now();
+            const tokenAge = Math.floor((now - token.createdAt) / 1000);
+            const ageStr = `${tokenAge}s`;
+
+            // Format market cap in USD
+            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+            const mcStr = `MC: $${marketCapUSD.toFixed(4)}`;
+
+            // Get holder info
+            const holderCount = token.getHolderCount();
+            const topConcentration = token.getTopHolderConcentration(10);
+            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
+
+            // Get volume data
+            const vol1m = token.getVolume('1m').toFixed(4);
+            const vol5m = token.getVolume('5m').toFixed(4);
+            const vol1h = token.getVolume('30m').toFixed(4);
+            const volumeStr = `VOL 1m: $${vol1m} | 5m: $${vol5m} | 1h: $${vol1h}`;
+
+            // Format the token info string
+            const symbol = token.symbol || token.mint.slice(0, 8);
+            return [
+              `${symbol.padEnd(12)} ${ageStr.padEnd(6)} | ${mcStr}`,
+              `${holdersStr}`,
+              `${volumeStr}`
+            ].join('\n');
+          } catch (err) {
+            return `Error formatting token ${token.symbol || token.mint.slice(0, 8)}: ${err.message}`;
+          }
         })
-        .join("\n");
+        .join("\n\n");
     } catch (error) {
       this.logStatus(`Error getting ${state} tokens: ${error.message}`, "error");
       return "Error loading tokens";

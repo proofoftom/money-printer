@@ -29,7 +29,8 @@ const dashboard = new Dashboard(
   wallet,
   tokenTracker,
   positionManager,
-  safetyChecker
+  safetyChecker,
+  priceManager
 );
 
 // Initialize price manager before starting
