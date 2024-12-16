@@ -1,6 +1,7 @@
 const EventEmitter = require("events");
 const config = require("./config");
 const TraderManager = require("./TraderManager");
+const TokenStateManager = require("./TokenStateManager");
 
 class Token extends EventEmitter {
   constructor(tokenData) {
@@ -49,9 +50,15 @@ class Token extends EventEmitter {
     }];
     this.priceVolatility = 0;
 
-    // Initialize TraderManager
+    // Initialize managers
     this.traderManager = new TraderManager();
+    this.stateManager = new TokenStateManager();
     
+    // Forward state change events
+    this.stateManager.on("stateChanged", ({ from, to }) => {
+      this.emit("stateChanged", { token: this, from, to });
+    });
+
     // Initialize creator as holder if initial balance provided
     if (tokenData.newTokenBalance || tokenData.initialBuy) {
       const balance = tokenData.newTokenBalance || tokenData.initialBuy;
@@ -485,30 +492,19 @@ class Token extends EventEmitter {
   }
 
   setState(newState) {
-    const oldState = this.state;
-    this.state = newState;
-    if (newState === "drawdown") {
-      this.drawdownLow = this.marketCapSol;
-    }
-    // Don't reset minted timestamp when state changes
-    this.emit("stateChanged", { 
-      token: this, 
-      from: oldState, 
-      to: newState,
-      age: Date.now() - this.minted // Include age in state change event
-    });
+    return this.stateManager.setState(this, newState);
   }
 
   isHeatingUp(threshold) {
-    return this.marketCapSol > threshold;
+    return this.stateManager.isHeatingUp(this, threshold);
   }
 
   isFirstPump(threshold) {
-    return this.marketCapSol > threshold;
+    return this.stateManager.isFirstPump(this, threshold);
   }
 
   isDead(threshold) {
-    return this.marketCapSol < threshold;
+    return this.stateManager.isDead(this, threshold);
   }
 
   getTokenPrice() {
