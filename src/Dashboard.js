@@ -364,27 +364,24 @@ class Dashboard {
               0
             )}%`;
 
-            // Get volume data in USD with 1 decimal
-            const vol1m = this.priceManager
-              .solToUSD(token.getVolume("1m"))
-              .toFixed(1);
-            const vol5m = this.priceManager
-              .solToUSD(token.getVolume("5m"))
-              .toFixed(1);
-            const vol1h = this.priceManager
-              .solToUSD(token.getVolume("30m"))
-              .toFixed(1);
+            // Get volume data in USD with k format for ≥1000, whole numbers for <1000
+            const formatVolume = (vol) => {
+              const volUSD = this.priceManager.solToUSD(vol);
+              return volUSD >= 1000
+                ? `${(volUSD / 1000).toFixed(1)}k`
+                : Math.round(volUSD).toString();
+            };
+
+            const vol1m = formatVolume(token.getVolume("1m"));
+            const vol5m = formatVolume(token.getVolume("5m"));
+            const vol1h = formatVolume(token.getVolume("30m"));
             const volumeStr = `VOL 1m: $${vol1m} | 5m: $${vol5m} | 1h: $${vol1h}`;
 
             // Format the token info string
             const symbol = token.symbol || token.mint.slice(0, 8);
             return [
-              `${symbol.padEnd(16)} ${ageStr.padEnd(
-                3
-              )} | MC: $${mcFormatted.padEnd(7)} | ${holdersStr}`,
-              `VOL     1m: $${vol1m.padEnd(7)} | 5m: $${vol5m.padEnd(
-                7
-              )} | 1h: $${vol1h}`,
+              `${symbol.padEnd(16)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(7)} | ${holdersStr}`,
+              `VOL     1m: $${vol1m.padEnd(7)} | 5m: $${vol5m.padEnd(7)} | 1h: $${vol1h}`,
               "─".repeat(50), // Add horizontal rule between tokens
             ].join("\n");
           } catch (err) {

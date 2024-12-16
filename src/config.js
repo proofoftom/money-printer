@@ -8,9 +8,9 @@ module.exports = {
   THRESHOLDS: {
     // Market Cap Thresholds (in USD)
     MAX_ENTRY_CAP_USD: 30000, // Maximum market cap in USD for entry ($30k)
-    DEAD_USD: 10000, // Consider token dead if it drops below $10k after pumping
-    HEATING_UP_USD: 15000, // Market cap threshold to consider token heating up ($15k)
-    FIRST_PUMP_USD: 25000, // Market cap threshold for first pump ($25k)
+    DEAD_USD: 7000, // Consider token dead if it drops below $10k after pumping
+    HEATING_UP_USD: 9000, // Market cap threshold to consider token heating up ($15k)
+    FIRST_PUMP_USD: 12000, // Market cap threshold for first pump ($25k)
     PUMP_DRAWDOWN: 20, // Percentage drawdown to enter recovery mode
     RECOVERY: 10, // Percentage recovery needed to enter position
 
