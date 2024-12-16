@@ -100,7 +100,7 @@ class Dashboard {
       label: " Trade History ",
       content: "Waiting for trades...",
       border: "line",
-      tags: false,
+      tags: true,
       padding: 1,
       scrollable: true,
       style: {
@@ -174,7 +174,7 @@ class Dashboard {
       label: " Active Positions ",
       content: "Waiting...",
       border: "line",
-      tags: false,
+      tags: true,
       padding: 1,
       scrollable: true,
       style: {
