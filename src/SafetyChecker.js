@@ -1,10 +1,8 @@
 const config = require("./config");
-const SafetyLogger = require("./SafetyLogger");
 const MissedOpportunityLogger = require("./MissedOpportunityLogger");
 
 class SafetyChecker {
   constructor(priceManager, safetyConfig = {}) {
-    this.safetyLogger = new SafetyLogger();
     this.missedOpportunityLogger = new MissedOpportunityLogger();
     this.priceManager = priceManager;
     this.safetyConfig = safetyConfig;
@@ -51,14 +49,6 @@ class SafetyChecker {
 
       // Log the check results
       const duration = Date.now() - startTime;
-      this.safetyLogger.logSafetyCheck({
-        token: token.mint,
-        approved,
-        rejectionCategory,
-        rejectionReason,
-        details,
-        duration,
-      });
 
       // Track the token for missed opportunity analysis
       if (!approved) {
@@ -69,14 +59,6 @@ class SafetyChecker {
       return approved;
     } catch (error) {
       console.error("Error in security checks:", error);
-      this.safetyLogger.logSafetyCheck({
-        token: token.mint,
-        approved: false,
-        rejectionCategory: "error",
-        rejectionReason: error.message,
-        details,
-        duration: Date.now() - startTime,
-      });
       this.setFailureReason("Error running checks");
       return false;
     }
@@ -193,7 +175,7 @@ class SafetyChecker {
   }
 
   getSafetyMetrics() {
-    return this.safetyLogger.getSummaryMetrics();
+    return {};
   }
 }
 
