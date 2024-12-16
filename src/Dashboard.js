@@ -339,7 +339,10 @@ class Dashboard {
   logStatus(message, type = "info") {
     try {
       const timestamp = new Date().toLocaleTimeString();
-      const prefix = type === "error" ? "" : type === "warning" ? "" : "";
+      const prefix = type === "error" ? "" : 
+                    type === "warning" ? "" : 
+                    type === "success" ? "" : 
+                    "";
       this.statusBox.log(`[${timestamp}] ${prefix} ${message}`);
       this.screen.render();
     } catch (error) {

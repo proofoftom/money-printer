@@ -17,6 +17,16 @@ class TokenTracker extends EventEmitter {
 
   handleNewToken(tokenData) {
     const token = new Token(tokenData);
+
+    // Check market cap threshold before processing
+    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+    if (marketCapUSD >= config.THRESHOLDS.MAX_MARKET_CAP_USD) {
+      console.info(
+        `Ignoring new token ${token.symbol || token.mint.slice(0, 8)} - Market cap too high: $${marketCapUSD.toFixed(2)} (${token.marketCapSol.toFixed(2)} SOL)`
+      );
+      return null;
+    }
+
     this.tokens.set(token.mint, token);
 
     token.on("stateChanged", ({ token, from, to }) => {
@@ -41,7 +51,7 @@ class TokenTracker extends EventEmitter {
     token.on("recoveryGainTooHigh", (data) => {
       this.emit("recoveryGainTooHigh", data);
       const { token, gainPercentage } = data;
-      console.log(
+      console.warn(
         `Token ${token.symbol} (${token.mint}) recovery gain too high: ${gainPercentage.toFixed(2)}%`
       );
     });

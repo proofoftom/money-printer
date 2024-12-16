@@ -9,7 +9,7 @@ class PriceManager {
     try {
       const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
       this.solPriceUSD = response.data.solana.usd;
-      console.log(`Initialized SOL price: $${this.solPriceUSD}`);
+      console.info(`Initialized SOL price: $${this.solPriceUSD}`);
       return this.solPriceUSD;
     } catch (error) {
       console.error('Failed to fetch SOL price:', error.message);

@@ -22,6 +22,46 @@ process.on('unhandledRejection', (error) => {
   handleGlobalError(error, 'UnhandledRejection');
 });
 
+// Global console override
+const originalConsole = {
+  log: console.log,
+  error: console.error,
+  warn: console.warn,
+  info: console.info
+};
+
+function overrideConsole() {
+  console.log = (...args) => {
+    if (global.dashboard) {
+      global.dashboard.logStatus(args.join(" "), "info");
+    }
+    // Keep original logging for debugging if needed
+    // originalConsole.log(...args);
+  };
+
+  console.error = (...args) => {
+    if (global.dashboard) {
+      global.dashboard.logStatus(args.join(" "), "error");
+    }
+    // Keep original error logging for debugging
+    originalConsole.error(...args);
+  };
+
+  console.warn = (...args) => {
+    if (global.dashboard) {
+      global.dashboard.logStatus(args.join(" "), "warning");
+    }
+    // originalConsole.warn(...args);
+  };
+
+  console.info = (...args) => {
+    if (global.dashboard) {
+      global.dashboard.logStatus(args.join(" "), "info");
+    }
+    // originalConsole.info(...args);
+  };
+}
+
 // Centralized error handling
 function handleGlobalError(error, context, additionalInfo = {}) {
   try {
@@ -95,6 +135,8 @@ global.dashboard = initializeComponent(
   new Dashboard(wallet, tokenTracker, positionManager, safetyChecker, priceManager),
   'Dashboard'
 );
+
+overrideConsole();
 
 // Initialize price manager before starting
 async function start() {

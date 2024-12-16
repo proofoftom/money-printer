@@ -40,7 +40,7 @@ class WebSocketManager extends EventEmitter {
       this.ws = new WebSocket(config.WEBSOCKET.URL);
 
       this.ws.on("open", () => {
-        console.log("WebSocket connection established");
+        console.info("WebSocket connection established");
         this.isConnected = true;
         this.emit("connected");
         this.subscribeToNewTokens();
@@ -53,12 +53,12 @@ class WebSocketManager extends EventEmitter {
       });
 
       this.ws.on("close", () => {
-        console.log("WebSocket connection closed");
+        console.warn("WebSocket connection closed");
         this.isConnected = false;
         this.emit("disconnected");
         if (process.env.NODE_ENV !== "test") {
           setTimeout(() => {
-            console.log("Attempting to reconnect...");
+            console.info("Attempting to reconnect...");
             this.connect();
           }, config.WEBSOCKET.RECONNECT_TIMEOUT);
         }
