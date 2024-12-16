@@ -352,15 +352,29 @@ class Dashboard {
       }
 
       return this.trades
-        .map(
-          (trade) =>
-            `${trade.timestamp} | ${trade.type} | ${trade.symbol} | ${
-              trade.profitLoss > 0 ? "+" : ""
-            }${trade.profitLoss.toFixed(4)} SOL`
-        )
+        .map((trade) => {
+          try {
+            const profitLossStr = trade.profitLoss !== undefined && trade.profitLoss !== null
+              ? `${trade.profitLoss >= 0 ? "+" : ""}${trade.profitLoss.toFixed(1)}%`
+              : "N/A";
+
+            const symbol = trade.symbol || trade.mint?.slice(0, 8) || "Unknown";
+            
+            // Color code based on trade type and profit/loss
+            let tradeColor = "white";
+            if (trade.type === "BUY") tradeColor = "yellow";
+            else if (trade.type === "SELL" || trade.type === "CLOSE") {
+              tradeColor = trade.profitLoss >= 0 ? "green" : "red";
+            }
+
+            return `{${tradeColor}-fg}[${trade.timestamp}] ${trade.type.padEnd(5)} ${symbol.padEnd(12)} ${profitLossStr}{/}`;
+          } catch (err) {
+            return `Error formatting trade: ${err.message}`;
+          }
+        })
         .join("\n");
     } catch (error) {
-      throw error;
+      return "Error displaying trade history";
     }
   }
 
