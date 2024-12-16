@@ -160,4 +160,54 @@ describe('WebSocketManager', () => {
       expect(mockWs.send.called).to.be.false;
     });
   });
+
+  describe('trader subscriptions', () => {
+    it('should subscribe to trader when connection is open', () => {
+      const sendSpy = sinon.spy(mockWs, 'send');
+      wsManager.ws = mockWs;
+      wsManager.subscribeToTrader('testTrader');
+      
+      expect(sendSpy.calledOnce).to.be.true;
+      expect(JSON.parse(sendSpy.firstCall.args[0])).to.deep.equal({
+        method: 'subscribeAccountTrade',
+        keys: ['testTrader']
+      });
+      expect(wsManager.subscribedTraders.has('testTrader')).to.be.true;
+    });
+
+    it('should queue trader subscription when not connected', () => {
+      wsManager.subscribeToTrader('testTrader');
+      
+      expect(wsManager.pendingTraderSubscriptions.has('testTrader')).to.be.true;
+      expect(wsManager.subscribedTraders.has('testTrader')).to.be.false;
+    });
+
+    it('should subscribe to pending traders on connection', () => {
+      wsManager.pendingTraderSubscriptions.add('trader1');
+      wsManager.pendingTraderSubscriptions.add('trader2');
+      
+      const sendSpy = sinon.spy(mockWs, 'send');
+      wsManager.ws = mockWs;
+      mockWs.emit('open');
+      
+      expect(sendSpy.calledOnce).to.be.true;
+      expect(JSON.parse(sendSpy.firstCall.args[0])).to.deep.equal({
+        method: 'subscribeAccountTrade',
+        keys: ['trader1', 'trader2']
+      });
+      expect(wsManager.subscribedTraders.has('trader1')).to.be.true;
+      expect(wsManager.subscribedTraders.has('trader2')).to.be.true;
+      expect(wsManager.pendingTraderSubscriptions.size).to.equal(0);
+    });
+
+    it('should not resubscribe to already subscribed traders', () => {
+      const sendSpy = sinon.spy(mockWs, 'send');
+      wsManager.ws = mockWs;
+      wsManager.subscribedTraders.add('testTrader');
+      
+      wsManager.subscribeToTrader('testTrader');
+      
+      expect(sendSpy.called).to.be.false;
+    });
+  });
 });

@@ -3,13 +3,15 @@ const EventEmitter = require("events");
 const config = require("./config");
 
 class WebSocketManager extends EventEmitter {
-  constructor(tokenTracker, priceManager) {
+  constructor(tokenManager, priceManager) {
     super();
-    this.tokenTracker = tokenTracker;
+    this.tokenManager = tokenManager;
     this.priceManager = priceManager;
     this.subscriptions = new Set();
     this.isConnected = false;
     this.ws = null;
+    this.pendingTraderSubscriptions = new Set(); // Track pending subscriptions
+    this.subscribedTraders = new Set(); // Track subscribed traders
 
     // Don't auto-connect in test mode
     if (process.env.NODE_ENV !== "test") {
@@ -28,6 +30,13 @@ class WebSocketManager extends EventEmitter {
 
     // Handle process termination
     process.on("SIGINT", this.sigintHandler);
+
+    // Listen for trader subscription events
+    if (tokenManager.traderManager) {
+      tokenManager.traderManager.on('subscribeTrader', ({ publicKey }) => {
+        this.subscribeToTrader(publicKey);
+      });
+    }
   }
 
   connect() {
@@ -45,6 +54,21 @@ class WebSocketManager extends EventEmitter {
         this.emit("connected");
         this.subscribeToNewTokens();
         this.resubscribeToTokens();
+
+        // Subscribe to any pending traders
+        if (this.pendingTraderSubscriptions.size > 0) {
+          const payload = {
+            method: "subscribeAccountTrade",
+            keys: Array.from(this.pendingTraderSubscriptions)
+          };
+          this.ws.send(JSON.stringify(payload));
+          
+          // Mark all as subscribed
+          this.pendingTraderSubscriptions.forEach(publicKey => {
+            this.subscribedTraders.add(publicKey);
+          });
+          this.pendingTraderSubscriptions.clear();
+        }
       });
 
       this.ws.on("error", (error) => {
@@ -115,7 +139,7 @@ class WebSocketManager extends EventEmitter {
       }
 
       this.emit("newToken", message);
-      this.tokenTracker.handleNewToken(message);
+      this.tokenManager.handleNewToken(message);
       // Subscribe to trades for the new token
       this.subscribeToToken(message.mint);
       return;
@@ -124,7 +148,7 @@ class WebSocketManager extends EventEmitter {
     // Handle trade messages
     if (message.txType === "buy" || message.txType === "sell") {
       this.emit("trade", message);
-      this.tokenTracker.handleTokenUpdate(message);
+      this.tokenManager.handleTokenUpdate(message);
       return;
     }
 
@@ -213,6 +237,22 @@ class WebSocketManager extends EventEmitter {
       })
     );
     return true;
+  }
+
+  subscribeToTrader(publicKey) {
+    if (this.subscribedTraders.has(publicKey)) return;
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const payload = {
+        method: "subscribeAccountTrade",
+        keys: [publicKey]
+      };
+      this.ws.send(JSON.stringify(payload));
+      this.subscribedTraders.add(publicKey);
+    } else {
+      // Queue subscription for when connection is established
+      this.pendingTraderSubscriptions.add(publicKey);
+    }
   }
 
   close() {
