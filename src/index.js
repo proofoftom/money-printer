@@ -55,15 +55,11 @@ async function start() {
 
 // Set up event listeners for token lifecycle events
 tokenTracker.on("tokenAdded", (token) => {
-  // Token added events are too noisy for the dashboard
-});
-
-tokenTracker.on("tokenHeatingUp", (token) => {
+  dashboard.logStatus(`Token ${token.symbol} (${token.mint}) created!`, "info");
   dashboard.logStatus(
-    `Token ${token.symbol} (${token.mint}) is heating up!`,
+    `Market cap: ${priceManager.solToUSD(token.marketCapSol)}`,
     "info"
   );
-  dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
 });
 
 tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {

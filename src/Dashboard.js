@@ -380,8 +380,12 @@ class Dashboard {
             // Format the token info string
             const symbol = token.symbol || token.mint.slice(0, 8);
             return [
-              `${symbol.padEnd(16)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(7)} | ${holdersStr}`,
-              `VOL     1m: $${vol1m.padEnd(7)} | 5m: $${vol5m.padEnd(7)} | 1h: $${vol1h}`,
+              `${symbol.padEnd(12)} ${ageStr.padEnd(
+                3
+              )} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
+              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(
+                5
+              )} | 1h: $${vol1h}`,
               "─".repeat(50), // Add horizontal rule between tokens
             ].join("\n");
           } catch (err) {

@@ -6,7 +6,7 @@ class Token extends EventEmitter {
     this.mint = tokenData.mint;
     this.name = tokenData.name;
     this.symbol = tokenData.symbol;
-    this.created = Date.now();
+    this.minted = Date.now();
     this.uri = tokenData.uri;
     this.traderPublicKey = tokenData.traderPublicKey;
     this.initialBuy = tokenData.initialBuy;
@@ -89,7 +89,11 @@ class Token extends EventEmitter {
   }
 
   calculateTokenPrice() {
-    if (!this.vTokensInBondingCurve || !this.vSolInBondingCurve || this.vTokensInBondingCurve === 0) {
+    if (
+      !this.vTokensInBondingCurve ||
+      !this.vSolInBondingCurve ||
+      this.vTokensInBondingCurve === 0
+    ) {
       return 0;
     }
     return this.vSolInBondingCurve / this.vTokensInBondingCurve;
@@ -224,29 +228,22 @@ class Token extends EventEmitter {
     const totalSupply = this.getTotalTokensHeld();
     if (totalSupply === 0) return 0;
 
-    const topHolders = this.getTopHolders(topN);
-    const topHoldersBalance = topHolders.reduce(
-      (sum, { balance }) => sum + balance,
+    // Get all holder balances including bonding curve
+    const allBalances = [
+      ...Array.from(this.holders.values()),
+      this.vTokensInBondingCurve,
+    ];
+
+    // Sort balances in descending order and take top N
+    const topBalances = allBalances.sort((a, b) => b - a).slice(0, topN);
+
+    // Calculate total balance of top holders
+    const topHoldersBalance = topBalances.reduce(
+      (sum, balance) => sum + balance,
       0
     );
 
-    // Include bonding curve in concentration if it would be among top holders
-    const bondingCurveBalance = this.vTokensInBondingCurve;
-    let adjustedTopBalance = topHoldersBalance;
-
-    // Check if bonding curve balance would be among top holders
-    const smallestTopHolder =
-      topHolders.length > 0 ? topHolders[topHolders.length - 1].balance : 0;
-    if (bondingCurveBalance > smallestTopHolder) {
-      // Add bonding curve balance and remove the smallest top holder if we've hit our limit
-      adjustedTopBalance = topHoldersBalance;
-      if (topHolders.length >= topN) {
-        adjustedTopBalance -= smallestTopHolder;
-      }
-      adjustedTopBalance += bondingCurveBalance;
-    }
-
-    return (adjustedTopBalance / totalSupply) * 100;
+    return (topHoldersBalance / totalSupply) * 100;
   }
 
   isHeatingUp(threshold) {
