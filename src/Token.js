@@ -7,7 +7,7 @@ class Token extends EventEmitter {
     this.mint = tokenData.mint;
     this.name = tokenData.name;
     this.symbol = tokenData.symbol;
-    this.minted = Date.now();
+    this.minted = tokenData.minted || Date.now();
     this.uri = tokenData.uri;
     this.traderPublicKey = tokenData.traderPublicKey;
     this.initialBuy = tokenData.initialBuy;
@@ -564,7 +564,13 @@ class Token extends EventEmitter {
     if (newState === "drawdown") {
       this.drawdownLow = this.marketCapSol;
     }
-    this.emit("stateChanged", { token: this, from: oldState, to: newState });
+    // Don't reset minted timestamp when state changes
+    this.emit("stateChanged", { 
+      token: this, 
+      from: oldState, 
+      to: newState,
+      age: Date.now() - this.minted // Include age in state change event
+    });
   }
 
   isHeatingUp(threshold) {
