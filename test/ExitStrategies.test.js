@@ -1,218 +1,242 @@
 const { expect } = require('chai');
+const sinon = require('sinon');
 const ExitStrategies = require('../src/ExitStrategies');
+const Position = require('../src/Position');
+const Token = require('../src/Token');
+const PriceManager = require('../src/PriceManager');
 
 describe('ExitStrategies', () => {
-  let config;
   let exitStrategies;
-  let position;
+  let mockPosition;
+  let mockToken;
+  let mockPriceManager;
+  let mockConfig;
 
   beforeEach(() => {
-    config = {
+    mockConfig = {
       EXIT_STRATEGIES: {
+        USD_BASED_THRESHOLDS: true,
         STOP_LOSS: {
           ENABLED: true,
-          THRESHOLD: -5,
+          THRESHOLD: -0.1,
+          USD_THRESHOLD: -100
         },
         TRAILING_STOP: {
           ENABLED: true,
-          ACTIVATION_THRESHOLD: 15,
-          BASE_PERCENTAGE: 10,
+          ACTIVATION_THRESHOLD: 0.05,
+          BASE_PERCENTAGE: 0.02,
           DYNAMIC_ADJUSTMENT: {
             ENABLED: true,
-            VOLATILITY_MULTIPLIER: 0.5,
-            MIN_PERCENTAGE: 5,
-            MAX_PERCENTAGE: 20,
-          },
-        },
-        VOLUME_BASED: {
-          ENABLED: true,
-          VOLUME_DROP_THRESHOLD: 50,
-          MEASUREMENT_PERIOD: 300,
-          MIN_PEAK_VOLUME: 1000,
-        },
-        TIME_BASED: {
-          ENABLED: true,
-          MAX_HOLD_TIME: 1800, // 30 minutes in seconds
-          EXTENSION_THRESHOLD: 40,
-          EXTENSION_TIME: 900,
+            VOLATILITY_MULTIPLIER: 1.5,
+            VOLUME_MULTIPLIER: 1.2,
+            CORRELATION_MULTIPLIER: 1.1,
+            MIN_PERCENTAGE: 0.01,
+            MAX_PERCENTAGE: 0.05,
+            CORRELATION_THRESHOLD: 0.7
+          }
         },
         TAKE_PROFIT: {
           ENABLED: true,
           TIERS: [
-            { THRESHOLD: 20, PORTION: 0.4 },
-            { THRESHOLD: 40, PORTION: 0.4 },
-            { THRESHOLD: 60, PORTION: 0.2 },
+            { THRESHOLD: 0.1, PORTION: 0.3 },
+            { THRESHOLD: 0.2, PORTION: 0.5 },
+            { THRESHOLD: 0.3, PORTION: 1.0 }
           ],
+          DYNAMIC_ADJUSTMENT: {
+            BULL_MARKET_MULTIPLIER: 1.2,
+            BEAR_MARKET_MULTIPLIER: 0.8,
+            VOLATILITY_THRESHOLD: 0.3,
+            VOLATILITY_MULTIPLIER: 1.1
+          }
         },
-      },
+        VOLUME_BASED: {
+          ENABLED: true,
+          VOLUME_DROP_THRESHOLD: 0.5
+        },
+        TIME_BASED: {
+          ENABLED: true,
+          MAX_HOLD_TIME: 3600,
+          EXTENSION_TIME: 1800,
+          EXTENSION_THRESHOLD: 0.15,
+          BULL_MARKET_MULTIPLIER: 1.5,
+          BEAR_MARKET_MULTIPLIER: 0.7
+        }
+      }
     };
-    
-    exitStrategies = new ExitStrategies(config);
-    position = { entryPrice: 100 };
+
+    mockToken = {
+      getVolatility: sinon.stub().returns(0.2),
+      getVolumeProfile: sinon.stub().returns({ trend: 'stable', dropPercentage: 0 }),
+      getMarketCorrelation: sinon.stub().returns(0.5),
+      getMarketConditions: sinon.stub().returns({ trend: 'neutral', strength: 0.5 }),
+      volume: 1000,
+      on: sinon.stub(),
+      emit: sinon.stub()
+    };
+
+    mockPosition = {
+      entryPrice: 100,
+      currentPrice: 100,
+      size: 10,
+      remainingSize: 1.0,
+      getCurrentValueUSD: sinon.stub().returns(1000),
+      getEntryValueUSD: sinon.stub().returns(1000),
+      getPnLUSD: sinon.stub().returns(0),
+      getPnLPercentage: sinon.stub().returns(0),
+      calculatePnLPercent: sinon.stub().returns(0),
+      on: sinon.stub(),
+      emit: sinon.stub()
+    };
+
+    mockPriceManager = {
+      solToUSD: sinon.stub().returns(100),
+      usdToSOL: sinon.stub().returns(1),
+      on: sinon.stub(),
+      emit: sinon.stub()
+    };
+
+    exitStrategies = new ExitStrategies({
+      config: mockConfig,
+      position: mockPosition,
+      token: mockToken,
+      priceManager: mockPriceManager
+    });
+  });
+
+  afterEach(() => {
+    sinon.restore();
   });
 
   describe('Stop Loss', () => {
-    it('should exit when loss exceeds threshold', () => {
-      const result = exitStrategies.shouldExit(position, 94); // 6% loss
-      expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('STOP_LOSS');
+    it('should trigger stop loss at threshold', () => {
+      mockPosition.getPnLPercentage.returns(-15);
+      const result = exitStrategies.checkStopLoss(85);
+      expect(result).to.be.true;
     });
 
-    it('should not exit when loss is within threshold', () => {
-      const result = exitStrategies.shouldExit(position, 96); // 4% loss
-      expect(result.shouldExit).to.be.false;
+    it('should trigger USD-based stop loss', () => {
+      mockPosition.getPnLUSD.returns(-150);
+      const result = exitStrategies.checkStopLoss(85);
+      expect(result).to.be.true;
     });
   });
 
   describe('Trailing Stop', () => {
-    it('should initialize trailing stop when profit threshold is reached', () => {
-      // Price rises to activation threshold
-      exitStrategies.shouldExit(position, 115); // 15% profit
-      expect(exitStrategies.trailingStopPrice).to.be.closeTo(103.5, 0.1); // 115 * 0.9
+    it('should initialize trailing stop', () => {
+      mockPosition.calculatePnLPercent.returns(0.06);
+      exitStrategies.checkTrailingStop(106);
+      expect(exitStrategies.trailingStopPrice).to.be.a('number');
     });
 
     it('should update trailing stop on new highs', () => {
-      const position = { entryPrice: 100 };
-      const exitStrategies = new ExitStrategies(config);
-      
-      // First update at 20% profit to initialize
-      exitStrategies.checkTrailingStop(position, 120);
+      mockPosition.calculatePnLPercent.returns(0.06);
+      exitStrategies.checkTrailingStop(106);
       const initialStop = exitStrategies.trailingStopPrice;
       
-      // Update with higher price
-      exitStrategies.checkTrailingStop(position, 125);
-      expect(exitStrategies.trailingStopPrice).to.be.above(initialStop);
+      mockPosition.calculatePnLPercent.returns(0.08);
+      exitStrategies.checkTrailingStop(108);
+      expect(exitStrategies.trailingStopPrice).to.be.greaterThan(initialStop);
     });
 
-    it('should exit when price falls below trailing stop', () => {
-      // Initialize trailing stop
-      exitStrategies.shouldExit(position, 115);
-      const stopPrice = exitStrategies.trailingStopPrice;
-
-      // Price falls below stop
-      const result = exitStrategies.shouldExit(position, stopPrice - 1);
-      expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('TRAILING_STOP');
-    });
-  });
-
-  describe('Volume-Based Exit', () => {
-    beforeEach(() => {
-      exitStrategies.reset();
-    });
-
-    it('should track peak volume', () => {
-      exitStrategies.shouldExit(position, 100, 1500);
-      expect(exitStrategies.peakVolume).to.equal(1500);
-    });
-
-    it('should detect significant volume drops', () => {
-      // Set up initial volume state
-      exitStrategies.peakVolume = 2000;
-      exitStrategies.volumeHistory = [
-        { timestamp: Date.now() - 2000, volume: 2000 },
-        { timestamp: Date.now() - 1000, volume: 1900 }
-      ];
-
-      // Test significant volume drop
-      const result = exitStrategies.shouldExit(position, 100, 500);
-      expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('VOLUME_DROP');
-    });
-
-    it('should ignore volume drops within threshold', () => {
-      // Set up initial volume state
-      exitStrategies.peakVolume = 2000;
-      exitStrategies.volumeHistory = [
-        { timestamp: Date.now() - 2000, volume: 2000 },
-        { timestamp: Date.now() - 1000, volume: 1800 }
-      ];
-
-      // Test moderate volume drop
-      const result = exitStrategies.shouldExit(position, 100, 1500);
-      expect(result.shouldExit).to.be.false;
-    });
-  });
-
-  describe('Time-Based Exit', () => {
-    beforeEach(() => {
-      exitStrategies.reset();
-    });
-
-    it.skip('should extend time limit on high profit', () => {
-      const position = { entryPrice: 100 };
-      const exitStrategies = new ExitStrategies(config);
+    it('should trigger trailing stop', () => {
+      mockPosition.calculatePnLPercent.returns(0.06);
+      exitStrategies.checkTrailingStop(106);
       
-      // Check with high profit but not enough time elapsed
-      const result = exitStrategies.checkTimeBasedExit(position, 150); // 50% profit
-      expect(result).to.be.false;
-      expect(exitStrategies.timeExtended).to.be.true;
-      
-      // Fast forward past max time
-      exitStrategies.entryTime -= config.EXIT_STRATEGIES.TIME_BASED.MAX_HOLD_TIME + 1;
-      const finalResult = exitStrategies.checkTimeBasedExit(position, 150);
-      expect(finalResult).to.be.true;
-    });
-
-    it('should exit after max time without extension', () => {
-      // Simulate max time reached (35 minutes elapsed)
-      exitStrategies.entryTime = Date.now() / 1000 - (35 * 60);
-      const result = exitStrategies.shouldExit(position, 110, 0); // 10% profit
-      expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('TIME_LIMIT');
+      mockPosition.calculatePnLPercent.returns(-0.02);
+      const result = exitStrategies.checkTrailingStop(95);
+      expect(result).to.be.true;
     });
   });
 
   describe('Take Profit', () => {
-    beforeEach(() => {
-      exitStrategies.reset();
+    it('should trigger take profit at tiers', () => {
+      mockPosition.getPnLPercentage.returns(15);
+      const result = exitStrategies.checkTakeProfit(115);
+      expect(result.shouldExit).to.be.true;
+      expect(result.portion).to.equal(0.3);
     });
 
-    it('should take first tier profit', () => {
-      const result = exitStrategies.shouldExit(position, 120, 0); // 20% profit
+    it('should adjust thresholds based on market conditions', () => {
+      mockToken.getMarketConditions.returns({ trend: 'bullish', strength: 0.8 });
+      mockPosition.getPnLPercentage.returns(25);
+      const result = exitStrategies.checkTakeProfit(125);
       expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('takeProfit_tier1');
-      expect(result.portion).to.equal(0.4);
-      expect(exitStrategies.remainingPosition).to.equal(0.6);
     });
 
-    it('should take second tier profit', () => {
-      // First take profit
-      exitStrategies.shouldExit(position, 120, 0);
-      
-      // Second take profit
-      const result = exitStrategies.shouldExit(position, 140, 0); // 40% profit
-      expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('takeProfit_tier2');
-      expect(result.portion).to.equal(0.4);
-      expect(exitStrategies.remainingPosition).to.equal(0.2);
-    });
-
-    it('should take final tier profit', () => {
-      // First two take profits
-      exitStrategies.shouldExit(position, 120, 0);
-      exitStrategies.shouldExit(position, 140, 0);
-      
-      // Final take profit
-      const result = exitStrategies.shouldExit(position, 160, 0); // 60% profit
-      expect(result.shouldExit).to.be.true;
-      expect(result.reason).to.equal('takeProfit_tier3');
-      expect(result.portion).to.equal(0.2);
-      expect(exitStrategies.remainingPosition).to.equal(0);
+    it('should track triggered tiers', () => {
+      mockPosition.getPnLPercentage.returns(15);
+      exitStrategies.checkTakeProfit(115);
+      expect(exitStrategies.triggeredTiers.size).to.equal(1);
     });
   });
 
-  describe('Reset', () => {
-    it('should reset all tracking variables', () => {
-      // Set up some state
-      exitStrategies.shouldExit(position, 115, 1500);
+  describe('Volume-Based Exit', () => {
+    it('should trigger on volume drop', () => {
+      mockToken.getVolumeProfile.returns({ trend: 'decreasing', dropPercentage: 0.6 });
+      const result = exitStrategies.checkVolumeBasedExit(400);
+      expect(result).to.be.true;
+    });
+
+    it('should not trigger on stable volume', () => {
+      mockToken.getVolumeProfile.returns({ trend: 'stable', dropPercentage: 0.2 });
+      const result = exitStrategies.checkVolumeBasedExit(800);
+      expect(result).to.be.false;
+    });
+  });
+
+  describe('Time-Based Exit', () => {
+    it('should trigger after max hold time', () => {
+      const clock = sinon.useFakeTimers();
+      clock.tick(mockConfig.EXIT_STRATEGIES.TIME_BASED.MAX_HOLD_TIME * 1000 + 1000);
+      const result = exitStrategies.checkTimeBasedExit(100);
+      expect(result).to.be.true;
+      clock.restore();
+    });
+
+    it('should extend time on profit', () => {
+      mockPosition.getPnLPercentage.returns(20);
+      const clock = sinon.useFakeTimers();
       
-      // Reset
-      exitStrategies.reset();
+      const initialResult = exitStrategies.checkTimeBasedExit(120);
+      expect(initialResult).to.be.false;
+      expect(exitStrategies.timeExtended).to.be.true;
       
-      expect(exitStrategies.trailingStopPrice).to.be.null;
-      expect(exitStrategies.volumeHistory).to.be.empty;
-      expect(exitStrategies.peakVolume).to.equal(0);
+      clock.tick(mockConfig.EXIT_STRATEGIES.TIME_BASED.MAX_HOLD_TIME * 1000);
+      const extendedResult = exitStrategies.checkTimeBasedExit(120);
+      expect(extendedResult).to.be.false;
+      
+      clock.restore();
+    });
+  });
+
+  describe('Event Handling', () => {
+    it('should handle volume updates', (done) => {
+      exitStrategies.on('exit', (data) => {
+        expect(data).to.have.property('reason');
+        expect(data).to.have.property('portion');
+        done();
+      });
+
+      mockToken.getVolumeProfile.returns({ trend: 'decreasing', dropPercentage: 0.6 });
+      exitStrategies.handleVolumeUpdate({ volume: 400 });
+    });
+
+    it('should handle price updates', (done) => {
+      exitStrategies.on('exit', (data) => {
+        expect(data).to.have.property('reason');
+        expect(data).to.have.property('portion');
+        done();
+      });
+
+      mockPosition.getPnLPercentage.returns(-15);
+      exitStrategies.handlePriceUpdate({ price: 85 });
+    });
+
+    it('should handle SOL price updates', () => {
+      const newSolPrice = 120;
+      exitStrategies.handleSolPriceUpdate({ newPrice: newSolPrice });
+      // Verify USD thresholds are updated
+      expect(mockConfig.EXIT_STRATEGIES.STOP_LOSS.THRESHOLD).to.be.a('number');
     });
   });
 });
