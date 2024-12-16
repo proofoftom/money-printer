@@ -46,6 +46,11 @@ class Dashboard {
       this.logTrade(tradeData);
     });
 
+    // Listen for trader events
+    this.tokenTracker.on('traderTradeAdded', ({ trader, mint, trade }) => {
+      this.updateTraderStats();
+    });
+
     this.initializeDashboard();
   }
 
@@ -186,6 +191,28 @@ class Dashboard {
         label: { bold: true },
       },
     });
+
+    // Add trader stats box
+    this.traderStatsBox = this.grid.set(6, 8, 3, 4, blessed.box, {
+      label: "Trader Statistics",
+      tags: true,
+      border: { type: "line" },
+      style: {
+        fg: "green",
+        border: { fg: "green" },
+      },
+    });
+
+    // Add whale activity box
+    this.whaleActivityBox = this.grid.set(9, 8, 3, 4, contrib.log, {
+      label: "Whale Activity",
+      tags: true,
+      border: { type: "line" },
+      style: {
+        fg: "yellow",
+        border: { fg: "yellow" },
+      },
+    });
   }
 
   setupEventHandlers() {
@@ -314,13 +341,9 @@ class Dashboard {
   logTrade({ type, mint, profitLoss, symbol }) {
     try {
       const timestamp = new Date().toLocaleTimeString();
-      const trade = {
-        timestamp,
-        type,
-        mint,
-        profitLoss: typeof profitLoss === 'object' ? profitLoss.percentage : profitLoss,
-        symbol,
-      };
+      const trade = `[${timestamp}] ${type} ${symbol} (${mint}): ${
+        profitLoss >= 0 ? "{green-fg}" : "{red-fg}"
+      }${profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)} SOL{/}`;
       this.trades.unshift(trade);
       // Keep only last 50 trades
       if (this.trades.length > 50) {
@@ -329,6 +352,10 @@ class Dashboard {
     } catch (error) {
       throw error;
     }
+  }
+
+  getTradeHistory() {
+    return this.trades.slice(0, 10).join("\n") || "No trades yet...";
   }
 
   formatVolume(vol) {
@@ -386,10 +413,67 @@ class Dashboard {
       this.activePositionsBox.setContent(this.getActivePositions());
       this.tradeBox.setContent(this.getTradeHistory());
       this.updateBalanceHistory();
+      this.updateTraderStats();
+      this.updateWhaleActivity();
       this.screen.render();
     } catch (error) {
       throw error;
     }
+  }
+
+  updateTraderStats() {
+    const globalMetrics = this.tokenTracker.getTraderMetrics();
+    const activeTokens = Array.from(this.tokenTracker.tokens.values());
+    
+    // Get most active token by trade count
+    const mostActiveToken = activeTokens.reduce((max, token) => {
+      const metrics = token.getTraderMetrics();
+      return metrics.totalTrades > (max?.metrics?.totalTrades || 0) 
+        ? { token, metrics } 
+        : max;
+    }, null);
+
+    // Format stats display
+    const stats = [
+      `Total Unique Traders: {bold}${globalMetrics.uniqueTraders}{/bold}`,
+      `Active Traders: {bold}${globalMetrics.activeTraders}{/bold}`,
+      `Cross-Token Traders: {bold}${globalMetrics.crossTokenTraders}{/bold}`,
+      `Total Trades: {bold}${globalMetrics.totalTrades}{/bold}`,
+      '',
+      'Most Active Token:',
+      mostActiveToken ? [
+        `  Symbol: {bold}${mostActiveToken.token.symbol}{/bold}`,
+        `  Trades: {bold}${mostActiveToken.metrics.totalTrades}{/bold}`,
+        `  Active Traders: {bold}${mostActiveToken.metrics.activeTraders}{/bold}`
+      ].join('\n') : 'None'
+    ].join('\n');
+
+    this.traderStatsBox.setContent(stats);
+  }
+
+  updateWhaleActivity() {
+    const activeTokens = Array.from(this.tokenTracker.tokens.values());
+    const now = Date.now();
+
+    activeTokens.forEach(token => {
+      const whaleThreshold = token.supply * 0.01; // 1% of supply
+      const whales = token.getTraders().filter(trader => 
+        trader.getTokenBalance(token.mint) > whaleThreshold
+      );
+
+      whales.forEach(whale => {
+        const recentTrades = whale.getTradeHistory(token.mint)
+          .filter(trade => now - trade.timestamp < 5 * 60 * 1000); // Last 5 minutes
+
+        if (recentTrades.length > 0) {
+          const totalVolume = recentTrades.reduce((sum, t) => sum + t.amount, 0);
+          this.whaleActivityBox.log(
+            `🐋 Whale ${whale.publicKey.slice(0, 8)} ${recentTrades[0].txType}ing ` +
+            `${totalVolume.toFixed(2)} ${token.symbol || token.mint.slice(0, 8)}`
+          );
+        }
+      });
+    });
   }
 
   getTokensByState(state) {

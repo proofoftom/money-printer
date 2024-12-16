@@ -8,6 +8,7 @@ class SafetyChecker {
     this.priceManager = priceManager;
     this.safetyConfig = safetyConfig;
     this.lastFailureReason = null;
+    this.suspiciousTraders = new Set(); // Track traders with suspicious patterns
   }
 
   getFailureReason() {
@@ -37,6 +38,16 @@ class SafetyChecker {
           configPath: 'SAFETY.MIN_TOKEN_AGE_SECONDS'
         });
       } 
+      // Check for suspicious trader patterns
+      else if (!this.checkTraderPatterns(token)) {
+        approved = false;
+        failedChecks.push({
+          name: 'SUSPICIOUS_TRADERS',
+          reason: this.lastFailureReason?.reason || 'suspiciousTraders',
+          actual: this.lastFailureReason?.value,
+          configPath: 'SAFETY.MAX_SUSPICIOUS_TRADER_RATIO'
+        });
+      }
       // Check for rug pull signals
       else if (!this.checkRugSignals(token)) {
         approved = false;
@@ -52,9 +63,9 @@ class SafetyChecker {
         approved = false;
         failedChecks.push({
           name: 'PUMP_DYNAMICS',
-          reason: this.lastFailureReason?.reason || 'invalidPumpPattern',
+          reason: this.lastFailureReason?.reason || 'pumpDynamics',
           actual: this.lastFailureReason?.value,
-          configPath: 'THRESHOLDS.PUMP'
+          configPath: 'SAFETY.MAX_PRICE_INCREASE'
         });
       }
 
@@ -94,6 +105,110 @@ class SafetyChecker {
     }
 
     return true;
+  }
+
+  checkTraderPatterns(token) {
+    const traders = token.getTraders();
+    const now = Date.now();
+    
+    // Look for suspicious patterns in trader behavior
+    traders.forEach(trader => {
+      const tradeHistory = trader.getTradeHistory(token.mint);
+      
+      // Pattern 1: Rapid buy-sell cycles
+      const rapidCycles = this.checkRapidTradeCycles(tradeHistory);
+      
+      // Pattern 2: Coordinated trading with other suspicious traders
+      const coordinatedTrading = this.checkCoordinatedTrading(trader, token);
+      
+      // Pattern 3: Unusual trade sizes
+      const unusualSizes = this.checkUnusualTradeSizes(tradeHistory, token);
+      
+      if (rapidCycles || coordinatedTrading || unusualSizes) {
+        this.suspiciousTraders.add(trader.publicKey);
+      }
+    });
+
+    // Calculate ratio of suspicious traders
+    const suspiciousCount = traders.filter(t => 
+      this.suspiciousTraders.has(t.publicKey)
+    ).length;
+    const suspiciousRatio = suspiciousCount / traders.length;
+
+    if (suspiciousRatio > this.safetyConfig.MAX_SUSPICIOUS_TRADER_RATIO || 0.2) {
+      this.setFailureReason('highSuspiciousTraderRatio', suspiciousRatio);
+      return false;
+    }
+
+    return true;
+  }
+
+  checkRapidTradeCycles(tradeHistory) {
+    const CYCLE_WINDOW = 5 * 60 * 1000; // 5 minutes
+    const MIN_CYCLES = 3;
+    
+    let cycles = 0;
+    let lastType = null;
+    let cycleStart = null;
+
+    for (const trade of tradeHistory) {
+      if (!cycleStart) {
+        cycleStart = trade.timestamp;
+        lastType = trade.txType;
+        continue;
+      }
+
+      if (trade.txType !== lastType) {
+        if (trade.timestamp - cycleStart <= CYCLE_WINDOW) {
+          cycles++;
+        }
+        cycleStart = trade.timestamp;
+      }
+      
+      lastType = trade.txType;
+    }
+
+    return cycles >= MIN_CYCLES;
+  }
+
+  checkCoordinatedTrading(trader, token) {
+    const COORDINATION_WINDOW = 30 * 1000; // 30 seconds
+    const traders = token.getTraders();
+    const suspiciousTraders = traders.filter(t => 
+      this.suspiciousTraders.has(t.publicKey)
+    );
+
+    // Look for trades that happen close to suspicious traders' trades
+    const traderTrades = trader.getTradeHistory(token.mint);
+    
+    return suspiciousTraders.some(suspiciousTrader => {
+      const suspiciousTrades = suspiciousTrader.getTradeHistory(token.mint);
+      
+      return traderTrades.some(trade1 => 
+        suspiciousTrades.some(trade2 => 
+          Math.abs(trade1.timestamp - trade2.timestamp) <= COORDINATION_WINDOW &&
+          trade1.txType === trade2.txType
+        )
+      );
+    });
+  }
+
+  checkUnusualTradeSizes(tradeHistory, token) {
+    if (tradeHistory.length < 2) return false;
+
+    // Calculate average trade size for the token
+    const allTrades = token.getTraders()
+      .flatMap(t => t.getTradeHistory(token.mint));
+    
+    const avgTradeSize = allTrades.reduce((sum, t) => sum + t.amount, 0) / allTrades.length;
+    const stdDev = Math.sqrt(
+      allTrades.reduce((sum, t) => sum + Math.pow(t.amount - avgTradeSize, 2), 0) / allTrades.length
+    );
+
+    // Look for trades more than 3 standard deviations from mean
+    return tradeHistory.some(trade => 
+      Math.abs(trade.amount - avgTradeSize) > stdDev * 3
+    );
   }
 
   checkRugSignals(token) {

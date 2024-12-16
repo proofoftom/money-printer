@@ -50,8 +50,25 @@ class StatsLogger {
       positionMetrics: {
         avgPositionSize: 0,
         totalPositions: 0,
-        partialExits: 0,
-        avgPartialExitPnL: 0
+        avgHoldersAtEntry: 0,
+        avgHoldersAtExit: 0
+      },
+      traderMetrics: {
+        totalUniqueTraders: new Set(),
+        whaleTraders: new Set(),
+        suspiciousTraders: new Set(),
+        traderRetentionRates: [],
+        avgTradersAtEntry: 0,
+        avgTradersAtExit: 0,
+        avgWhalesAtEntry: 0,
+        avgWhalesAtExit: 0,
+        avgSuspiciousTraderRatio: 0,
+        totalTraderSamples: 0,
+        profitByTraderType: {
+          whales: { wins: 0, losses: 0, totalPnL: 0 },
+          retail: { wins: 0, losses: 0, totalPnL: 0 },
+          suspicious: { wins: 0, losses: 0, totalPnL: 0 }
+        }
       }
     };
 
@@ -191,7 +208,8 @@ class StatsLogger {
       exitStats: this.summaryMetrics.exitStats,
       volumeMetrics: this.summaryMetrics.volumeMetrics,
       priceMetrics: this.summaryMetrics.priceMetrics,
-      positionMetrics: this.summaryMetrics.positionMetrics
+      positionMetrics: this.summaryMetrics.positionMetrics,
+      traderMetrics: this.summaryMetrics.traderMetrics
     };
   }
 
@@ -532,6 +550,87 @@ class StatsLogger {
 
   analyzePositionSizing(trades) {
     return null;
+  }
+
+  updateTraderMetrics(token, position, isWin, pnl) {
+    const metrics = this.summaryMetrics.traderMetrics;
+    const traderMetrics = token.getTraderMetrics();
+    
+    // Update unique trader sets
+    token.getTraders().forEach(trader => {
+      metrics.totalUniqueTraders.add(trader.publicKey);
+      if (position.traderActivity.whales.has(trader.publicKey)) {
+        metrics.whaleTraders.add(trader.publicKey);
+      }
+      if (this.safetyChecker?.suspiciousTraders.has(trader.publicKey)) {
+        metrics.suspiciousTraders.add(trader.publicKey);
+      }
+    });
+
+    // Update averages
+    metrics.totalTraderSamples++;
+    metrics.avgTradersAtEntry = this.updateRunningAverage(
+      metrics.avgTradersAtEntry,
+      position.traderActivity.entryTraders.size,
+      metrics.totalTraderSamples
+    );
+    metrics.avgTradersAtExit = this.updateRunningAverage(
+      metrics.avgTradersAtExit,
+      traderMetrics.activeTraders,
+      metrics.totalTraderSamples
+    );
+    metrics.avgWhalesAtEntry = this.updateRunningAverage(
+      metrics.avgWhalesAtEntry,
+      position.traderActivity.whales.size,
+      metrics.totalTraderSamples
+    );
+    metrics.avgWhalesAtExit = this.updateRunningAverage(
+      metrics.avgWhalesAtExit,
+      traderMetrics.whaleCount,
+      metrics.totalTraderSamples
+    );
+
+    // Update retention rates
+    const retentionRate = traderMetrics.activeTraders / position.traderActivity.entryTraders.size;
+    metrics.traderRetentionRates.push(retentionRate);
+
+    // Update profit by trader type
+    this.updateTraderTypeProfits(position, isWin, pnl);
+  }
+
+  updateTraderTypeProfits(position, isWin, pnl) {
+    const metrics = this.summaryMetrics.traderMetrics.profitByTraderType;
+    
+    // Calculate contribution percentages based on trading volume
+    const totalVolume = Array.from(position.traderActivity.tradeVolume.entries())
+      .reduce((sum, [_, volume]) => sum + volume, 0);
+    
+    position.traderActivity.tradeVolume.forEach((volume, publicKey) => {
+      const contribution = volume / totalVolume;
+      const tradePnL = pnl * contribution;
+      
+      if (position.traderActivity.whales.has(publicKey)) {
+        this.updateTraderTypeMetrics(metrics.whales, isWin, tradePnL);
+      } else if (this.safetyChecker?.suspiciousTraders.has(publicKey)) {
+        this.updateTraderTypeMetrics(metrics.suspicious, isWin, tradePnL);
+      } else {
+        this.updateTraderTypeMetrics(metrics.retail, isWin, tradePnL);
+      }
+    });
+  }
+
+  updateTraderTypeMetrics(typeMetrics, isWin, pnl) {
+    if (isWin) {
+      typeMetrics.wins++;
+      typeMetrics.totalPnL += pnl;
+    } else {
+      typeMetrics.losses++;
+      typeMetrics.totalPnL -= Math.abs(pnl);
+    }
+  }
+
+  updateRunningAverage(avg, value, count) {
+    return (avg * (count - 1) + value) / count;
   }
 }
 

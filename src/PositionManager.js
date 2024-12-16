@@ -6,22 +6,24 @@ const ExitStrategies = require("./ExitStrategies");
 const TransactionSimulator = require("./TransactionSimulator");
 const PositionStateManager = require("./PositionStateManager");
 const Position = require("./Position");
+const Trader = require("./Trader");
 
 class PositionManager extends EventEmitter {
-  constructor(wallet) {
+  constructor(wallet, positionStateManager, transactionSimulator, statsLogger, tokenTracker) {
     super();
     this.wallet = wallet;
     this.wins = 0;
     this.losses = 0;
-    this.exitStrategies = new ExitStrategies(config.EXIT_STRATEGIES);
-    this.transactionSimulator = new TransactionSimulator();
-    this.stateManager = new PositionStateManager();
+    this.positionStateManager = positionStateManager;
+    this.transactionSimulator = transactionSimulator;
+    this.statsLogger = statsLogger;
+    this.tokenTracker = tokenTracker;
 
     // Set up position state event handlers
-    this.stateManager.on('positionAdded', this.handlePositionAdded.bind(this));
-    this.stateManager.on('positionUpdated', this.handlePositionUpdated.bind(this));
-    this.stateManager.on('positionClosed', this.handlePositionClosed.bind(this));
-    this.stateManager.on('partialExit', this.handlePartialExit.bind(this));
+    this.positionStateManager.on('positionAdded', this.handlePositionAdded.bind(this));
+    this.positionStateManager.on('positionUpdated', this.handlePositionUpdated.bind(this));
+    this.positionStateManager.on('positionClosed', this.handlePositionClosed.bind(this));
+    this.positionStateManager.on('partialExit', this.handlePartialExit.bind(this));
 
     // Periodic position validation
     setInterval(() => this.validatePositions(), 60000); // Every minute
@@ -35,6 +37,13 @@ New Position Added:
 - Size: ${position.size} SOL
 - Entry Time: ${new Date(position.entryTime).toISOString()}
     `);
+    // Create exit strategies for the new position
+    this.exitStrategies = new ExitStrategies({
+      config: config.EXIT_STRATEGIES,
+      position: position,
+      token: position.token,
+      priceManager: position.priceManager
+    });
   }
 
   handlePositionUpdated(position) {
@@ -68,15 +77,69 @@ Partial Exit:
     `);
   }
 
-  async openPosition(mint, marketCap, volatility = 0) {
-    const positionSize = this.calculatePositionSize(marketCap, volatility);
+  analyzeTraderActivity(mint) {
+    const token = this.tokenTracker.tokens.get(mint);
+    if (!token) return null;
+
+    const traders = token.getTraders();
+    const metrics = token.getTraderMetrics();
+    
+    // Analyze recent trade patterns
+    const recentTrades = traders.flatMap(trader => 
+      trader.getTradeHistory(mint)
+        .filter(trade => Date.now() - trade.timestamp < 5 * 60 * 1000) // Last 5 minutes
+    );
+
+    const buyCount = recentTrades.filter(t => t.txType === 'buy').length;
+    const sellCount = recentTrades.filter(t => t.txType === 'sell').length;
+    const tradeRatio = buyCount / (sellCount || 1);
+
+    // Look for whale activity
+    const whaleThreshold = token.supply * 0.01; // 1% of supply
+    const whaleTraders = traders.filter(trader => 
+      trader.getTokenBalance(mint) > whaleThreshold
+    );
+
+    return {
+      ...metrics,
+      recentBuys: buyCount,
+      recentSells: sellCount,
+      buyToSellRatio: tradeRatio,
+      whaleCount: whaleTraders.length,
+      whaleHoldings: whaleTraders.reduce((sum, trader) => 
+        sum + trader.getTokenBalance(mint), 0
+      )
+    };
+  }
+
+  async openPosition(mint, marketCapSol, volatility) {
+    // Analyze trader activity before opening position
+    const traderAnalysis = this.analyzeTraderActivity(mint);
+    
+    // Additional checks based on trader activity
+    if (traderAnalysis) {
+      // Skip if there's heavy selling pressure
+      if (traderAnalysis.buyToSellRatio < 0.5) {
+        console.log(`Skipping position for ${mint} due to high sell pressure`);
+        return false;
+      }
+      
+      // Skip if whales hold too much
+      const whalePercentage = (traderAnalysis.whaleHoldings / this.tokenTracker.tokens.get(mint).supply) * 100;
+      if (whalePercentage > 50) {
+        console.log(`Skipping position for ${mint} due to high whale concentration (${whalePercentage.toFixed(2)}%)`);
+        return false;
+      }
+    }
+
+    const positionSize = this.calculatePositionSize(marketCapSol, volatility);
     
     if (this.wallet.balance >= positionSize) {
       // Simulate transaction delay and price impact
       const delay = await this.transactionSimulator.simulateTransactionDelay();
       const executionPrice = this.transactionSimulator.calculatePriceImpact(
         positionSize,
-        marketCap,
+        marketCapSol,
         0
       );
 
@@ -87,7 +150,7 @@ Partial Exit:
         simulatedDelay: delay
       });
 
-      this.stateManager.addPosition(position);
+      this.positionStateManager.addPosition(position);
       this.wallet.updateBalance(-positionSize);
 
       // Emit trade event for opening position
@@ -105,7 +168,7 @@ Partial Exit:
   }
 
   async closePosition(mint, exitPrice, portion = 1.0) {
-    const position = this.stateManager.getPosition(mint);
+    const position = this.positionStateManager.getPosition(mint);
     if (!position) {
       console.error(`Cannot close position: Position not found for ${mint}`);
       return null;
@@ -143,7 +206,7 @@ Partial Exit:
       else if (profitLoss < 0) this.losses++;
       
       position.close();
-      return this.stateManager.closePosition(mint);
+      return this.positionStateManager.closePosition(mint);
     } else {
       position.recordPartialExit({
         portion,
@@ -151,12 +214,12 @@ Partial Exit:
         exitPrice: executionPrice,
         profitLoss
       });
-      return this.stateManager.updatePosition(mint, position);
+      return this.positionStateManager.updatePosition(mint, position);
     }
   }
 
   updatePosition(mint, currentPrice, volumeData = null, candleData = null) {
-    const position = this.stateManager.getPosition(mint);
+    const position = this.positionStateManager.getPosition(mint);
     if (!position) return null;
 
     position.update({
@@ -165,19 +228,19 @@ Partial Exit:
       candleData
     });
 
-    return this.stateManager.updatePosition(mint, position);
+    return this.positionStateManager.updatePosition(mint, position);
   }
 
   getPosition(mint) {
-    return this.stateManager.getPosition(mint);
+    return this.positionStateManager.getPosition(mint);
   }
 
   getActivePositions() {
-    return this.stateManager.getActivePositions();
+    return this.positionStateManager.getActivePositions();
   }
 
   getPositionStats() {
-    const stats = this.stateManager.getPositionStats();
+    const stats = this.positionStateManager.getPositionStats();
     return {
       ...stats,
       wins: this.wins,
@@ -186,11 +249,11 @@ Partial Exit:
     };
   }
 
-  calculatePositionSize(marketCap, volatility = 0) {
+  calculatePositionSize(marketCapSol, volatility = 0) {
     let size = config.POSITION.MIN_POSITION_SIZE_SOL;
     
     // Base size calculation
-    const marketCapBasedSize = marketCap * config.POSITION.POSITION_SIZE_MARKET_CAP_RATIO;
+    const marketCapBasedSize = marketCapSol * config.POSITION.POSITION_SIZE_MARKET_CAP_RATIO;
     size = Math.min(marketCapBasedSize, config.POSITION.MAX_POSITION_SIZE_SOL);
     size = Math.max(size, config.POSITION.MIN_POSITION_SIZE_SOL);
 

@@ -15,6 +15,7 @@ class ExitStrategies extends EventEmitter {
     this.timeExtended = false;
     this.remainingPosition = 1.0;
     this.triggeredTiers = new Set();
+    this.lastTraderCheck = Date.now();
 
     // Listen to token events
     this.token.on('volumeUpdate', this.handleVolumeUpdate.bind(this));
@@ -23,6 +24,63 @@ class ExitStrategies extends EventEmitter {
     // Listen to price manager events
     if (this.priceManager) {
       this.priceManager.on('priceUpdate', this.handleSolPriceUpdate.bind(this));
+    }
+
+    // Set up periodic trader analysis
+    setInterval(() => this.checkTraderActivity(), 30000); // Every 30 seconds
+  }
+
+  checkTraderActivity() {
+    const metrics = this.position.getTraderMetrics();
+    const now = Date.now();
+    this.lastTraderCheck = now;
+
+    // Check for concerning trader activity
+    const concerns = [];
+
+    // High initial trader exit rate
+    if (metrics.initialTraderExitRate > 0.5) { // More than 50% of initial traders exited
+      concerns.push({
+        type: 'initial_trader_exodus',
+        severity: metrics.initialTraderExitRate,
+        description: `${(metrics.initialTraderExitRate * 100).toFixed(1)}% of initial traders exited`
+      });
+    }
+
+    // Low trader retention
+    if (metrics.retentionRate < 0.3) { // Less than 30% retention
+      concerns.push({
+        type: 'low_retention',
+        severity: 1 - metrics.retentionRate,
+        description: `Only ${(metrics.retentionRate * 100).toFixed(1)}% trader retention`
+      });
+    }
+
+    // Whale concentration
+    const whaleRatio = metrics.whaleCount / metrics.activeTraderCount;
+    if (whaleRatio > 0.1) { // More than 10% of active traders are whales
+      concerns.push({
+        type: 'high_whale_concentration',
+        severity: whaleRatio,
+        description: `${(whaleRatio * 100).toFixed(1)}% of active traders are whales`
+      });
+    }
+
+    // Sort concerns by severity
+    concerns.sort((a, b) => b.severity - a.severity);
+
+    // Emit exit signal if there are serious concerns
+    if (concerns.length > 0) {
+      const mostSevere = concerns[0];
+      if (mostSevere.severity > 0.7) { // Very severe concern
+        this.emit('exit', {
+          reason: mostSevere.type,
+          portion: 1.0,
+          price: this.position.currentPrice,
+          volume: this.token.volume,
+          details: mostSevere.description
+        });
+      }
     }
   }
 
@@ -81,6 +139,15 @@ class ExitStrategies extends EventEmitter {
   }
 
   shouldExit(currentPrice, currentVolume) {
+    // Add trader activity to exit decision
+    const now = Date.now();
+    const timeSinceLastCheck = now - this.lastTraderCheck;
+    
+    // Force a trader check if it's been more than a minute
+    if (timeSinceLastCheck > 60000) {
+      this.checkTraderActivity();
+    }
+
     // Skip all checks if no position remaining
     if (this.remainingPosition === 0) {
       return { shouldExit: false };

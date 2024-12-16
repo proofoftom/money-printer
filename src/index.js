@@ -147,11 +147,11 @@ const priceManager = initializeComponent(new PriceManager(), 'PriceManager');
 const transactionSimulator = initializeComponent(new TransactionSimulator(), 'TransactionSimulator');
 const statsLogger = initializeComponent(new StatsLogger(), 'StatsLogger');
 const positionStateManager = initializeComponent(new PositionStateManager(), 'PositionStateManager');
+const safetyChecker = initializeComponent(new SafetyChecker(config.SAFETY, priceManager), 'SafetyChecker');
 const positionManager = initializeComponent(
-  new PositionManager(wallet, positionStateManager, transactionSimulator, statsLogger),
+  new PositionManager(wallet, positionStateManager, transactionSimulator, statsLogger, safetyChecker),
   'PositionManager'
 );
-const safetyChecker = initializeComponent(new SafetyChecker(config.SAFETY, priceManager), 'SafetyChecker');
 
 // Initialize TokenTracker and WebSocketManager
 const tokenTracker = initializeComponent(
