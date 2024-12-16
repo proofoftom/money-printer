@@ -101,8 +101,8 @@ class Token extends EventEmitter {
     this.updatePriceMetrics();
 
     // Update wallet data if trade occurred
-    if (data.tradeAmount && data.tokenAmount) {
-      const volumeInSol = data.tokenAmount * this.currentPrice;
+    if (data.tokenAmount) {
+      const volumeInSol = Math.abs(data.tokenAmount * this.currentPrice);
       this.updateWalletActivity(data.traderPublicKey, {
         amount: data.tokenAmount,
         volumeInSol,
@@ -193,9 +193,12 @@ class Token extends EventEmitter {
     let volume = 0;
     
     for (const [_, wallet] of this.wallets) {
-      volume += wallet.trades
-        .filter(trade => trade.timestamp > cutoff)
-        .reduce((sum, trade) => sum + Math.abs(trade.volumeInSol), 0);
+      // Filter trades within timeWindow and sum their volumes
+      const recentTrades = wallet.trades.filter(trade => trade.timestamp > cutoff);
+      volume += recentTrades.reduce((sum, trade) => {
+        // Ensure we're using absolute values for volume calculation
+        return sum + Math.abs(trade.volumeInSol || 0);
+      }, 0);
     }
     
     return volume;
