@@ -13,6 +13,7 @@ module.exports = {
     FIRST_PUMP_USD: 12000, // Market cap threshold for first pump ($25k)
     PUMP_DRAWDOWN: 20, // Percentage drawdown to enter recovery mode
     RECOVERY: 10, // Percentage recovery needed to enter position
+    SAFE_RECOVERY_GAIN: 15, // Maximum gain % from drawdown low to enter position after becoming safe
 
     // Time and Age Thresholds
     MIN_TIME_SINCE_CREATION: 30, // Minimum seconds since token creation

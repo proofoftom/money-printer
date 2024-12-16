@@ -1,4 +1,5 @@
 const EventEmitter = require("events");
+const config = require("./config");
 
 class Token extends EventEmitter {
   constructor(tokenData) {
@@ -186,14 +187,29 @@ class Token extends EventEmitter {
     );
   }
 
-  async evaluateRecovery(safetyChecker) {
-    if (this.state !== "drawdown" && this.state !== "unsafeRecovery") {
-      return;
-    }
+  getGainPercentage() {
+    if (!this.drawdownLow || !this.marketCapSol) return 0;
+    return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
+  }
 
-    if (this.marketCapSol > this.drawdownLow) {
+  async evaluateRecovery(safetyChecker) {
+    try {
+      if (this.state !== "drawdown" && this.state !== "unsafeRecovery") {
+        return;
+      }
+
+      // Check for new drawdown in either state
+      if (this.marketCapSol < this.drawdownLow) {
+        this.setState("drawdown");
+        this.drawdownLow = this.marketCapSol;
+        return;
+      }
+
+      const gainPercentage = this.getGainPercentage();
       const recoveryPercentage = this.getRecoveryPercentage();
-      if (recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
+
+      // If we're in drawdown and hit recovery threshold
+      if (this.state === "drawdown" && recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
         const isSecure = await safetyChecker.runSecurityChecks(this);
         if (isSecure) {
           this.emit("readyForPosition", this);
@@ -201,10 +217,30 @@ class Token extends EventEmitter {
           this.setState("unsafeRecovery");
           this.emit("unsafeRecovery", { token: this, marketCap: this.marketCapSol });
         }
+        return;
       }
-    } else if (this.state === "unsafeRecovery") {
-      this.setState("drawdown");
-      this.drawdownLow = this.marketCapSol;
+
+      // If we're in unsafeRecovery
+      if (this.state === "unsafeRecovery") {
+        // Check if token has become safe
+        const isSecure = await safetyChecker.runSecurityChecks(this);
+        if (isSecure) {
+          // Only enter position if gain is less than threshold
+          if (gainPercentage <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
+            this.emit("readyForPosition", this);
+          } else {
+            // If gain is too high, stay in unsafeRecovery but notify
+            this.emit("recoveryGainTooHigh", {
+              token: this,
+              gainPercentage,
+              marketCap: this.marketCapSol
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error evaluating recovery:", error);
+      // If we encounter an error during recovery evaluation, stay in current state
     }
   }
 

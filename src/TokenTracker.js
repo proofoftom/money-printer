@@ -41,6 +41,14 @@ class TokenTracker extends EventEmitter {
         this.emit("unsafeRecovery", data);
       });
 
+      token.on("recoveryGainTooHigh", (data) => {
+        this.emit("recoveryGainTooHigh", data);
+        const { token, gainPercentage } = data;
+        console.log(
+          `Token ${token.symbol} (${token.mint}) recovery gain too high: ${gainPercentage.toFixed(2)}%`
+        );
+      });
+
       // Let handleTokenUpdate manage all state transitions
       this.handleTokenUpdate(tokenData);
       this.emit("tokenAdded", token);
