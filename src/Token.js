@@ -20,9 +20,24 @@ class Token extends EventEmitter {
     this.state = "new";
     this.highestMarketCap = this.marketCapSol;
     this.drawdownLow = null;
-    this.holders = new Map();
-    this.creatorInitialHoldings = 0;
     this.unsafeReason = null;
+
+    // Optimized price tracking with circular buffer
+    this.priceBuffer = {
+      data: new Array(30).fill(null),
+      head: 0,
+      size: 30,
+      count: 0
+    };
+
+    // Enhanced metrics for pump detection
+    this.pumpMetrics = {
+      lastPumpTime: null,
+      pumpCount: 0,
+      highestGainRate: 0,
+      volumeSpikes: [],
+      priceAcceleration: 0
+    };
 
     // Price tracking
     this.currentPrice = this.calculateTokenPrice();
@@ -33,37 +48,36 @@ class Token extends EventEmitter {
     }];
     this.priceVolatility = 0;
 
-    // Volume and trade tracking
-    this.volumeData = {
-      trades: [],
-      lastCleanup: Date.now(),
-      cleanupInterval: 5 * 60 * 1000, // Cleanup every 5 minutes
-      volumePriceCorrelation: 1, // Start at 1 (perfect correlation)
-      suspectedWashTradePercentage: 0,
-      maxWalletVolumePercentage: 0
-    };
-
+    // Unified trader/holder tracking
+    this.wallets = new Map(); // Key: publicKey, Value: WalletData
+    
     // Initialize creator as holder if initial balance provided
-    if (tokenData.newTokenBalance) {
-      this.holders.set(tokenData.traderPublicKey, tokenData.newTokenBalance);
-      this.creatorInitialHoldings = tokenData.newTokenBalance;
-    } else if (tokenData.initialBuy) {
-      this.holders.set(tokenData.traderPublicKey, tokenData.initialBuy);
-      this.creatorInitialHoldings = tokenData.initialBuy;
+    if (tokenData.newTokenBalance || tokenData.initialBuy) {
+      const balance = tokenData.newTokenBalance || tokenData.initialBuy;
+      this.wallets.set(tokenData.traderPublicKey, {
+        balance,
+        initialBalance: balance,
+        trades: [],
+        firstSeen: Date.now(),
+        lastActive: Date.now(),
+        isCreator: true
+      });
     }
-  }
 
-  setState(newState) {
-    const oldState = this.state;
-    this.state = newState;
-    if (newState === "drawdown") {
-      this.drawdownLow = this.marketCapSol;
-    }
-    this.emit("stateChanged", { token: this, from: oldState, to: newState });
+    // Initialize metrics
+    this.metrics = {
+      volumeData: {
+        lastCleanup: Date.now(),
+        cleanupInterval: 5 * 60 * 1000, // 5 minutes
+        maxWalletVolumePercentage: 0,
+        suspectedWashTradePercentage: 0
+      }
+    };
   }
 
   update(data) {
     const oldPrice = this.currentPrice;
+    const now = Date.now();
     
     if (data.marketCapSol) {
       if (data.marketCapSol > this.highestMarketCap) {
@@ -84,44 +98,273 @@ class Token extends EventEmitter {
     }
 
     // Update price tracking
-    this.currentPrice = this.calculateTokenPrice();
-    const priceChange = ((this.currentPrice - oldPrice) / oldPrice) * 100;
-    this.priceHistory.push({
-      price: this.currentPrice,
-      timestamp: Date.now()
-    });
+    this.updatePriceMetrics();
 
-    // Keep last 30 minutes of price history
-    const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000;
-    this.priceHistory = this.priceHistory.filter(p => p.timestamp > thirtyMinutesAgo);
-
-    // Calculate volatility as standard deviation of price changes
-    if (this.priceHistory.length > 1) {
-      const changes = [];
-      for (let i = 1; i < this.priceHistory.length; i++) {
-        const change = ((this.priceHistory[i].price - this.priceHistory[i-1].price) / this.priceHistory[i-1].price) * 100;
-        changes.push(change);
-      }
-      const mean = changes.reduce((sum, change) => sum + change, 0) / changes.length;
-      this.priceVolatility = Math.sqrt(changes.reduce((sum, change) => sum + Math.pow(change - mean, 2), 0) / changes.length);
-    }
-
-    // Update volume if trade data is provided
+    // Update wallet data if trade occurred
     if (data.tradeAmount && data.tokenAmount) {
       const volumeInSol = data.tokenAmount * this.currentPrice;
-      this.updateVolume(volumeInSol, data.traderPublicKey, priceChange);
+      this.updateWalletActivity(data.traderPublicKey, {
+        amount: data.tokenAmount,
+        volumeInSol,
+        priceChange: ((this.currentPrice - oldPrice) / oldPrice) * 100,
+        timestamp: now,
+        newBalance: data.newTokenBalance
+      });
     }
-
-    if (data.traderPublicKey && typeof data.newTokenBalance !== "undefined") {
-      if (data.newTokenBalance > 0) {
-        this.holders.set(data.traderPublicKey, data.newTokenBalance);
-      } else {
-        this.holders.delete(data.traderPublicKey);
-      }
+    // Update wallet balance if no trade (e.g., transfer)
+    else if (data.traderPublicKey && typeof data.newTokenBalance !== "undefined") {
+      this.updateWalletBalance(data.traderPublicKey, data.newTokenBalance, now);
     }
 
     // Update all metrics
     this.updateMetrics();
+  }
+
+  updatePriceMetrics() {
+    const now = Date.now();
+    const newPrice = this.calculateTokenPrice();
+    
+    // Update circular buffer
+    this.priceBuffer.data[this.priceBuffer.head] = {
+      price: newPrice,
+      timestamp: now
+    };
+    this.priceBuffer.head = (this.priceBuffer.head + 1) % this.priceBuffer.size;
+    this.priceBuffer.count = Math.min(this.priceBuffer.count + 1, this.priceBuffer.size);
+    
+    // Calculate price acceleration (rate of price change)
+    if (this.priceBuffer.count >= 3) {
+      const idx1 = (this.priceBuffer.head - 1 + this.priceBuffer.size) % this.priceBuffer.size;
+      const idx2 = (this.priceBuffer.head - 2 + this.priceBuffer.size) % this.priceBuffer.size;
+      const idx3 = (this.priceBuffer.head - 3 + this.priceBuffer.size) % this.priceBuffer.size;
+      
+      const price1 = this.priceBuffer.data[idx1].price;
+      const price2 = this.priceBuffer.data[idx2].price;
+      const price3 = this.priceBuffer.data[idx3].price;
+      
+      const time1 = this.priceBuffer.data[idx1].timestamp;
+      const time2 = this.priceBuffer.data[idx2].timestamp;
+      const time3 = this.priceBuffer.data[idx3].timestamp;
+      
+      const rate1 = (price1 - price2) / (time1 - time2);
+      const rate2 = (price2 - price3) / (time2 - time3);
+      
+      this.pumpMetrics.priceAcceleration = (rate1 - rate2) / ((time1 - time3) / 2000);
+    }
+    
+    // Detect pump conditions
+    const priceChange = ((newPrice - this.currentPrice) / this.currentPrice) * 100;
+    const timeWindow = 60 * 1000; // 1 minute window
+    
+    if (priceChange > config.THRESHOLDS.PUMP && 
+        (!this.pumpMetrics.lastPumpTime || now - this.pumpMetrics.lastPumpTime > timeWindow)) {
+      this.pumpMetrics.pumpCount++;
+      this.pumpMetrics.lastPumpTime = now;
+      
+      const gainRate = priceChange / (timeWindow / 1000); // %/second
+      this.pumpMetrics.highestGainRate = Math.max(this.pumpMetrics.highestGainRate, gainRate);
+      
+      // Track volume spike
+      const recentVolume = this.getRecentVolume(timeWindow);
+      this.pumpMetrics.volumeSpikes.push({
+        timestamp: now,
+        volume: recentVolume,
+        priceChange
+      });
+      
+      // Cleanup old volume spikes
+      const cutoff = now - (5 * 60 * 1000); // Keep last 5 minutes
+      this.pumpMetrics.volumeSpikes = this.pumpMetrics.volumeSpikes.filter(spike => 
+        spike.timestamp > cutoff
+      );
+    }
+    
+    this.currentPrice = newPrice;
+    this.emit('priceUpdate', { 
+      price: newPrice, 
+      acceleration: this.pumpMetrics.priceAcceleration,
+      pumpMetrics: this.pumpMetrics
+    });
+  }
+
+  getRecentVolume(timeWindow) {
+    const now = Date.now();
+    const cutoff = now - timeWindow;
+    let volume = 0;
+    
+    for (const [_, wallet] of this.wallets) {
+      volume += wallet.trades
+        .filter(trade => trade.timestamp > cutoff)
+        .reduce((sum, trade) => sum + Math.abs(trade.volumeInSol), 0);
+    }
+    
+    return volume;
+  }
+
+  updateWalletActivity(publicKey, tradeData) {
+    let wallet = this.wallets.get(publicKey);
+    const now = tradeData.timestamp;
+
+    // Create new wallet data if doesn't exist
+    if (!wallet) {
+      wallet = {
+        balance: 0,
+        initialBalance: tradeData.newBalance || 0,
+        trades: [],
+        firstSeen: now,
+        lastActive: now,
+        isCreator: false
+      };
+      this.wallets.set(publicKey, wallet);
+    }
+
+    // Update wallet data
+    wallet.lastActive = now;
+    wallet.balance = tradeData.newBalance !== undefined ? tradeData.newBalance : wallet.balance;
+    wallet.trades.push({
+      amount: tradeData.amount,
+      volumeInSol: tradeData.volumeInSol,
+      priceChange: tradeData.priceChange,
+      timestamp: now
+    });
+
+    // Cleanup old trades
+    if (now - this.metrics.volumeData.lastCleanup > this.metrics.volumeData.cleanupInterval) {
+      const cutoff = now - 30 * 60 * 1000; // 30 minutes
+      for (const [_, walletData] of this.wallets) {
+        walletData.trades = walletData.trades.filter(t => t.timestamp > cutoff);
+      }
+      this.metrics.volumeData.lastCleanup = now;
+    }
+  }
+
+  updateWalletBalance(publicKey, newBalance, timestamp) {
+    let wallet = this.wallets.get(publicKey);
+
+    if (newBalance > 0) {
+      if (!wallet) {
+        wallet = {
+          balance: newBalance,
+          initialBalance: newBalance,
+          trades: [],
+          firstSeen: timestamp,
+          lastActive: timestamp,
+          isCreator: false
+        };
+        this.wallets.set(publicKey, wallet);
+      } else {
+        wallet.balance = newBalance;
+        wallet.lastActive = timestamp;
+      }
+    } else {
+      // Only delete if wallet exists and has no recent trades
+      if (wallet) {
+        const hasRecentTrades = wallet.trades.some(t => 
+          t.timestamp > timestamp - 30 * 60 * 1000
+        );
+        if (!hasRecentTrades) {
+          this.wallets.delete(publicKey);
+        } else {
+          wallet.balance = 0;
+          wallet.lastActive = timestamp;
+        }
+      }
+    }
+  }
+
+  getHolderCount() {
+    return Array.from(this.wallets.values()).filter(w => w.balance > 0).length;
+  }
+
+  getTotalTokensHeld() {
+    return Array.from(this.wallets.values())
+      .reduce((sum, wallet) => sum + wallet.balance, 0);
+  }
+
+  getTopHolderConcentration(topN = 10) {
+    const totalSupply = this.getTotalSupply();
+    if (totalSupply === 0) return 0;
+
+    // Get holder balances and sort by balance
+    const holderBalances = Array.from(this.wallets.values())
+      .filter(w => w.balance > 0)
+      .map(w => w.balance)
+      .sort((a, b) => b - a);
+
+    // Take top N holders
+    const topBalances = holderBalances.slice(0, Math.min(topN, holderBalances.length));
+    const topHoldersBalance = topBalances.reduce((sum, balance) => sum + balance, 0);
+
+    return (topHoldersBalance / totalSupply) * 100;
+  }
+
+  getTraderStats(interval = "5m") {
+    const now = Date.now();
+    const cutoffTime = now - (parseInt(interval) * 60 * 1000);
+    let totalVolume = 0;
+    const traderStats = new Map();
+
+    // Analyze each wallet's trading activity
+    for (const [publicKey, wallet] of this.wallets) {
+      const recentTrades = wallet.trades.filter(t => t.timestamp > cutoffTime);
+      if (recentTrades.length === 0) continue;
+
+      const stats = {
+        volumeTotal: 0,
+        tradeCount: recentTrades.length,
+        buyVolume: 0,
+        sellVolume: 0,
+        currentBalance: wallet.balance,
+        walletAge: now - wallet.firstSeen
+      };
+
+      for (const trade of recentTrades) {
+        stats.volumeTotal += trade.volumeInSol;
+        if (trade.priceChange >= 0) {
+          stats.buyVolume += trade.volumeInSol;
+        } else {
+          stats.sellVolume += trade.volumeInSol;
+        }
+      }
+
+      traderStats.set(publicKey, stats);
+      totalVolume += stats.volumeTotal;
+    }
+
+    // Calculate suspicious activity metrics
+    let totalSuspiciousVolume = 0;
+    const suspiciousTraders = new Map();
+
+    for (const [publicKey, stats] of traderStats) {
+      const volumePercentage = (stats.volumeTotal / totalVolume) * 100;
+      const buyToSellRatio = stats.buyVolume / (stats.sellVolume || 1);
+      const isSuspicious = (
+        (volumePercentage > config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE) ||
+        (stats.tradeCount > 10 && buyToSellRatio > 0.9 && buyToSellRatio < 1.1)
+      );
+
+      if (isSuspicious) {
+        suspiciousTraders.set(publicKey, {
+          volumePercentage,
+          buyToSellRatio,
+          tradeCount: stats.tradeCount,
+          balance: stats.currentBalance,
+          walletAge: stats.walletAge
+        });
+        totalSuspiciousVolume += stats.volumeTotal;
+      }
+    }
+
+    return {
+      totalVolume,
+      uniqueTraders: traderStats.size,
+      maxWalletVolumePercentage: Math.max(
+        0,
+        ...Array.from(traderStats.values()).map(s => (s.volumeTotal / totalVolume) * 100)
+      ),
+      suspectedWashTradePercentage: totalVolume > 0 ? (totalSuspiciousVolume / totalVolume) * 100 : 0,
+      suspiciousTraders: Object.fromEntries(suspiciousTraders)
+    };
   }
 
   calculateTokenPrice() {
@@ -135,139 +378,91 @@ class Token extends EventEmitter {
     return this.vSolInBondingCurve / this.vTokensInBondingCurve;
   }
 
-  updateVolume(tradeAmount, traderPublicKey, priceChange) {
-    const now = Date.now();
+  updateMetrics() {
+    // Update price stats
+    const priceStats = this.getPriceStats();
+    this.priceVolatility = priceStats.volatility;
 
-    // Add new trade
-    this.volumeData.trades.push({
-      amount: tradeAmount,
-      timestamp: now,
-      trader: traderPublicKey,
-      priceChange
+    // Update trader stats
+    const traderStats = this.getTraderStats("5m");
+    this.metrics.volumeData.maxWalletVolumePercentage = traderStats.maxWalletVolumePercentage;
+    this.metrics.volumeData.suspectedWashTradePercentage = traderStats.suspectedWashTradePercentage;
+
+    // Emit metrics update event for monitoring
+    this.emit("metricsUpdated", {
+      token: this.mint,
+      priceStats,
+      traderStats
     });
-
-    // Cleanup old trades periodically
-    if (now - this.volumeData.lastCleanup > this.volumeData.cleanupInterval) {
-      const thirtyMinutesAgo = now - 30 * 60 * 1000;
-      this.volumeData.trades = this.volumeData.trades.filter(
-        (trade) => trade.timestamp > thirtyMinutesAgo
-      );
-      this.volumeData.lastCleanup = now;
-
-      // Calculate volume-price correlation
-      if (this.volumeData.trades.length > 1) {
-        const volumes = this.volumeData.trades.map(t => t.amount);
-        const priceChanges = this.volumeData.trades.map(t => t.priceChange);
-        this.volumeData.volumePriceCorrelation = this.calculateCorrelation(volumes, priceChanges);
-      }
-
-      // Calculate wallet volume percentages
-      const traderVolumes = new Map();
-      const totalVolume = this.volumeData.trades.reduce((sum, trade) => {
-        const trader = trade.trader;
-        const current = traderVolumes.get(trader) || 0;
-        traderVolumes.set(trader, current + trade.amount);
-        return sum + trade.amount;
-      }, 0);
-
-      // Find max wallet volume percentage
-      this.volumeData.maxWalletVolumePercentage = Math.max(
-        ...Array.from(traderVolumes.values()).map(vol => (vol / totalVolume) * 100)
-      );
-
-      // Detect potential wash trading
-      this.detectWashTrading(traderVolumes, totalVolume);
-    }
   }
 
-  calculateCorrelation(volumes, priceChanges) {
-    if (volumes.length !== priceChanges.length || volumes.length < 2) {
-      return 1; // Default to perfect correlation if not enough data
-    }
-
-    const n = volumes.length;
-    const sumX = volumes.reduce((a, b) => a + b, 0);
-    const sumY = priceChanges.reduce((a, b) => a + b, 0);
-    const sumXY = volumes.reduce((sum, x, i) => sum + x * priceChanges[i], 0);
-    const sumX2 = volumes.reduce((sum, x) => sum + x * x, 0);
-    const sumY2 = priceChanges.reduce((sum, y) => sum + y * y, 0);
-
-    const numerator = n * sumXY - sumX * sumY;
-    const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
-
-    return denominator === 0 ? 1 : numerator / denominator;
+  hasCreatorSoldAll() {
+    const creatorWallet = this.wallets.get(this.traderPublicKey);
+    return creatorWallet ? creatorWallet.balance === 0 : true;
   }
 
-  detectWashTrading(traderVolumes, totalVolume) {
-    // Consider it wash trading if a trader's buy and sell volumes are suspiciously balanced
-    let suspectedWashVolume = 0;
-
-    for (const [trader, volume] of traderVolumes.entries()) {
-      const trades = this.volumeData.trades.filter(t => t.trader === trader);
-      const buyVolume = trades.filter(t => t.priceChange >= 0).reduce((sum, t) => sum + t.amount, 0);
-      const sellVolume = trades.filter(t => t.priceChange < 0).reduce((sum, t) => sum + t.amount, 0);
-
-      // If buy and sell volumes are within 10% of each other, consider it suspicious
-      if (Math.abs(buyVolume - sellVolume) / Math.max(buyVolume, sellVolume) < 0.1) {
-        suspectedWashVolume += volume;
-      }
-    }
-
-    this.volumeData.suspectedWashTradePercentage = (suspectedWashVolume / totalVolume) * 100;
-  }
-
-  getVolume(interval = "1m") {
-    const now = Date.now();
-    let cutoffTime;
-
-    switch (interval) {
-      case "1m":
-        cutoffTime = now - 60 * 1000;
-        break;
-      case "5m":
-        cutoffTime = now - 5 * 60 * 1000;
-        break;
-      case "30m":
-        cutoffTime = now - 30 * 60 * 1000;
-        break;
-      default:
-        throw new Error('Invalid volume interval. Use "1m", "5m", or "30m"');
-    }
-
-    return this.volumeData.trades
-      .filter((trade) => trade.timestamp > cutoffTime)
-      .reduce((sum, trade) => sum + trade.amount, 0);
-  }
-
-  getTradeStats(interval = "5m") {
-    const now = Date.now();
-    const cutoffTime = now - parseInt(interval) * 60 * 1000;
-    const periodTrades = this.volumeData.trades.filter(
-      (trade) => trade.timestamp > cutoffTime
+  getCreatorSellPercentage() {
+    const creatorWallet = this.wallets.get(this.traderPublicKey);
+    if (!creatorWallet) return 0;
+    const initialBalance = creatorWallet.initialBalance;
+    const currentBalance = creatorWallet.balance;
+    return (
+      ((initialBalance - currentBalance) /
+        initialBalance) *
+      100
     );
+  }
 
-    if (periodTrades.length === 0) {
+  getTopHolders(count = 5) {
+    return Array.from(this.wallets.entries())
+      .sort(([, a], [, b]) => b.balance - a.balance)
+      .slice(0, count)
+      .map(([address, balance]) => ({ address, balance }));
+  }
+
+  getTotalSupply() {
+    // Total supply includes both held tokens and tokens in the liquidity pool
+    return this.getTotalTokensHeld() + (this.vTokensInBondingCurve || 0);
+  }
+
+  getPriceStats() {
+    const now = Date.now();
+    const fiveMinutesAgo = now - 5 * 60 * 1000;
+    const recentPrices = this.priceBuffer.data.filter(p => p && p.timestamp > fiveMinutesAgo);
+
+    if (recentPrices.length < 2) {
       return {
-        count: 0,
-        volume: 0,
-        averageSize: 0,
-        largestTrade: 0,
-        smallestTrade: 0,
+        volatility: 0,
+        highestPrice: this.currentPrice,
+        lowestPrice: this.currentPrice,
+        priceChange: 0
       };
     }
 
-    const volume = periodTrades.reduce((sum, trade) => sum + trade.amount, 0);
-    const largestTrade = Math.max(...periodTrades.map((trade) => trade.amount));
-    const smallestTrade = Math.min(
-      ...periodTrades.map((trade) => trade.amount)
-    );
+    // Calculate price changes as percentages
+    const changes = [];
+    for (let i = 1; i < recentPrices.length; i++) {
+      const change = ((recentPrices[i].price - recentPrices[i-1].price) / recentPrices[i-1].price) * 100;
+      changes.push(change);
+    }
+
+    // Calculate volatility (standard deviation of price changes)
+    const mean = changes.reduce((sum, change) => sum + change, 0) / changes.length;
+    const volatility = Math.sqrt(changes.reduce((sum, change) => sum + Math.pow(change - mean, 2), 0) / changes.length);
+
+    // Get highest and lowest prices
+    const prices = recentPrices.map(p => p.price);
+    const highestPrice = Math.max(...prices);
+    const lowestPrice = Math.min(...prices);
+
+    // Calculate total price change
+    const totalChange = ((this.currentPrice - recentPrices[0].price) / recentPrices[0].price) * 100;
 
     return {
-      count: periodTrades.length,
-      volume,
-      averageSize: volume / periodTrades.length,
-      largestTrade,
-      smallestTrade,
+      volatility,
+      highestPrice,
+      lowestPrice,
+      priceChange: totalChange
     };
   }
 
@@ -350,40 +545,13 @@ class Token extends EventEmitter {
     }
   }
 
-  getHolderCount() {
-    return this.holders.size;
-  }
-
-  getTotalTokensHeld() {
-    // Sum only the tokens held by actual holders (excluding liquidity pool)
-    return Array.from(this.holders.values()).reduce(
-      (sum, balance) => sum + balance,
-      0
-    );
-  }
-
-  getTotalSupply() {
-    // Total supply includes both held tokens and tokens in the liquidity pool
-    return this.getTotalTokensHeld() + (this.vTokensInBondingCurve || 0);
-  }
-
-  getTopHolderConcentration(topN = 10) {
-    const totalSupply = this.getTotalSupply();
-    if (totalSupply === 0) return 0;
-
-    // Get holder balances (excluding bonding curve)
-    const holderBalances = Array.from(this.holders.values());
-
-    // Sort balances in descending order and take top N
-    const topBalances = holderBalances
-      .sort((a, b) => b - a)
-      .slice(0, Math.min(topN, holderBalances.length));
-
-    // Calculate total balance of top holders
-    const topHoldersBalance = topBalances.reduce((sum, balance) => sum + balance, 0);
-
-    // Calculate concentration as percentage of total supply
-    return (topHoldersBalance / totalSupply) * 100;
+  setState(newState) {
+    const oldState = this.state;
+    this.state = newState;
+    if (newState === "drawdown") {
+      this.drawdownLow = this.marketCapSol;
+    }
+    this.emit("stateChanged", { token: this, from: oldState, to: newState });
   }
 
   isHeatingUp(threshold) {
@@ -400,158 +568,6 @@ class Token extends EventEmitter {
 
   getTokenPrice() {
     return this.currentPrice;
-  }
-
-  getCreatorHoldings() {
-    // Get current creator balance
-    const creatorBalance = this.holders.get(this.traderPublicKey) || 0;
-    const totalSupply = this.getTotalSupply();
-    
-    // Return as percentage
-    return totalSupply > 0 ? (creatorBalance / totalSupply) * 100 : 0;
-  }
-
-  getPriceStats() {
-    const now = Date.now();
-    const fiveMinutesAgo = now - 5 * 60 * 1000;
-    const recentPrices = this.priceHistory.filter(p => p.timestamp > fiveMinutesAgo);
-
-    if (recentPrices.length < 2) {
-      return {
-        volatility: 0,
-        highestPrice: this.currentPrice,
-        lowestPrice: this.currentPrice,
-        priceChange: 0
-      };
-    }
-
-    // Calculate price changes as percentages
-    const changes = [];
-    for (let i = 1; i < recentPrices.length; i++) {
-      const change = ((recentPrices[i].price - recentPrices[i-1].price) / recentPrices[i-1].price) * 100;
-      changes.push(change);
-    }
-
-    // Calculate volatility (standard deviation of price changes)
-    const mean = changes.reduce((sum, change) => sum + change, 0) / changes.length;
-    const volatility = Math.sqrt(changes.reduce((sum, change) => sum + Math.pow(change - mean, 2), 0) / changes.length);
-
-    // Get highest and lowest prices
-    const prices = recentPrices.map(p => p.price);
-    const highestPrice = Math.max(...prices);
-    const lowestPrice = Math.min(...prices);
-
-    // Calculate total price change
-    const totalChange = ((this.currentPrice - recentPrices[0].price) / recentPrices[0].price) * 100;
-
-    return {
-      volatility,
-      highestPrice,
-      lowestPrice,
-      priceChange: totalChange
-    };
-  }
-
-  getTraderStats(interval = "5m") {
-    const now = Date.now();
-    const cutoffTime = now - (parseInt(interval) * 60 * 1000);
-    const relevantTrades = this.volumeData.trades.filter(t => t.timestamp > cutoffTime);
-
-    // Group trades by trader
-    const traderStats = new Map();
-    let totalVolume = 0;
-
-    for (const trade of relevantTrades) {
-      const trader = trade.trader;
-      const stats = traderStats.get(trader) || {
-        volumeTotal: 0,
-        tradeCount: 0,
-        buyVolume: 0,
-        sellVolume: 0
-      };
-
-      stats.volumeTotal += trade.amount;
-      stats.tradeCount++;
-      if (trade.priceChange >= 0) {
-        stats.buyVolume += trade.amount;
-      } else {
-        stats.sellVolume += trade.amount;
-      }
-
-      traderStats.set(trader, stats);
-      totalVolume += trade.amount;
-    }
-
-    // Calculate percentages and identify suspicious patterns
-    const suspiciousTraders = new Map();
-    let totalSuspiciousVolume = 0;
-
-    for (const [trader, stats] of traderStats.entries()) {
-      const volumePercentage = (stats.volumeTotal / totalVolume) * 100;
-      const buyToSellRatio = stats.buyVolume / (stats.sellVolume || 1);
-
-      // Check for suspicious patterns
-      const isSuspicious = (
-        (volumePercentage > config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE) ||
-        (stats.tradeCount > 10 && buyToSellRatio > 0.9 && buyToSellRatio < 1.1) // Balanced buy/sell ratio with high frequency
-      );
-
-      if (isSuspicious) {
-        suspiciousTraders.set(trader, {
-          volumePercentage,
-          buyToSellRatio,
-          tradeCount: stats.tradeCount
-        });
-        totalSuspiciousVolume += stats.volumeTotal;
-      }
-    }
-
-    return {
-      totalVolume,
-      uniqueTraders: traderStats.size,
-      maxWalletVolumePercentage: Math.max(...Array.from(traderStats.values()).map(s => (s.volumeTotal / totalVolume) * 100)),
-      suspectedWashTradePercentage: (totalSuspiciousVolume / totalVolume) * 100,
-      suspiciousTraders: Object.fromEntries(suspiciousTraders)
-    };
-  }
-
-  updateMetrics() {
-    // Update price stats
-    const priceStats = this.getPriceStats();
-    this.priceVolatility = priceStats.volatility;
-
-    // Update trader stats
-    const traderStats = this.getTraderStats("5m");
-    this.volumeData.maxWalletVolumePercentage = traderStats.maxWalletVolumePercentage;
-    this.volumeData.suspectedWashTradePercentage = traderStats.suspectedWashTradePercentage;
-
-    // Emit metrics update event for monitoring
-    this.emit("metricsUpdated", {
-      token: this.mint,
-      priceStats,
-      traderStats
-    });
-  }
-
-  hasCreatorSoldAll() {
-    return this.getCreatorHoldings() === 0;
-  }
-
-  getCreatorSellPercentage() {
-    if (!this.creatorInitialHoldings) return 0;
-    const currentCreatorHoldings = this.getCreatorHoldings();
-    return (
-      ((this.creatorInitialHoldings - currentCreatorHoldings) /
-        this.creatorInitialHoldings) *
-      100
-    );
-  }
-
-  getTopHolders(count = 5) {
-    return Array.from(this.holders.entries())
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, count)
-      .map(([address, balance]) => ({ address, balance }));
   }
 }
 

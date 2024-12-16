@@ -92,56 +92,91 @@ class SafetyChecker {
   }
 
   checkRugSignals(token) {
-    // Check for extreme concentration
-    if (token.getTopHolderConcentration(3) > 80) {
+    // Enhanced rug detection using pump metrics
+    const pumpMetrics = token.pumpMetrics;
+    const priceStats = token.getPriceStats();
+    
+    // Check for suspicious dump after pump
+    if (pumpMetrics.pumpCount > 0) {
+      const timeSinceLastPump = Date.now() - pumpMetrics.lastPumpTime;
+      if (timeSinceLastPump < 2 * 60 * 1000) { // Within 2 minutes of pump
+        if (priceStats.priceChange < -30) { // 30% drop
+          this.setFailureReason("Suspicious dump after pump", priceStats.priceChange);
+          return false;
+        }
+      }
+    }
+    
+    // Check for extreme holder concentration
+    if (token.getTopHolderConcentration(3) > config.SAFETY.MAX_TOP_HOLDER_CONCENTRATION) {
       this.setFailureReason("Extreme holder concentration", token.getTopHolderConcentration(3));
       return false;
     }
-
-    // Check for suspicious creator behavior
-    const creatorHoldings = token.getCreatorHoldings();
-    if (creatorHoldings > config.SAFETY.MAX_CREATOR_HOLDINGS_PERCENT) {
-      this.setFailureReason("High creator holdings", creatorHoldings);
-      return false;
+    
+    // Check creator behavior during pump
+    const creatorWallet = Array.from(token.wallets.values()).find(w => w.isCreator);
+    if (creatorWallet) {
+      const recentCreatorTrades = creatorWallet.trades.filter(t => 
+        Date.now() - t.timestamp < 5 * 60 * 1000
+      );
+      
+      if (recentCreatorTrades.length > 0) {
+        const totalSellVolume = recentCreatorTrades.reduce((sum, trade) => 
+          sum + (trade.amount < 0 ? Math.abs(trade.volumeInSol) : 0), 0
+        );
+        
+        if (totalSellVolume > token.vSolInBondingCurve * 0.1) { // Creator selling >10% of liquidity
+          this.setFailureReason("Suspicious creator selling", totalSellVolume);
+          return false;
+        }
+      }
     }
-
-    // Check for extreme price drops
-    const priceChange = ((token.currentPrice - token.initialPrice) / token.initialPrice) * 100;
-    if (priceChange < config.SAFETY.MIN_PRICE_CHANGE_PERCENT) {
-      this.setFailureReason("Extreme price drop", priceChange);
-      return false;
-    }
-
+    
     return true;
   }
 
   checkPumpDynamics(token) {
-    // Volume pattern checks
-    if (token.volumeData.maxWalletVolumePercentage > config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE) {
-      this.setFailureReason("High wallet volume", token.volumeData.maxWalletVolumePercentage);
-      return false;
+    // Fast check for pump characteristics
+    const pumpMetrics = token.pumpMetrics;
+    
+    // Check price acceleration
+    if (pumpMetrics.priceAcceleration > 0.5) {
+      // Strong positive acceleration indicates potential pump
+      const volumeSpikes = pumpMetrics.volumeSpikes;
+      if (volumeSpikes.length > 0) {
+        // Analyze volume spikes pattern
+        const recentSpike = volumeSpikes[volumeSpikes.length - 1];
+        const volumeIncrease = recentSpike.volume / token.getRecentVolume(5 * 60 * 1000) * 100;
+        
+        if (volumeIncrease > 200) { // Volume spike over 200%
+          // Check if price movement correlates with volume
+          const priceChange = recentSpike.priceChange;
+          if (priceChange > 0 && priceChange/volumeIncrease > 0.3) {
+            // Price movement correlates well with volume
+            return true;
+          }
+        }
+      }
     }
-
-    // Allow higher wash trading for pump tokens
-    if (token.volumeData.suspectedWashTradePercentage > config.SAFETY.MAX_WASH_TRADE_PERCENTAGE) {
-      this.setFailureReason("Excessive wash trading", token.volumeData.suspectedWashTradePercentage);
-      return false;
+    
+    // Check gain rate
+    if (pumpMetrics.highestGainRate > 2) { // More than 2% per second
+      const priceStats = token.getPriceStats();
+      if (priceStats.volatility < config.SAFETY.MAX_PRICE_VOLATILITY) {
+        return true;
+      }
     }
-
-    // Check if the token is in a valid pump pattern
-    const recentVolume = token.getVolume("5m");
-    if (recentVolume < config.SAFETY.MIN_VOLUME_SOL) {
-      this.setFailureReason("Insufficient volume", recentVolume);
-      return false;
+    
+    // Check pump frequency
+    if (pumpMetrics.pumpCount >= 2) {
+      const timeSinceLastPump = Date.now() - pumpMetrics.lastPumpTime;
+      if (timeSinceLastPump < 5 * 60 * 1000) { // Within last 5 minutes
+        return true;
+      }
     }
-
-    // Price volatility is expected in pumps, but should still be within limits
-    if (token.priceVolatility > config.SAFETY.MAX_PRICE_VOLATILITY) {
-      this.setFailureReason("Extreme volatility", token.priceVolatility);
-      return false;
-    }
-
-    return true;
+    
+    this.setFailureReason("No clear pump pattern detected");
+    return false;
   }
 
   getSafetyMetrics() {

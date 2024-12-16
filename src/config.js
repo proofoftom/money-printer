@@ -7,98 +7,94 @@ module.exports = {
   // Market thresholds
   THRESHOLDS: {
     // Market Cap Thresholds (in USD)
-    MAX_ENTRY_CAP_USD: 30000, // Maximum market cap in USD for entry ($30k)
-    DEAD_USD: 7000, // Consider token dead if it drops below $10k after pumping
-    HEATING_UP_USD: 9000, // Market cap threshold to consider token heating up ($15k)
-    FIRST_PUMP_USD: 12000, // Market cap threshold for first pump ($25k)
-    PUMP_DRAWDOWN: 20, // Percentage drawdown to enter recovery mode
-    RECOVERY: 10, // Percentage recovery needed to enter position
-    SAFE_RECOVERY_GAIN: 15, // Maximum gain % from drawdown low to enter position after becoming safe
+    MAX_ENTRY_CAP_USD: 50000, // Increased to catch larger pumps ($50k)
+    DEAD_USD: 5000, // Lower threshold for considering token dead ($5k)
+    HEATING_UP_USD: 7000, // Lower threshold for heating up ($7k)
+    FIRST_PUMP_USD: 10000, // Lower threshold for first pump ($10k)
+    PUMP_DRAWDOWN: 15, // Reduced drawdown for quicker recovery entry
+    RECOVERY: 8, // Lower recovery threshold for faster reentry
+    SAFE_RECOVERY_GAIN: 12, // Lower safe recovery threshold
 
     // Time and Age Thresholds
-    MIN_TIME_SINCE_CREATION: 30, // Minimum seconds since token creation
-    MIN_HOLDER_WALLET_AGE: 7, // Minimum age of holder wallets in days
+    MIN_TIME_SINCE_CREATION: 20, // Reduced minimum time for faster entry
+    MIN_HOLDER_WALLET_AGE: 5, // Reduced minimum holder age
 
     // Holder Distribution Thresholds
-    MIN_HOLDERS: 25, // Minimum number of unique holders
-    MAX_TOP_HOLDER_CONCENTRATION: 30, // Maximum percentage of supply held by top holders
+    MIN_HOLDERS: 20, // Lower minimum holders requirement
+    MAX_TOP_HOLDER_CONCENTRATION: 35, // Allow higher concentration for early entry
 
     // Price Action Thresholds
-    MAX_INITIAL_PRICE_MULT: 3, // Maximum multiplier from initial price
-    MAX_PRICE_VOLATILITY: 50, // Maximum price volatility percentage
+    MAX_INITIAL_PRICE_MULT: 4, // Allow higher initial price multiplier
+    MAX_PRICE_VOLATILITY: 75, // Increased volatility tolerance
 
     // Trading Pattern Thresholds
-    MAX_AVG_TRADE_SIZE_USD: 500, // Maximum average trade size in USD
-    MIN_BUY_SELL_RATIO: 0.6, // Minimum ratio of buys to total trades
-    MAX_SINGLE_WALLET_VOLUME: 25, // Maximum percentage of volume from a single wallet
+    MAX_AVG_TRADE_SIZE_USD: 750, // Increased maximum trade size
+    MIN_BUY_SELL_RATIO: 0.5, // Lower buy/sell ratio requirement
+    MAX_SINGLE_WALLET_VOLUME: 30, // Allow higher single wallet volume
 
     // Volume Pattern Thresholds
-    MIN_VOLUME_PRICE_CORRELATION: 0.5, // Minimum correlation between volume and price
-    MAX_WASH_TRADE_PERCENTAGE: 20, // Maximum percentage of suspected wash trades
+    MIN_VOLUME_PRICE_CORRELATION: 0.4, // Lower correlation requirement
+    MAX_WASH_TRADE_PERCENTAGE: 25, // Slightly increased wash trade tolerance
 
-    // Pump token sniper thresholds
-    PUMP: 30, // Consider it a pump at 30% gain
-    RECOVERY: 15, // Lower recovery threshold for quick reentry
-    SAFE_RECOVERY_GAIN: 25, // Maximum gain to consider a recovery safe
-    DEAD: -25, // Consider it dead at 25% loss
+    // Pump token specific thresholds
+    PUMP: 25, // Lower pump threshold for faster entry
+    RECOVERY: 12, // Faster recovery threshold
+    SAFE_RECOVERY_GAIN: 20, // Lower safe recovery gain requirement
+    DEAD: -20, // Higher dead threshold for faster exit
   },
 
   // Safety configuration
   SAFETY: {
-    // Volume and liquidity thresholds - More lenient for quick entry
-    MIN_LIQUIDITY_SOL: 2, // Reduced minimum liquidity requirement
-    MIN_VOLUME_SOL: 0.5, // Lower volume requirement for early entry
-    MAX_WALLET_VOLUME_PERCENTAGE: 35, // Allow higher concentration initially
-    MIN_VOLUME_PRICE_CORRELATION: 0.3, // Lower correlation requirement for early-stage tokens
-    MAX_WASH_TRADE_PERCENTAGE: 40, // More tolerant of wash trading in pump tokens
+    // Volume and liquidity thresholds
+    MIN_LIQUIDITY_SOL: 1.5, // Lower liquidity requirement
+    MIN_VOLUME_SOL: 0.3, // Lower volume requirement
+    MAX_WALLET_VOLUME_PERCENTAGE: 40, // Allow higher concentration
+    MIN_VOLUME_PRICE_CORRELATION: 0.25, // Lower correlation requirement
+    MAX_WASH_TRADE_PERCENTAGE: 45, // More tolerant of wash trading
 
-    // Price reference
-    SOL_PRICE_USD: 100, // Reference price for calculations
+    // Time-based parameters
+    MIN_TOKEN_AGE_SECONDS: 20, // Reduced minimum age
+    MAX_HOLD_TIME_SECONDS: 240, // 4 minutes max hold
 
-    // Time-based parameters - Extremely short for quick entry
-    MIN_TOKEN_AGE_SECONDS: 30, // Just enough to verify it's not an instant rug
-    MAX_HOLD_TIME_SECONDS: 300, // 5 minutes max hold for pump tokens
+    // Price action thresholds
+    MAX_PRICE_CHANGE_PERCENT: 250, // Allow bigger pumps
+    MIN_PRICE_CHANGE_PERCENT: -35, // More tolerant of dips
+    MAX_PRICE_VOLATILITY: 175, // Higher volatility tolerance
 
-    // Price action thresholds - Adjusted for pump dynamics
-    MAX_PRICE_CHANGE_PERCENT: 200, // Allow for bigger pumps
-    MIN_PRICE_CHANGE_PERCENT: -40, // Catch dips but avoid rugs
-    MAX_PRICE_VOLATILITY: 150, // High volatility is expected in pumps
-
-    // Holder distribution thresholds - More lenient
-    MIN_HOLDERS: 50, // Lower holder requirement for early entry
-    MAX_TOP_HOLDER_CONCENTRATION: 40, // Allow higher concentration in early stages
+    // Holder distribution thresholds
+    MIN_HOLDERS: 40, // Lower holder requirement
+    MAX_TOP_HOLDER_CONCENTRATION: 45, // Allow higher concentration
 
     // Creator thresholds
-    MAX_CREATOR_HOLDINGS_PERCENT: 15, // Allow higher creator holdings initially
+    MAX_CREATOR_HOLDINGS_PERCENT: 20, // Allow higher creator holdings
 
     // Recovery thresholds
-    RECOVERY_THRESHOLD_PERCENT: 10, // Lower recovery threshold for quick entries
-    MAX_DRAWDOWN_PERCENT: 30, // Maximum drawdown before considering it a failed pump
+    RECOVERY_THRESHOLD_PERCENT: 8, // Lower recovery threshold
+    MAX_DRAWDOWN_PERCENT: 25, // Lower maximum drawdown
   },
 
   // Position sizing
   POSITION: {
-    // Entry parameters
-    MAX_POSITION_SIZE_SOL: 2.0, // Increased to allow larger positions
-    MIN_POSITION_SIZE_SOL: 0.1, // Kept the same
-    POSITION_SIZE_MARKET_CAP_RATIO: 0.01, // Increased to get meaningful position sizes
-    MAX_PRICE_IMPACT_BPS: 100, // Increased from 50 to allow larger trades
+    MAX_POSITION_SIZE_SOL: 2.5, // Increased maximum position
+    MIN_POSITION_SIZE_SOL: 0.1,
+    POSITION_SIZE_MARKET_CAP_RATIO: 0.015, // Increased for larger positions
+    MAX_PRICE_IMPACT_BPS: 120, // Allow higher price impact
 
     // Dynamic position sizing
     USE_DYNAMIC_SIZING: true,
-    VOLATILITY_SCALING_FACTOR: 0.01, // Reduced to make volatility have less impact
-    LIQUIDITY_SCALING_FACTOR: 0.7, // Scales position size based on liquidity
+    VOLATILITY_SCALING_FACTOR: 0.008, // Reduced impact of volatility
+    LIQUIDITY_SCALING_FACTOR: 0.8, // Increased liquidity scaling
 
     // Exit parameters
-    STOP_LOSS_PERCENTAGE: 15, // Tight stop loss for pump tokens
-    TRAILING_STOP_ACTIVATION: 5, // Reduced from 10 to lock in profits earlier
-    TRAILING_STOP_DISTANCE: 3, // Reduced from 5 to lock in more profits
+    STOP_LOSS_PERCENTAGE: 12, // Tighter stop loss
+    TRAILING_STOP_ACTIVATION: 4, // Earlier trailing stop
+    TRAILING_STOP_DISTANCE: 2.5, // Tighter trailing stop
 
     // Take profit tiers
     TAKE_PROFIT_TIERS: [
-      { percentage: 20, size: 0.3 }, // Take 30% profit at 20% gain
-      { percentage: 50, size: 0.4 }, // Take 40% profit at 50% gain
-      { percentage: 100, size: 0.3 }, // Take remaining at 100% gain
+      { percentage: 15, size: 0.3 }, // Take profits earlier
+      { percentage: 40, size: 0.4 }, // Take more at medium gains
+      { percentage: 80, size: 0.3 }, // Take final profits sooner
     ],
 
     // Volume-based exit
