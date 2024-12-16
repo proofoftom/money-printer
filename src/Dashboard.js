@@ -79,7 +79,7 @@ class Dashboard {
   }
 
   initializeComponents() {
-    // Create wallet status box (1 col)
+    // Create wallet status box (top row)
     this.walletBox = this.grid.set(0, 0, 3, 3, blessed.box, {
       label: " Wallet Status ",
       content: "Initializing...",
@@ -91,8 +91,8 @@ class Dashboard {
       },
     });
 
-    // Create balance history (1 col)
-    this.balanceChart = this.grid.set(0, 3, 3, 3, contrib.line, {
+    // Create balance history (top row)
+    this.balanceChart = this.grid.set(0, 3, 3, 12, contrib.line, {
       style: {
         line: "yellow",
         text: "green",
@@ -101,116 +101,93 @@ class Dashboard {
       xLabelPadding: 3,
       xPadding: 5,
       label: " Balance History ",
-      showLegend: false,
-      wholeNumbersOnly: false,
+      showLegend: true,
     });
 
-    // Create trade history box (1 col)
-    this.tradeBox = this.grid.set(0, 6, 3, 3, blessed.box, {
-      label: " Trade History ",
-      content: "Waiting for trades...",
-      border: "line",
+    // Token State Columns (4 equal columns)
+    this.heatingUpBox = this.grid.set(3, 0, 6, 3, blessed.log, {
+      label: " Heating Up ",
       tags: true,
-      padding: 1,
-      scrollable: true,
+      border: "line",
       style: {
         label: { bold: true },
       },
-    });
-
-    // Create status log
-    this.statusBox = this.grid.set(0, 9, 3, 6, blessed.log, {
-      label: " System Status ",
       scrollable: true,
       alwaysScroll: true,
-      border: "line",
+      scrollbar: {
+        ch: " ",
+        inverse: true,
+      },
+    });
+
+    this.activeBox = this.grid.set(3, 3, 6, 3, blessed.log, {
+      label: " Active ",
       tags: true,
-      padding: 1,
-      style: {
-        label: { bold: true },
-      },
-    });
-
-    // Token state boxes in second row, extending to bottom
-    this.heatingUpBox = this.grid.set(3, 0, 9, 3, blessed.box, {
-      label: " Heating Up ",
-      content: "Waiting...",
       border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
       style: {
         label: { bold: true },
       },
-    });
-
-    this.firstPumpBox = this.grid.set(3, 3, 9, 3, blessed.box, {
-      label: " First Pump ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
       scrollable: true,
-      style: {
-        label: { bold: true },
+      alwaysScroll: true,
+      scrollbar: {
+        ch: " ",
+        inverse: true,
       },
     });
 
-    this.drawdownBox = this.grid.set(3, 6, 9, 3, blessed.box, {
+    this.drawdownBox = this.grid.set(3, 6, 6, 3, blessed.log, {
       label: " Drawdown ",
-      content: "Waiting...",
+      tags: true,
       border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
       style: {
         label: { bold: true },
       },
+      scrollable: true,
+      alwaysScroll: true,
+      scrollbar: {
+        ch: " ",
+        inverse: true,
+      },
     });
 
-    this.supplyRecoveryBox = this.grid.set(3, 9, 9, 3, blessed.box, {
-      label: " Unsafe Recovery ",
-      content: "Waiting...",
+    this.positionsBox = this.grid.set(3, 9, 6, 3, blessed.log, {
+      label: " Open Positions ",
+      tags: true,
       border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
       style: {
         label: { bold: true },
       },
+      scrollable: true,
+      alwaysScroll: true,
+      scrollbar: {
+        ch: " ",
+        inverse: true,
+      },
     });
 
-    this.activePositionsBox = this.grid.set(3, 12, 9, 3, blessed.box, {
-      label: " Active Positions ",
-      content: "Waiting...",
-      border: "line",
+    // Bottom row split between trader stats and whale activity
+    this.traderStatsBox = this.grid.set(9, 0, 3, 6, blessed.box, {
+      label: " Trader Statistics ",
       tags: true,
-      padding: 1,
-      scrollable: true,
+      border: "line",
       style: {
         label: { bold: true },
       },
+      padding: 1,
     });
 
-    // Add trader stats box
-    this.traderStatsBox = this.grid.set(6, 8, 3, 4, blessed.box, {
-      label: "Trader Statistics",
+    this.whaleActivityBox = this.grid.set(9, 6, 3, 6, blessed.log, {
+      label: " Whale Activity ",
       tags: true,
-      border: { type: "line" },
+      border: "line",
       style: {
-        fg: "green",
-        border: { fg: "green" },
+        label: { bold: true },
       },
-    });
-
-    // Add whale activity box
-    this.whaleActivityBox = this.grid.set(9, 8, 3, 4, contrib.log, {
-      label: "Whale Activity",
-      tags: true,
-      border: { type: "line" },
-      style: {
-        fg: "yellow",
-        border: { fg: "yellow" },
+      scrollable: true,
+      alwaysScroll: true,
+      scrollbar: {
+        ch: " ",
+        inverse: true,
       },
     });
   }
@@ -402,23 +379,49 @@ class Dashboard {
   }
 
   updateDashboard() {
-    try {
-      this.walletBox.setContent(this.getWalletStatus());
-      this.heatingUpBox.setContent(this.getTokensByState("heatingUp"));
-      this.firstPumpBox.setContent(this.getTokensByState("firstPump"));
-      this.drawdownBox.setContent(this.getTokensByState("drawdown"));
-      this.supplyRecoveryBox.setContent(
-        this.getTokensByState("unsafeRecovery")
-      );
-      this.activePositionsBox.setContent(this.getActivePositions());
-      this.tradeBox.setContent(this.getTradeHistory());
-      this.updateBalanceHistory();
-      this.updateTraderStats();
-      this.updateWhaleActivity();
-      this.screen.render();
-    } catch (error) {
-      throw error;
+    this.updateWalletStatus();
+    this.updateBalanceChart();
+    this.updateTokenStates();
+    this.updatePositions();
+    this.updateTraderStats();
+    this.updateWhaleActivity();
+    this.screen.render();
+  }
+
+  updateTokenStates() {
+    // Clear existing content
+    this.heatingUpBox.setContent("");
+    this.activeBox.setContent("");
+    this.drawdownBox.setContent("");
+
+    // Get tokens in each state
+    const tokens = this.tokenTracker.getTokens();
+    for (const [mint, token] of tokens) {
+      const state = token.getCurrentState();
+      const content = this.formatTokenInfo(token);
+
+      switch (state) {
+        case "heatingUp":
+          this.heatingUpBox.add(content);
+          break;
+        case "active":
+          this.activeBox.add(content);
+          break;
+        case "drawdown":
+          this.drawdownBox.add(content);
+          break;
+      }
     }
+  }
+
+  formatTokenInfo(token) {
+    const price = this.priceManager.getPrice(token.mint);
+    const volume = token.getVolume();
+    return `{bold}${token.mint}{/bold}\n` +
+           `Price: ${price.toFixed(6)} SOL\n` +
+           `Volume: ${volume.toFixed(2)} SOL\n` +
+           `Age: ${this.formatAge(token.getAge())}\n` +
+           "───────────────\n";
   }
 
   updateTraderStats() {
@@ -476,88 +479,16 @@ class Dashboard {
     });
   }
 
-  getTokensByState(state) {
-    try {
-      const tokens = Array.from(this.tokenTracker.tokens.values()).filter(
-        (token) => token.state === state
-      );
+  updateWalletStatus() {
+    this.walletBox.setContent(this.getWalletStatus());
+  }
 
-      if (tokens.length === 0) {
-        return "No tokens in this state";
-      }
+  updateBalanceChart() {
+    this.updateBalanceHistory();
+  }
 
-      return tokens
-        .map((token) => {
-          try {
-            // Calculate token age in seconds
-            const now = Date.now();
-            const tokenAge = Math.floor((now - token.minted) / 1000);
-            const ageStr = tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
-
-            // Format market cap in USD with k format
-            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-            const mcFormatted = marketCapUSD >= 1000
-              ? `${(marketCapUSD / 1000).toFixed(1)}k`
-              : marketCapUSD.toFixed(1);
-
-            // Get holder info
-            const holderCount = token.getHolderCount();
-            const topConcentration = token.getTopHolderConcentration(10);
-            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
-
-            // Get volume data in USD with k format for ≥1000, whole numbers for <1000
-            const formatVolume = (vol) => {
-              const volUSD = this.priceManager.solToUSD(vol);
-              return volUSD >= 1000
-                ? `${(volUSD / 1000).toFixed(1)}k`
-                : Math.round(volUSD).toString();
-            };
-
-            // Get volume from token's volume metrics
-            const vol1m = formatVolume(token.volume1m || 0);
-            const vol5m = formatVolume(token.volume5m || 0);
-            const vol30m = formatVolume(token.volume30m || 0);
-
-            // Format the token info string
-            const symbol = token.symbol || token.mint.slice(0, 8);
-            const rows = [
-              `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(5)} | 30m: $${vol30m}`,
-            ];
-
-            // Add safety failure reason for unsafe recovery state
-            if (state === "unsafeRecovery" && token.unsafeReason) {
-              const { reason, value } = token.unsafeReason;
-              let valueStr = value;
-              switch (reason) {
-                case "High holder concentration":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "Token too young":
-                  valueStr = `${Math.floor(value)}s`;
-                  break;
-                case "Creator holdings too high":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "volatilityTooHigh":
-                  valueStr = `${value.toFixed(2)}`;
-                  break;
-                default:
-                  valueStr = value ? value.toString() : "N/A";
-              }
-              rows.push(`UNSAFE: ${reason} (${valueStr})`);
-            }
-
-            rows.push("─".repeat(50)); // Add horizontal rule between tokens
-            return rows.join("\n");
-          } catch (err) {
-            throw err;
-          }
-        })
-        .join("\n");
-    } catch (error) {
-      throw error;
-    }
+  updatePositions() {
+    this.positionsBox.setContent(this.getActivePositions());
   }
 }
 

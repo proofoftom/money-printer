@@ -2,7 +2,20 @@ const config = require('./config');
 
 class TransactionSimulator {
   constructor() {
-    this.config = config.TRANSACTION.SIMULATION_MODE;
+    this.config = config.TRANSACTION && config.TRANSACTION.SIMULATION_MODE || {
+      ENABLED: true,
+      AVG_BLOCK_TIME: 0.4,
+      PRICE_IMPACT: {
+        ENABLED: true,
+        SLIPPAGE_BASE: 1,
+        VOLUME_MULTIPLIER: 1.2
+      },
+      NETWORK_DELAY: {
+        MIN_MS: 50,
+        MAX_MS: 200,
+        CONGESTION_MULTIPLIER: 1.5
+      }
+    };
     this.lastTransactionTime = 0;
   }
 
@@ -98,17 +111,17 @@ class TransactionSimulator {
   /**
    * Calculates network delay based on configuration and simulated network conditions
    * @returns {number} Network delay in milliseconds
-   * @private
    */
   calculateNetworkDelay() {
     const { MIN_MS, MAX_MS, CONGESTION_MULTIPLIER } = this.config.NETWORK_DELAY;
+    
+    // Base delay
     const baseDelay = Math.random() * (MAX_MS - MIN_MS) + MIN_MS;
     
-    // Simulate network congestion (30% chance of congestion)
-    const isCongested = Math.random() < 0.3;
-    const delay = isCongested ? baseDelay * CONGESTION_MULTIPLIER : baseDelay;
-
-    return Math.floor(delay); // Return whole number of milliseconds
+    // Simulate network congestion (random spikes)
+    const congestion = Math.random() > 0.8 ? CONGESTION_MULTIPLIER : 1;
+    
+    return Math.floor(baseDelay * congestion);
   }
 }
 
