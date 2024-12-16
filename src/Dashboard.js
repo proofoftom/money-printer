@@ -34,7 +34,7 @@ class Dashboard {
       context,
       ...additionalInfo,
     });
-    
+
     // Log to dashboard if available, otherwise fallback to console
     if (this.statusBox) {
       this.logStatus(`Error in ${context}: ${error.message}`, "error");
@@ -59,7 +59,7 @@ class Dashboard {
 
     this.initializeComponents();
     this.setupEventHandlers();
-    
+
     // Set up periodic updates with error handling
     setInterval(() => {
       try {
@@ -332,7 +332,12 @@ class Dashboard {
         this.trades.pop();
       }
     } catch (error) {
-      this.handleError(error, "logging trade", { type, mint, profitLoss, symbol });
+      this.handleError(error, "logging trade", {
+        type,
+        mint,
+        profitLoss,
+        symbol,
+      });
     }
   }
 
@@ -409,51 +414,41 @@ class Dashboard {
         return "No tokens in this state";
       }
 
-      // Find the longest symbol for padding
-      const maxSymbolLength = Math.max(...tokens.map(t => (t.symbol || t.mint.slice(0, 8)).length));
-
       return tokens
         .map((token) => {
           try {
-            // Format USD values
-            const formatUSD = (value) => {
-              if (!value) return "$0";
-              if (value >= 1000000) return `$${(value / 1000000).toFixed(1)}m`;
-              if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
-              return `$${Math.floor(value)}`;
-            };
-
-            // Format age
-            const getFormattedAge = () => {
-              const ageInSeconds = Math.floor((Date.now() - token.minted) / 1000);
-              if (ageInSeconds < 60) return `${ageInSeconds}s`;
-              const ageInMinutes = Math.floor(ageInSeconds / 60);
-              if (ageInMinutes < 60) return `${ageInMinutes}m`;
-              const ageInHours = Math.floor(ageInMinutes / 60);
-              return `${ageInHours}h`;
-            };
-
-            // Get token data
-            const symbol = token.symbol || token.mint.slice(0, 8);
-            const age = getFormattedAge();
-            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-            const holderCount = token.getHolderCount();
-            const topHolderConcentration = token.getTopHolderConcentration(10);
-
-            // Get volumes for different timeframes
-            const vol1m = this.priceManager.solToUSD(token.getVolume("1m"));
-            const vol5m = this.priceManager.solToUSD(token.getVolume("5m"));
-            const vol30m = this.priceManager.solToUSD(token.getVolume("30m"));
-
             if (state === "unsafeRecovery") {
+              const formatUSD = (value) => {
+                if (!value) return "$0";
+                if (value >= 1000000)
+                  return `$${(value / 1000000).toFixed(1)}m`;
+                if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
+                return `$${Math.floor(value)}`;
+              };
+
+              const marketCapUSD = this.priceManager.solToUSD(
+                token.marketCapSol
+              );
+              const highestMarketCapUSD = this.priceManager.solToUSD(
+                token.highestMarketCap
+              );
+              const drawdownLowUSD = token.drawdownLow
+                ? this.priceManager.solToUSD(token.drawdownLow)
+                : null;
+              const volumeUSD = this.priceManager.solToUSD(
+                token.getVolume("5m")
+              );
+
               const mcStr = formatUSD(marketCapUSD);
-              const highStr = formatUSD(this.priceManager.solToUSD(token.highestMarketCap));
-              const lowStr = token.drawdownLow ? formatUSD(this.priceManager.solToUSD(token.drawdownLow)) : "N/A";
-              const volStr = formatUSD(vol5m);
+              const highStr = formatUSD(highestMarketCapUSD);
+              const lowStr = drawdownLowUSD ? formatUSD(drawdownLowUSD) : "N/A";
+              const volStr = formatUSD(volumeUSD);
 
               let rows = [
-                `${symbol}... | MC: ${mcStr} | Vol: ${volStr}`,
-                `High: ${highStr} | Low: ${lowStr}`
+                `${
+                  token.symbol || token.mint.slice(0, 8)
+                }... | MC: ${mcStr} | Vol: ${volStr}`,
+                `High: ${highStr} | Low: ${lowStr}`,
               ];
 
               if (token.unsafeReason) {
@@ -482,12 +477,52 @@ class Dashboard {
 
               return rows.join("\n");
             } else {
-              // Pad symbol to align columns
-              const symbolPadded = symbol.padEnd(maxSymbolLength);
-              
+              // Calculate token age in seconds
+              const now = Date.now();
+              const tokenAge = Math.floor((now - token.minted) / 1000);
+              const ageStr =
+                tokenAge > 59
+                  ? `${Math.floor(tokenAge / 60)}m`
+                  : `${tokenAge}s`;
+
+              // Format market cap in USD with k format
+              const marketCapUSD = this.priceManager.solToUSD(
+                token.marketCapSol
+              );
+              const mcFormatted =
+                marketCapUSD >= 1000
+                  ? `${(marketCapUSD / 1000).toFixed(1)}k`
+                  : marketCapUSD.toFixed(1);
+
+              // Get holder info
+              const holderCount = token.getHolderCount();
+              const topConcentration = token.getTopHolderConcentration(10);
+              const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(
+                0
+              )}%`;
+
+              // Get volume data in USD with k format for ≥1000, whole numbers for <1000
+              const formatVolume = (vol) => {
+                const volUSD = this.priceManager.solToUSD(vol);
+                return volUSD >= 1000
+                  ? `${(volUSD / 1000).toFixed(1)}k`
+                  : Math.round(volUSD).toString();
+              };
+
+              const vol1m = formatVolume(token.getVolume("1m"));
+              const vol5m = formatVolume(token.getVolume("5m"));
+              const vol1h = formatVolume(token.getVolume("30m"));
+
+              // Format the token info string
+              const symbol = token.symbol || token.mint.slice(0, 8);
               return [
-                `${symbolPadded}  ${age.padStart(4)} | MC: ${formatUSD(marketCapUSD).padStart(8)} | H: ${holderCount.toString().padStart(4)} | T: ${topHolderConcentration.toFixed(1).padStart(4)}%`,
-                `VOL  1m: ${formatUSD(vol1m).padStart(8)} | 5m: ${formatUSD(vol5m).padStart(8)} | 30m: ${formatUSD(vol30m).padStart(8)}`
+                `${symbol.padEnd(12)} ${ageStr.padEnd(
+                  3
+                )} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
+                `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(
+                  5
+                )} | 1h: $${vol1h}`,
+                "─".repeat(50), // Add horizontal rule between tokens
               ].join("\n");
             }
           } catch (err) {
@@ -497,7 +532,6 @@ class Dashboard {
             }: ${err.message}`;
           }
         })
-        .map(display => display + "\n" + "─".repeat(80))  // Longer separator for better alignment
         .join("\n");
     } catch (error) {
       this.handleError(error, `getting ${state} tokens`);
