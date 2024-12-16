@@ -357,6 +357,10 @@ class TraderManager extends EventEmitter {
   }
 
   getRepeatPumpParticipants(pumpTimes, minParticipation = 2) {
+    if (!pumpTimes || !Array.isArray(pumpTimes)) {
+      return [];
+    }
+
     // Create a map to track trader participation in pumps
     const participationCount = new Map();
     const repeatParticipants = new Set();
@@ -369,7 +373,7 @@ class TraderManager extends EventEmitter {
 
       // Find traders active during this pump
       this.traders.forEach(trader => {
-        const wasActive = trader.trades.some(trade => {
+        const wasActive = trader.tradeHistory.all.some(trade => {
           const tradeTime = trade.timestamp;
           return tradeTime >= startTime && tradeTime <= endTime;
         });
