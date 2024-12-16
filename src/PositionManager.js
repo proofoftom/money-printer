@@ -1,12 +1,14 @@
 // PositionManager component
+const EventEmitter = require("events");
 const Wallet = require("./Wallet");
 const config = require("./config");
 const ExitStrategies = require("./ExitStrategies");
 const TransactionSimulator = require("./TransactionSimulator");
 const PositionStateManager = require("./PositionStateManager");
 
-class PositionManager {
+class PositionManager extends EventEmitter {
   constructor(wallet) {
+    super();
     this.wallet = wallet;
     this.wins = 0;
     this.losses = 0;
@@ -103,6 +105,15 @@ Partial Exit:
       this.stateManager.addPosition(position);
       this.wallet.updateBalance(-positionSize);
 
+      // Emit trade event for opening position
+      this.emit('trade', {
+        type: 'BUY',
+        mint,
+        profitLoss: 0,
+        symbol: position.symbol || mint.slice(0, 8),
+        timestamp: Date.now()
+      });
+
       return true;
     }
     return false;
@@ -110,8 +121,12 @@ Partial Exit:
 
   async closePosition(mint, exitPrice, portion = 1.0) {
     const position = this.stateManager.getPosition(mint);
-    if (!position) return null;
+    if (!position) {
+      console.error(`Cannot close position: Position not found for ${mint}`);
+      return null;
+    }
 
+    // Use current price from position if no exit price provided
     exitPrice = exitPrice || position.currentPrice;
 
     // Simulate transaction delay and price impact for closing
@@ -124,23 +139,43 @@ Partial Exit:
     );
 
     const priceDiff = executionPrice - position.entryPrice;
-    const profitLoss = (priceDiff / position.entryPrice) * sizeToClose;
+    const profitLoss = (priceDiff / position.entryPrice) * 100;
+    const profitLossAmount = (priceDiff / position.entryPrice) * sizeToClose;
     
-    this.wallet.updateBalance(sizeToClose + profitLoss);
+    this.wallet.updateBalance(sizeToClose + profitLossAmount);
     this.wallet.recordTrade(profitLoss > 0 ? 1 : -1);
+
+    // Emit trade event with complete information
+    this.emit('trade', {
+      type: portion === 1.0 ? 'CLOSE' : 'PARTIAL',
+      mint,
+      profitLoss,
+      symbol: position.symbol || mint.slice(0, 8),
+      timestamp: Date.now()
+    });
 
     if (portion === 1.0) {
       if (profitLoss > 0) this.wins++;
       else if (profitLoss < 0) this.losses++;
       
-      return this.stateManager.closePosition(mint);
+      const closedPosition = this.stateManager.closePosition(mint);
+      if (!closedPosition) {
+        console.error(`Failed to close position for ${mint}`);
+        return null;
+      }
+      return closedPosition;
     } else {
-      return this.stateManager.recordPartialExit(mint, {
+      const updatedPosition = this.stateManager.recordPartialExit(mint, {
         portion,
         remainingSize: position.remainingSize - portion,
         exitPrice: executionPrice,
         profitLoss
       });
+      if (!updatedPosition) {
+        console.error(`Failed to record partial exit for ${mint}`);
+        return null;
+      }
+      return updatedPosition;
     }
   }
 
@@ -182,24 +217,26 @@ Partial Exit:
     // Update high price if needed
     const highPrice = Math.max(position.highPrice || position.entryPrice, currentPrice);
 
-    // Get latest volume from volumeData or keep existing
-    const volume = volumeData?.volume || position.volume || 0;
-    const volume1m = volumeData?.volume1m || position.volume1m || 0;
-    const volume5m = volumeData?.volume5m || position.volume5m || 0;
-    const volume30m = volumeData?.volume30m || position.volume30m || 0;
-
-    return this.stateManager.updatePosition(mint, {
+    // Update position with new data
+    const updatedPosition = this.stateManager.updatePosition(mint, {
       currentPrice,
       priceHistory,
       volumeHistory,
       profitHistory,
       highPrice,
-      volume,
-      volume1m,
-      volume5m,
-      volume30m,
+      volume: volumeData?.volume || position.volume || 0,
+      volume1m: volumeData?.volume1m || position.volume1m || 0,
+      volume5m: volumeData?.volume5m || position.volume5m || 0,
+      volume30m: volumeData?.volume30m || position.volume30m || 0,
       candleHistory: candleData ? [...(position.candleHistory || []), candleData] : undefined
     });
+
+    if (!updatedPosition) {
+      console.error(`Failed to update position for ${mint}`);
+      return null;
+    }
+
+    return updatedPosition;
   }
 
   getPosition(mint) {

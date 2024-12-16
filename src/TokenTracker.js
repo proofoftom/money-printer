@@ -42,6 +42,12 @@ class TokenTracker extends EventEmitter {
     });
 
     token.on("readyForPosition", async (token) => {
+      // Check if we already have a position for this token
+      if (this.positionManager.getPosition(token.mint)) {
+        console.log(`Position already exists for ${token.symbol || token.mint.slice(0, 8)}, skipping`);
+        return;
+      }
+
       const success = await this.positionManager.openPosition(
         token.mint,
         token.marketCapSol
@@ -79,6 +85,7 @@ class TokenTracker extends EventEmitter {
       tradeData.tradeAmount = tradeData.tokenAmount;
     }
 
+    // Update token data first
     token.update(tradeData);
 
     // Update missed opportunity tracking
@@ -86,6 +93,12 @@ class TokenTracker extends EventEmitter {
 
     // Convert market cap to USD for threshold comparisons
     const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+
+    // Get current position if exists
+    const position = this.positionManager.getPosition(token.mint);
+    if (position && token.state !== "inPosition") {
+      token.setState("inPosition");
+    }
 
     switch (token.state) {
       case "new":
@@ -128,7 +141,7 @@ class TokenTracker extends EventEmitter {
           token.mint,
           token.marketCapSol,
           { 
-            volume: token.volume5m || 0, // Use 5-minute volume
+            volume: token.volume5m || 0,
             volume1m: token.volume1m || 0,
             volume30m: token.volume30m || 0
           }
@@ -156,10 +169,14 @@ class TokenTracker extends EventEmitter {
     if (marketCapUSD <= config.THRESHOLDS.DEAD_USD) {
       // Only mark tokens as dead if they've reached FIRST_PUMP state
       if (token.highestMarketCap >= config.THRESHOLDS.FIRST_PUMP_USD) {
-        token.setState("dead");
-        if (this.positionManager.getPosition(token.mint)) {
-          this.positionManager.closePosition(token.mint);
-          this.emit("positionClosed", { token, reason: "dead" });
+        if (position) {
+          const closeResult = this.positionManager.closePosition(token.mint, token.marketCapSol);
+          if (closeResult) {
+            token.setState("dead");
+            this.emit("positionClosed", { token, reason: "dead" });
+          }
+        } else {
+          token.setState("dead");
         }
       }
     }

@@ -41,6 +41,11 @@ class Dashboard {
       this.logStatus(args.join(" "), "error");
     };
 
+    // Listen for trade events from PositionManager
+    this.positionManager.on('trade', (tradeData) => {
+      this.logTrade(tradeData);
+    });
+
     this.initializeDashboard();
   }
 
