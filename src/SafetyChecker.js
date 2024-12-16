@@ -20,9 +20,7 @@ class SafetyChecker {
   async runSecurityChecks(token) {
     const startTime = Date.now();
     let approved = true;
-    let rejectionCategory = null;
-    let rejectionReason = null;
-    let details = {};
+    let failedCheck = null;
 
     try {
       // Reset failure reason at start of checks
@@ -31,35 +29,50 @@ class SafetyChecker {
       // Basic safety checks that even pump tokens must pass
       if (!this.checkMinimumRequirements(token)) {
         approved = false;
-        rejectionCategory = "basic";
-        rejectionReason = this.lastFailureReason?.reason || "minimumRequirements";
+        failedCheck = {
+          name: 'MINIMUM_REQUIREMENTS',
+          reason: this.lastFailureReason?.reason || 'minimumRequirements',
+          actual: this.lastFailureReason?.value,
+          configPath: 'SAFETY.MIN_TOKEN_AGE_SECONDS'
+        };
       } 
       // Check for rug pull signals
       else if (!this.checkRugSignals(token)) {
         approved = false;
-        rejectionCategory = "rugPull";
-        rejectionReason = this.lastFailureReason?.reason || "rugSignals";
+        failedCheck = {
+          name: 'RUG_SIGNALS',
+          reason: this.lastFailureReason?.reason || 'rugSignals',
+          actual: this.lastFailureReason?.value,
+          configPath: 'SAFETY.MAX_TOP_HOLDER_CONCENTRATION'
+        };
       }
       // Pump-specific checks
       else if (!this.checkPumpDynamics(token)) {
         approved = false;
-        rejectionCategory = "pumpDynamics";
-        rejectionReason = this.lastFailureReason?.reason || "invalidPumpPattern";
+        failedCheck = {
+          name: 'PUMP_DYNAMICS',
+          reason: this.lastFailureReason?.reason || 'invalidPumpPattern',
+          actual: this.lastFailureReason?.value,
+          configPath: 'THRESHOLDS.PUMP'
+        };
       }
 
-      // Log the check results
-      const duration = Date.now() - startTime;
-
-      // Track the token for missed opportunity analysis
-      if (!approved) {
-        this.missedOpportunityLogger.trackToken(token, rejectionReason);
-        token.unsafeReason = rejectionReason;
+      // Track the token for missed opportunity analysis if it failed checks
+      if (!approved && failedCheck) {
+        this.missedOpportunityLogger.trackToken(token, failedCheck);
+        token.unsafeReason = failedCheck.reason;
       }
 
       return approved;
     } catch (error) {
       console.error("Error in security checks:", error);
-      this.setFailureReason("Error running checks");
+      const errorCheck = {
+        name: 'ERROR',
+        reason: 'Error running checks',
+        actual: error.message,
+        configPath: null
+      };
+      this.missedOpportunityLogger.trackToken(token, errorCheck);
       return false;
     }
   }

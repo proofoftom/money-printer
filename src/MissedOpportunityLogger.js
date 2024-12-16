@@ -16,6 +16,9 @@ class MissedOpportunityLogger {
   }
 
   trackToken(token, failedChecks) {
+    // Normalize failedChecks to array format
+    const checks = Array.isArray(failedChecks) ? failedChecks : [failedChecks];
+
     const tokenData = {
       mint: token.mint,
       initialPrice: token.currentPrice,
@@ -29,11 +32,12 @@ class MissedOpportunityLogger {
         volumeData: token.metrics.volumeData,
         priceVolatility: token.priceVolatility
       },
-      failedChecks: failedChecks.map(check => ({
-        check: check.name,
-        actualValue: check.actual,
-        threshold: check.threshold,
-        configPath: check.configPath
+      failedChecks: checks.map(check => ({
+        check: typeof check === 'string' ? check : check.name || 'unknown',
+        actualValue: check.actual || null,
+        threshold: check.threshold || null,
+        configPath: check.configPath || null,
+        reason: check.reason || null
       })),
       peakData: null,
       finalSnapshot: null,
