@@ -121,6 +121,9 @@ class Token extends EventEmitter {
       this.updateWalletBalance(data.traderPublicKey, data.newTokenBalance, now);
     }
 
+    // Update all metrics including volume
+    this.updateMetrics();
+
     // Emit price and volume updates together
     this.emit('priceUpdate', { 
       price: this.currentPrice, 
@@ -377,17 +380,6 @@ class Token extends EventEmitter {
     };
   }
 
-  calculateTokenPrice() {
-    if (
-      !this.vTokensInBondingCurve ||
-      !this.vSolInBondingCurve ||
-      this.vTokensInBondingCurve === 0
-    ) {
-      return 0;
-    }
-    return this.vSolInBondingCurve / this.vTokensInBondingCurve;
-  }
-
   updateMetrics() {
     // Update volume metrics
     this.volume1m = this.getRecentVolume(60 * 1000);     // 1 minute
@@ -407,7 +399,12 @@ class Token extends EventEmitter {
     this.emit("metricsUpdated", {
       token: this.mint,
       priceStats,
-      traderStats
+      traderStats,
+      volume: {
+        volume1m: this.volume1m,
+        volume5m: this.volume5m,
+        volume30m: this.volume30m
+      }
     });
   }
 
@@ -589,6 +586,17 @@ class Token extends EventEmitter {
 
   getTokenPrice() {
     return this.currentPrice;
+  }
+
+  calculateTokenPrice() {
+    if (
+      !this.vTokensInBondingCurve ||
+      !this.vSolInBondingCurve ||
+      this.vTokensInBondingCurve === 0
+    ) {
+      return 0;
+    }
+    return this.vSolInBondingCurve / this.vTokensInBondingCurve;
   }
 }
 
