@@ -6,6 +6,7 @@ const Wallet = require('../../utils/Wallet');
 const ExitStrategies = require('./ExitStrategies');
 const TransactionSimulator = require('../../utils/TransactionSimulator');
 const PositionStateManager = require('./PositionStateManager');
+const errorLogger = require('../../monitoring/errorLoggerInstance');
 
 class PositionManager extends EventEmitter {
   constructor(wallet) {
@@ -109,7 +110,8 @@ Partial Exit:
   async closePosition(mint, exitPrice, portion = 1.0) {
     const position = this.stateManager.getPosition(mint);
     if (!position) {
-      console.error(`Cannot close position: Position not found for ${mint}`);
+      const error = new Error(`Cannot close position: Position not found for ${mint}`);
+      errorLogger.logError(error, 'PositionManager.closePosition');
       return null;
     }
 
@@ -136,7 +138,8 @@ Partial Exit:
       position.close(executionPrice);
       const closedPosition = this.stateManager.closePosition(mint);
       if (!closedPosition) {
-        console.error(`Failed to close position for ${mint}`);
+        const error = new Error(`Failed to close position for ${mint}`);
+        errorLogger.logError(error, 'PositionManager.closePosition');
         return null;
       }
       return closedPosition;

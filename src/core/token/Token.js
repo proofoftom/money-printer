@@ -2,6 +2,7 @@ const EventEmitter = require("events");
 const config = require("../../utils/config");
 const TraderManager = require("../trader/TraderManager");
 const TokenStateManager = require("./TokenStateManager");
+const errorLogger = require("../../monitoring/errorLoggerInstance");
 
 class Token extends EventEmitter {
   constructor(tokenData) {
@@ -106,7 +107,8 @@ class Token extends EventEmitter {
         // Initialize drawdownLow if not set
         if (this.drawdownLow === null) {
           this.drawdownLow = data.marketCapSol;
-          console.warn(`Initialized drawdownLow for token ${this.mint} in ${this.state} state`);
+          const warning = new Error(`Initialized drawdownLow for token ${this.mint} in ${this.state} state`);
+          errorLogger.logError(warning, 'Token.update', { state: this.state, marketCap: data.marketCapSol });
         }
         // Update drawdownLow if new market cap is lower
         else if (data.marketCapSol < this.drawdownLow) {
@@ -446,7 +448,8 @@ class Token extends EventEmitter {
   async evaluateRecovery(safetyChecker) {
     try {
       if (!safetyChecker) {
-        console.error('SafetyChecker is required for evaluateRecovery');
+        const error = new Error('SafetyChecker is required for evaluateRecovery');
+        errorLogger.logError(error, 'Token.evaluateRecovery');
         return;
       }
 
@@ -521,7 +524,8 @@ class Token extends EventEmitter {
         }
       }
     } catch (error) {
-      console.error('Error in evaluateRecovery:', error);
+      const logError = new Error('Error in evaluateRecovery');
+      errorLogger.logError(logError, 'Token.evaluateRecovery', { error: error.message });
       this.emit('recoveryError', { token: this, error: error.message });
     }
   }

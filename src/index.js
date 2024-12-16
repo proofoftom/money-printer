@@ -7,11 +7,10 @@ const SafetyChecker = require("./services/safety/SafetyChecker");
 const PositionManager = require("./core/position/PositionManager");
 const PriceManager = require("./services/price/PriceManager");
 const Wallet = require("./utils/Wallet");
-const ErrorLogger = require("./monitoring/ErrorLogger");
+const errorLogger = require("./monitoring/errorLoggerInstance");
 const Dashboard = require("./monitoring/Dashboard");
 
 // Initialize error logger first
-const errorLogger = new ErrorLogger();
 
 // Global error handlers
 process.on('uncaughtException', (error) => {

@@ -1,5 +1,6 @@
 const blessed = require("blessed");
 const contrib = require("blessed-contrib");
+const errorLogger = require("./errorLoggerInstance");
 
 class Dashboard {
   constructor(
@@ -423,19 +424,90 @@ class Dashboard {
 
   updateDashboard() {
     try {
-      this.walletBox.setContent(this.getWalletStatus());
-      this.heatingUpBox.setContent(this.getTokensByState("heatingUp"));
-      this.firstPumpBox.setContent(this.getTokensByState("firstPump"));
-      this.drawdownBox.setContent(this.getTokensByState("drawdown"));
-      this.supplyRecoveryBox.setContent(
-        this.getTokensByState("unsafeRecovery")
-      );
-      this.activePositionsBox.setContent(this.getActivePositions());
-      this.tradeBox.setContent(this.getTradeHistory());
-      this.updateBalanceHistory();
-      this.screen.render();
+      // Update wallet status
+      if (this.walletBox && this.wallet) {
+        try {
+          this.walletBox.setContent(this.getWalletStatus());
+        } catch (error) {
+          this.logStatus(`Error updating wallet status: ${error.message}`, "error");
+          errorLogger.logError(error, 'Dashboard.updateWalletStatus');
+        }
+      }
+
+      // Update balance history
+      if (this.balanceChart && this.wallet) {
+        try {
+          this.updateBalanceHistory();
+        } catch (error) {
+          this.logStatus(`Error updating balance history: ${error.message}`, "error");
+          errorLogger.logError(error, 'Dashboard.updateBalanceHistory');
+        }
+      }
+
+      // Update token states
+      if (this.heatingUpBox && this.tokenTracker) {
+        try {
+          this.heatingUpBox.setContent(this.getTokensByState("heatingUp"));
+        } catch (error) {
+          this.logStatus(`Error updating heating up tokens: ${error.message}`, "error");
+          errorLogger.logError(error, 'Dashboard.updateHeatingUpTokens');
+        }
+      }
+
+      if (this.firstPumpBox && this.tokenTracker) {
+        try {
+          this.firstPumpBox.setContent(this.getTokensByState("firstPump"));
+        } catch (error) {
+          this.logStatus(`Error updating first pump tokens: ${error.message}`, "error");
+          errorLogger.logError(error, 'Dashboard.updateFirstPumpTokens');
+        }
+      }
+
+      if (this.drawdownBox && this.tokenTracker) {
+        try {
+          this.drawdownBox.setContent(this.getTokensByState("drawdown"));
+        } catch (error) {
+          this.logStatus(`Error updating drawdown tokens: ${error.message}`, "error");
+          errorLogger.logError(error, 'Dashboard.updateDrawdownTokens');
+        }
+      }
+
+      if (this.supplyRecoveryBox && this.tokenTracker) {
+        try {
+          this.supplyRecoveryBox.setContent(this.getTokensByState("unsafeRecovery"));
+        } catch (error) {
+          this.logStatus(`Error updating supply recovery tokens: ${error.message}`, "error");
+          errorLogger.logError(error, 'Dashboard.updateSupplyRecoveryTokens');
+        }
+      }
+
+      // Update active positions
+      if (this.activePositionsBox && this.positionManager) {
+        try {
+          this.activePositionsBox.setContent(this.getActivePositions());
+        } catch (error) {
+          this.logStatus(`Error updating active positions: ${error.message}`, "error");
+          errorLogger.logError(error, 'Dashboard.updateActivePositions');
+        }
+      }
+
+      // Update trade history
+      if (this.tradeBox) {
+        try {
+          this.tradeBox.setContent(this.getTradeHistory());
+        } catch (error) {
+          this.logStatus(`Error updating trade history: ${error.message}`, "error");
+          errorLogger.logError(error, 'Dashboard.updateTradeHistory');
+        }
+      }
+
+      // Render screen
+      if (this.screen) {
+        this.screen.render();
+      }
     } catch (error) {
-      throw error;
+      this.logStatus(`Dashboard update error: ${error.message}`, "error");
+      errorLogger.logError(error, 'Dashboard.updateDashboard');
     }
   }
 

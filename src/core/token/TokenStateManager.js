@@ -1,5 +1,6 @@
 const EventEmitter = require("events");
 const config = require("../../utils/config");
+const errorLogger = require("../../monitoring/errorLoggerInstance");
 
 class TokenStateManager extends EventEmitter {
   constructor() {
@@ -29,14 +30,24 @@ class TokenStateManager extends EventEmitter {
 
   setState(token, newState) {
     if (!this.validStates.includes(newState)) {
-      throw new Error(`Invalid state: ${newState}`);
+      const error = new Error(`Invalid state: ${newState}`);
+      errorLogger.logError(error, 'TokenStateManager.setState', { 
+        token: token.mint,
+        currentState: token.state,
+        attemptedState: newState 
+      });
+      throw error;
     }
 
     const currentState = token.state;
     if (!this.stateTransitions[currentState].includes(newState)) {
-      throw new Error(
-        `Invalid state transition from ${currentState} to ${newState}`
-      );
+      const error = new Error(`Invalid state transition from ${currentState} to ${newState}`);
+      errorLogger.logError(error, 'TokenStateManager.setState', {
+        token: token.mint,
+        currentState,
+        attemptedState: newState
+      });
+      throw error;
     }
 
     const oldState = token.state;
