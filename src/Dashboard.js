@@ -417,114 +417,66 @@ class Dashboard {
       return tokens
         .map((token) => {
           try {
-            if (state === "unsafeRecovery") {
-              const formatUSD = (value) => {
-                if (!value) return "$0";
-                if (value >= 1000000)
-                  return `$${(value / 1000000).toFixed(1)}m`;
-                if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
-                return `$${Math.floor(value)}`;
-              };
+            // Calculate token age in seconds
+            const now = Date.now();
+            const tokenAge = Math.floor((now - token.minted) / 1000);
+            const ageStr = tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
 
-              const marketCapUSD = this.priceManager.solToUSD(
-                token.marketCapSol
-              );
-              const highestMarketCapUSD = this.priceManager.solToUSD(
-                token.highestMarketCap
-              );
-              const drawdownLowUSD = token.drawdownLow
-                ? this.priceManager.solToUSD(token.drawdownLow)
-                : null;
-              const volumeUSD = this.priceManager.solToUSD(
-                token.getVolume("5m")
-              );
+            // Format market cap in USD with k format
+            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+            const mcFormatted = marketCapUSD >= 1000
+              ? `${(marketCapUSD / 1000).toFixed(1)}k`
+              : marketCapUSD.toFixed(1);
 
-              const mcStr = formatUSD(marketCapUSD);
-              const highStr = formatUSD(highestMarketCapUSD);
-              const lowStr = drawdownLowUSD ? formatUSD(drawdownLowUSD) : "N/A";
-              const volStr = formatUSD(volumeUSD);
+            // Get holder info
+            const holderCount = token.getHolderCount();
+            const topConcentration = token.getTopHolderConcentration(10);
+            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
 
-              let rows = [
-                `${
-                  token.symbol || token.mint.slice(0, 8)
-                }... | MC: ${mcStr} | Vol: ${volStr}`,
-                `High: ${highStr} | Low: ${lowStr}`,
-              ];
+            // Get volume data in USD with k format for ≥1000, whole numbers for <1000
+            const formatVolume = (vol) => {
+              const volUSD = this.priceManager.solToUSD(vol);
+              return volUSD >= 1000
+                ? `${(volUSD / 1000).toFixed(1)}k`
+                : Math.round(volUSD).toString();
+            };
 
-              if (token.unsafeReason) {
-                const { reason, value } = token.unsafeReason;
-                let valueStr = value;
-                switch (reason) {
-                  case "High holder concentration":
-                    valueStr = `${value.toFixed(1)}%`;
-                    break;
-                  case "Token too young":
-                    valueStr = `${Math.floor(value)}s`;
-                    break;
-                  case "Creator holdings too high":
-                    valueStr = `${value.toFixed(1)}%`;
-                    break;
-                  case "volatilityTooHigh":
-                    valueStr = `${value.toFixed(2)}`;
-                    break;
-                  default:
-                    valueStr = value ? value.toString() : "N/A";
-                }
-                rows.push(`Unsafe: ${reason} (${valueStr})`);
-              } else {
-                rows.push("Unsafe: Unknown reason");
+            const vol1m = formatVolume(token.getVolume("1m"));
+            const vol5m = formatVolume(token.getVolume("5m"));
+            const vol1h = formatVolume(token.getVolume("30m"));
+
+            // Format the token info string
+            const symbol = token.symbol || token.mint.slice(0, 8);
+            const rows = [
+              `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
+              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(5)} | 1h: $${vol1h}`,
+            ];
+
+            // Add safety failure reason for unsafe recovery state
+            if (state === "unsafeRecovery" && token.unsafeReason) {
+              const { reason, value } = token.unsafeReason;
+              let valueStr = value;
+              switch (reason) {
+                case "High holder concentration":
+                  valueStr = `${value.toFixed(1)}%`;
+                  break;
+                case "Token too young":
+                  valueStr = `${Math.floor(value)}s`;
+                  break;
+                case "Creator holdings too high":
+                  valueStr = `${value.toFixed(1)}%`;
+                  break;
+                case "volatilityTooHigh":
+                  valueStr = `${value.toFixed(2)}`;
+                  break;
+                default:
+                  valueStr = value ? value.toString() : "N/A";
               }
-
-              return rows.join("\n");
-            } else {
-              // Calculate token age in seconds
-              const now = Date.now();
-              const tokenAge = Math.floor((now - token.minted) / 1000);
-              const ageStr =
-                tokenAge > 59
-                  ? `${Math.floor(tokenAge / 60)}m`
-                  : `${tokenAge}s`;
-
-              // Format market cap in USD with k format
-              const marketCapUSD = this.priceManager.solToUSD(
-                token.marketCapSol
-              );
-              const mcFormatted =
-                marketCapUSD >= 1000
-                  ? `${(marketCapUSD / 1000).toFixed(1)}k`
-                  : marketCapUSD.toFixed(1);
-
-              // Get holder info
-              const holderCount = token.getHolderCount();
-              const topConcentration = token.getTopHolderConcentration(10);
-              const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(
-                0
-              )}%`;
-
-              // Get volume data in USD with k format for ≥1000, whole numbers for <1000
-              const formatVolume = (vol) => {
-                const volUSD = this.priceManager.solToUSD(vol);
-                return volUSD >= 1000
-                  ? `${(volUSD / 1000).toFixed(1)}k`
-                  : Math.round(volUSD).toString();
-              };
-
-              const vol1m = formatVolume(token.getVolume("1m"));
-              const vol5m = formatVolume(token.getVolume("5m"));
-              const vol1h = formatVolume(token.getVolume("30m"));
-
-              // Format the token info string
-              const symbol = token.symbol || token.mint.slice(0, 8);
-              return [
-                `${symbol.padEnd(12)} ${ageStr.padEnd(
-                  3
-                )} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-                `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(
-                  5
-                )} | 1h: $${vol1h}`,
-                "─".repeat(50), // Add horizontal rule between tokens
-              ].join("\n");
+              rows.push(`UNSAFE: ${reason} (${valueStr})`);
             }
+
+            rows.push("─".repeat(50)); // Add horizontal rule between tokens
+            return rows.join("\n");
           } catch (err) {
             this.handleError(err, "token formatting");
             return `Error formatting token ${
