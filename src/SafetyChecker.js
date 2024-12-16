@@ -143,19 +143,19 @@ class SafetyChecker {
     // Fast check for pump characteristics
     const pumpMetrics = token.pumpMetrics;
     
-    // Check price acceleration
-    if (pumpMetrics.priceAcceleration > 0.5) {
+    // Check price acceleration (lowered from 0.5 to 0.3)
+    if (pumpMetrics.priceAcceleration > 0.3) {
       // Strong positive acceleration indicates potential pump
       const volumeSpikes = pumpMetrics.volumeSpikes;
       if (volumeSpikes.length > 0) {
-        // Analyze volume spikes pattern
+        // Analyze volume spikes pattern (lowered from 200% to 150%)
         const recentSpike = volumeSpikes[volumeSpikes.length - 1];
         const volumeIncrease = recentSpike.volume / token.getRecentVolume(5 * 60 * 1000) * 100;
         
-        if (volumeIncrease > 200) { // Volume spike over 200%
-          // Check if price movement correlates with volume
+        if (volumeIncrease > 150) { // Volume spike over 150%
+          // Check if price movement correlates with volume (lowered correlation from 0.3 to 0.2)
           const priceChange = recentSpike.priceChange;
-          if (priceChange > 0 && priceChange/volumeIncrease > 0.3) {
+          if (priceChange > 0 && priceChange/volumeIncrease > 0.2) {
             // Price movement correlates well with volume
             return true;
           }
@@ -163,16 +163,25 @@ class SafetyChecker {
       }
     }
     
-    // Check gain rate
-    if (pumpMetrics.highestGainRate > 2) { // More than 2% per second
+    // Check gain rate (lowered from 2% to 1% per second)
+    if (pumpMetrics.highestGainRate > 1) { // More than 1% per second
       const priceStats = token.getPriceStats();
       if (priceStats.volatility < config.SAFETY.MAX_PRICE_VOLATILITY) {
         return true;
       }
     }
     
-    // Check pump frequency
-    if (pumpMetrics.pumpCount >= 2) {
+    // Check market cap momentum
+    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+    if (marketCapUSD > 20000) { // Over $20k MC
+      const mcGainRate = pumpMetrics.marketCapGainRate || 0;
+      if (mcGainRate > 0.5) { // 0.5% gain per second in MC
+        return true;
+      }
+    }
+    
+    // Check pump frequency (lowered count from 2 to 1)
+    if (pumpMetrics.pumpCount >= 1) {
       const timeSinceLastPump = Date.now() - pumpMetrics.lastPumpTime;
       if (timeSinceLastPump < 5 * 60 * 1000) { // Within last 5 minutes
         return true;
