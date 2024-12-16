@@ -3,9 +3,10 @@ const path = require('path');
 const config = require('./config');
 
 class MissedOpportunityLogger {
-  constructor() {
+  constructor(priceManager) {
     this.logDir = path.join(process.cwd(), 'logs', 'missed_opportunities');
     this.trackedTokens = new Map(); // Track tokens that failed safety checks
+    this.priceManager = priceManager;
     this.ensureLogDirectory();
   }
 
@@ -117,17 +118,22 @@ class MissedOpportunityLogger {
   isSignificantMiss(trackedToken) {
     if (!trackedToken.potentialProfit) return false;
     
-    // Consider it significant if:
-    // 1. Potential gain was over 30% (lowered from 50%)
-    // 2. Time to peak was reasonable (under 15 minutes, increased from 5)
-    // 3. Missed profit would have been at least 0.05 SOL (lowered from 0.1)
-    // 4. Initial market cap was below 20k USD (new check)
-    const initialMarketCapUSD = trackedToken.initialMarketCap * config.PRICE.SOL_USD_PRICE;
-    
-    return trackedToken.potentialProfit.percentage > 30 &&
-           trackedToken.potentialProfit.timeToReachSeconds < 900 &&
-           trackedToken.potentialProfit.missedProfitSOL > 0.05 &&
-           initialMarketCapUSD < 20000;
+    try {
+      // Consider it significant if:
+      // 1. Potential gain was over 30% (lowered from 50%)
+      // 2. Time to peak was reasonable (under 15 minutes, increased from 5)
+      // 3. Missed profit would have been at least 0.05 SOL (lowered from 0.1)
+      // 4. Initial market cap was below 20k USD (new check)
+      const initialMarketCapUSD = this.priceManager.solToUSD(trackedToken.initialMarketCap);
+      
+      return trackedToken.potentialProfit.percentage > 30 &&
+             trackedToken.potentialProfit.timeToReachSeconds < 900 &&
+             trackedToken.potentialProfit.missedProfitSOL > 0.05 &&
+             initialMarketCapUSD < 20000;
+    } catch (error) {
+      console.error('Error checking significant miss:', error);
+      return false;
+    }
   }
 
   analyzeThresholds(trackedToken) {

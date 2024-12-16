@@ -2,8 +2,9 @@ const config = require("./config");
 const MissedOpportunityLogger = require("./MissedOpportunityLogger");
 
 class SafetyChecker {
-  constructor(priceManager, safetyConfig = {}) {
-    this.missedOpportunityLogger = new MissedOpportunityLogger();
+  constructor(config, priceManager, safetyConfig = {}) {
+    this.config = config;
+    this.missedOpportunityLogger = new MissedOpportunityLogger(priceManager);
     this.priceManager = priceManager;
     this.safetyConfig = safetyConfig;
     this.lastFailureReason = null;

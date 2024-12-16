@@ -120,7 +120,7 @@ function initializeComponent(component, context) {
 const wallet = initializeComponent(new Wallet(), 'Wallet');
 const priceManager = initializeComponent(new PriceManager(), 'PriceManager');
 const positionManager = initializeComponent(new PositionManager(wallet), 'PositionManager');
-const safetyChecker = initializeComponent(new SafetyChecker(config.SAFETY), 'SafetyChecker');
+const safetyChecker = initializeComponent(new SafetyChecker(config.SAFETY, priceManager), 'SafetyChecker');
 
 // Initialize TokenTracker and WebSocketManager
 const tokenTracker = initializeComponent(

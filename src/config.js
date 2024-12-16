@@ -55,14 +55,14 @@ module.exports = {
 
     // Pump pattern detection thresholds
     PUMP_DETECTION: {
-      MIN_PRICE_ACCELERATION: 0.3,    // Minimum price acceleration to consider
-      MIN_VOLUME_SPIKE: 150,          // Minimum volume spike percentage
-      MIN_PRICE_VOLUME_CORRELATION: 0.2, // Minimum correlation between price and volume
-      MIN_GAIN_RATE: 1.0,            // Minimum gain rate per second
-      MIN_MC_GAIN_RATE: 0.5,         // Minimum market cap gain rate for large tokens
-      LARGE_TOKEN_MC_USD: 20000,     // Threshold for large token market cap
-      MIN_PUMP_COUNT: 1,             // Minimum number of pumps
-      PUMP_WINDOW_MS: 300000,        // Time window for pump count (5 minutes)
+      MIN_PRICE_ACCELERATION: 0.25,    // Lowered from 0.3 to catch slower pumps
+      MIN_VOLUME_SPIKE: 120,          // Lowered from 150% to catch more gradual volume increases
+      MIN_PRICE_VOLUME_CORRELATION: 0.15, // Lowered from 0.2 to allow for slight market inefficiencies
+      MIN_GAIN_RATE: 0.8,            // Lowered from 1.0% per second for smoother pumps
+      MIN_MC_GAIN_RATE: 0.4,         // Lowered from 0.5 for large tokens
+      LARGE_TOKEN_MC_USD: 25000,     // Increased from 20k to include more mid-sized tokens
+      MIN_PUMP_COUNT: 1,             // Keep at 1 to catch first pump
+      PUMP_WINDOW_MS: 360000,        // Increased from 300k (5 min) to 360k (6 min) for better pattern detection
     }
   },
 
