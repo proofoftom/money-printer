@@ -111,7 +111,7 @@ class WebSocketManager extends EventEmitter {
     }
 
     // Handle token creation messages
-    if (message.txType === "create" && message.mint && message.name) {
+    if (message.txType === "create") {
       // Ignore tokens that are already above our heating up threshold
       const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
       if (marketCapUSD > config.THRESHOLDS.HEATING_UP_USD) {
@@ -133,7 +133,7 @@ class WebSocketManager extends EventEmitter {
     }
 
     // Handle trade messages
-    if (message.txType && message.mint && message.txType !== "create") {
+    if (message.txType === "buy" || message.txType === "sell") {
       this.emit("trade", message);
       this.tokenTracker.handleTokenUpdate(message);
       return;
