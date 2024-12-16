@@ -198,3 +198,209 @@ The TokenTracker delegates position-related operations to the PositionManager, e
 
 - Ensure the configuration parameters are flexible and well-documented, especially for thresholds and trading strategies.
 - Consider adding more detailed logging for state transitions to aid in debugging and monitoring.
+
+## Token Tracker Documentation
+
+### Overview
+
+The Token Tracker is the central coordinator of the Money Printer system, managing token lifecycle, state transitions, and integrating with various components for comprehensive token monitoring and trading operations. It extends EventEmitter to provide event-based communication throughout the system.
+
+### Core Components
+
+#### Token Management
+```javascript
+{
+  tokens: Map(),             // Active tokens
+  safetyChecker: Object,     // Safety validation
+  positionManager: Object,   // Position handling
+  priceManager: Object,      // Price calculations
+  errorLogger: Object        // Error tracking
+}
+```
+
+### Key Features
+
+#### Token Lifecycle Management
+```javascript
+handleNewToken(tokenData)
+handleTokenUpdate(tradeData)
+```
+- Token creation and tracking
+- State transition management
+- Event broadcasting
+- Error handling
+
+#### Trade Processing
+```javascript
+processTradeUpdate(token, tradeData)
+```
+- Volume tracking
+- Price updates
+- Market cap calculations
+- State evaluations
+
+#### State Management
+```javascript
+evaluateTokenState(token)
+```
+- State transition logic
+- Condition evaluation
+- Safety validation
+- Position management
+
+### Token States
+
+1. **New**
+   - Initial token discovery
+   - Basic validation
+   - Metadata collection
+
+2. **Heating Up**
+   - Market cap monitoring
+   - Volume analysis
+   - Initial safety checks
+
+3. **First Pump**
+   - Price momentum tracking
+   - Volume confirmation
+   - Pattern recognition
+
+4. **Drawdown**
+   - Price retracement tracking
+   - Volume analysis
+   - Recovery potential
+
+5. **Pumping**
+   - Sustained momentum
+   - Safety validation
+   - Entry conditions
+
+6. **In Position**
+   - Active position monitoring
+   - Exit condition tracking
+   - Performance analysis
+
+### Event System
+
+#### Emitted Events
+- `tokenAdded`: New token discovered
+- `tokenStateChanged`: State transitions
+- `tokenUpdated`: Trade updates
+- `error`: Processing errors
+
+#### Event Data Structure
+```javascript
+{
+  token: Token,          // Token instance
+  from: String,          // Previous state
+  to: String,           // New state
+  metadata: Object      // Additional data
+}
+```
+
+### Integration Points
+
+#### Safety Checker
+- Token validation
+- Risk assessment
+- Safety monitoring
+
+#### Position Manager
+- Trade execution
+- Position tracking
+- Exit management
+
+#### Price Manager
+- Price calculations
+- Market cap updates
+- Value conversions
+
+#### Error Logger
+- Error tracking
+- Debug information
+- Performance monitoring
+
+### Configuration Options
+
+```javascript
+{
+  THRESHOLDS: {
+    HEATING_UP: Number,
+    FIRST_PUMP: Number,
+    DRAWDOWN: Number,
+    DEAD: Number
+  },
+  TIMEOUTS: {
+    NEW: Number,
+    HEATING_UP: Number,
+    FIRST_PUMP: Number
+  },
+  SAFETY: {
+    // Safety check configuration
+  }
+}
+```
+
+### Error Handling
+
+#### Token Processing
+1. **Creation Errors**
+   - Data validation
+   - Initialization
+   - Event setup
+
+2. **Update Errors**
+   - Trade processing
+   - State transitions
+   - Position management
+
+3. **State Errors**
+   - Invalid transitions
+   - Condition evaluation
+   - Safety checks
+
+### Best Practices
+
+#### Token Management
+1. **State Transitions**
+   - Validate conditions
+   - Ensure consistency
+   - Handle edge cases
+
+2. **Event Handling**
+   - Proper event ordering
+   - Error propagation
+   - Resource cleanup
+
+3. **Performance**
+   - Efficient updates
+   - Memory management
+   - Event optimization
+
+#### Integration
+1. **Component Communication**
+   - Clear interfaces
+   - Error handling
+   - State synchronization
+
+2. **Data Flow**
+   - Consistent updates
+   - Validation chain
+   - Error recovery
+
+### Future Improvements
+
+1. **State Management**
+   - Advanced state machines
+   - Transition validation
+   - History tracking
+
+2. **Performance**
+   - Batch processing
+   - Event optimization
+   - Memory efficiency
+
+3. **Analytics**
+   - Pattern recognition
+   - Performance metrics
+   - Strategy optimization

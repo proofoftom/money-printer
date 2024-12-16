@@ -1,106 +1,180 @@
-# PositionManager Component Documentation
+# Position Manager Documentation
 
 ## Overview
 
-The PositionManager handles all aspects of trading positions, including opening, closing, and profit/loss calculations. It focuses solely on position management and wallet balance calculations, while event broadcasting is handled by the TokenTracker.
+The Position Manager handles all aspects of trading positions, including dynamic position sizing, entry/exit execution, and performance tracking. It integrates with multiple components to provide comprehensive position management and risk control.
 
-## Core Functionality
+## Core Components
+
+### Position Management
+```javascript
+{
+  positions: Map(),           // Active positions
+  wins: Number,              // Win count
+  losses: Number,            // Loss count
+  exitStrategies: Object,    // Exit strategy manager
+  statsLogger: Object,       // Performance tracking
+  transactionSimulator: Object // Transaction simulation
+}
+```
+
+## Key Features
+
+### Dynamic Position Sizing
+```javascript
+calculatePositionSize(marketCap, volatility)
+```
+- Base size calculation using market cap ratio
+- Volatility-based size adjustment
+- Min/max size enforcement
+- Dynamic sizing options
 
 ### Position Opening
-
 ```javascript
-openPosition(mint, marketCap);
+async openPosition(mint, marketCap, volatility)
 ```
-
-Creates a new trading position:
-
-- Allocates position size from account balance
-- Records entry price and timestamp
-- Deducts transaction fees
-- Returns position object for TokenTracker to manage
+- Dynamic position size calculation
+- Transaction simulation
+- Price impact assessment
+- Balance validation
+- Position tracking initialization
 
 ### Position Closing
+```javascript
+async closePosition(mint, position, exitPrice, reason)
+```
+- Profit/loss calculation
+- Performance tracking
+- Stats logging
+- Balance updates
+- Transaction simulation
+
+### Transaction Simulation
+- Realistic delay simulation
+- Price impact calculation
+- Network conditions
+- Slippage estimation
+
+## Integration Points
+
+### Exit Strategies
+- Multiple exit conditions
+- Take profit management
+- Stop loss enforcement
+- Volume-based exits
+
+### Stats Logger
+- Performance metrics
+- Trade history
+- Win/loss tracking
+- ROI calculations
+
+### Transaction Simulator
+- Network delay simulation
+- Price impact assessment
+- Risk evaluation
+- Execution optimization
+
+## Configuration Options
 
 ```javascript
-closePosition(mint, position, exitPrice, reason);
+{
+  POSITION: {
+    MIN_POSITION_SIZE_SOL: Number,
+    MAX_POSITION_SIZE_SOL: Number,
+    POSITION_SIZE_MARKET_CAP_RATIO: Number,
+    USE_DYNAMIC_SIZING: Boolean,
+    VOLATILITY_SCALING_FACTOR: Number
+  },
+  EXIT_STRATEGIES: {
+    // Exit strategy configuration
+  }
+}
 ```
 
-Handles position closure:
-
-- Calculates profit/loss
-- Updates account balance
-- Records trade statistics
-- Returns trade result object containing:
-  - Entry/Exit prices
-  - PnL
-  - Updated wallet balance
-  - Win/Loss statistics
-
-### Position Loss Handling
+## Position Object Structure
 
 ```javascript
-closePosition(mint, position, 0, "total_loss");
+{
+  entryPrice: Number,        // Entry execution price
+  size: Number,              // Position size in SOL
+  timestamp: Number,         // Entry timestamp
+  mint: String,             // Token mint address
+  exitStrategies: Object    // Position-specific exit strategies
+}
 ```
-
-Special case for total loss if position value is less than transaction fees:
-
-- Records position as a loss
-- Updates statistics
-- Returns loss result without deducting additional fees
-
-## Wallet Balance Management
-
-### Balance Calculations
-
-1. **Initial Balance**
-
-   - Tracks starting balance for reference
-   - Used for calculating overall P&L
-
-2. **Position Deductions**
-
-   - Position size deducted on open
-   - Transaction fees applied
-   - All calculations rounded to 2 decimal places
-
-3. **Profit/Loss Handling**
-   - Profits added to balance
-   - Losses deducted from balance
-   - Transaction fees applied to all trades
-
-## Integration with TokenTracker
-
-### Event Flow
-
-1. TokenTracker calls PositionManager methods
-2. PositionManager performs calculations and updates
-3. TokenTracker handles all event broadcasting
-
-### Responsibility Separation
-
-- PositionManager: Position and balance calculations
-- TokenTracker: State management and event broadcasting
-
-## Configuration
-
-### Trading Parameters
-
-- Position size
-- Transaction fees
-- Stop loss thresholds
-- Take profit targets
-
-### Trailing Stops
-
-- Trailing stop loss
-- Trailing take profit
-- Configurable thresholds
 
 ## Error Handling
 
-- Insufficient balance
+### Entry Errors
+1. **Insufficient Balance**
+   - Balance validation
+   - Size adjustment
+   - Error reporting
 
-## Suggestions for Improvement
+2. **Transaction Failures**
+   - Retry logic
+   - Error recovery
+   - Position cleanup
 
-- Ensure clear separation of concerns between position management and event broadcasting.
-- Add more detailed error handling for edge cases like insufficient balance.
+3. **Simulation Errors**
+   - Fallback calculations
+   - Conservative estimates
+   - Risk mitigation
+
+### Exit Errors
+1. **Exit Price Validation**
+   - Price sanity checks
+   - Slippage protection
+   - Minimum value enforcement
+
+2. **Balance Updates**
+   - Atomic updates
+   - Validation checks
+   - Error recovery
+
+## Best Practices
+
+### Position Management
+1. **Size Calculation**
+   - Consider market conditions
+   - Account for volatility
+   - Respect balance limits
+
+2. **Entry Execution**
+   - Validate conditions
+   - Simulate outcomes
+   - Track performance
+
+3. **Exit Management**
+   - Monitor conditions
+   - Quick execution
+   - Proper cleanup
+
+### Performance Tracking
+1. **Stats Recording**
+   - Accurate metrics
+   - Regular updates
+   - Data validation
+
+2. **Analysis**
+   - Pattern recognition
+   - Performance optimization
+   - Risk assessment
+
+## Future Improvements
+
+1. **Position Sizing**
+   - Advanced volatility metrics
+   - Market condition adaptation
+   - Portfolio-based sizing
+
+2. **Transaction Simulation**
+   - Enhanced price impact models
+   - Network condition analysis
+   - Historical data integration
+
+3. **Performance Analytics**
+   - Advanced metrics
+   - Real-time analysis
+   - Strategy optimization

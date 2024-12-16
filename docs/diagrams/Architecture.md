@@ -1,143 +1,105 @@
-# System Architecture
+# Money Printer System Architecture
+
+## System Overview
+
+The Money Printer is an automated trading system designed to identify and trade tokens based on market conditions, volume patterns, and safety metrics. The system comprises several interconnected components that work together to analyze market data, make trading decisions, and manage positions.
 
 ```mermaid
 graph TD
-    PP[PumpPortal WebSocket] -->|Trade Data| WC[WebSocket Client]
-    WC -->|Updates| TT[TokenTracker]
-    TT -->|State Changes| BS[Broadcast Server]
-    BS -->|Updates| D1[Dashboard Client 1]
-    BS -->|Updates| D2[Dashboard Client 2]
-    BS -->|Updates| D3[Dashboard Client n]
+    PP[PumpPortal WebSocket] -->|Trade Data| WM[WebSocket Manager]
+    WM -->|Token Updates| TT[Token Tracker]
+    TT -->|Token State| D[Dashboard]
+    
+    subgraph Core Components
+        TT -->|Safety Checks| SC[Safety Checker]
+        TT -->|Position Management| PM[PositionManager]
+        TT -->|Price Data| PR[Price Manager]
+        TT -->|Token Data| T[Token]
+    end
 
-    subgraph TokenTracker Components
-        TT --> TS[TokenState]
-        TT --> PM[PositionManager]
-        TT --> SC[SafetyChecker]
-        TT --> WS[WebSockets]
+    subgraph Logging & Analytics
+        TT -->|Errors| EL[Error Logger]
+        TT -->|Stats| SL[Stats Logger]
+        TT -->|Safety Logs| SL2[Safety Logger]
+    end
+
+    subgraph Position Management
+        PM -->|Exit Checks| ES[Exit Strategies]
+        PM -->|Balance| W[Wallet]
+        PM -->|Simulation| TS[Transaction Simulator]
     end
 ```
 
-# Token Lifecycle
+## Component Responsibilities
 
-````mermaid
+### Core Components
+- **WebSocket Manager**: Handles real-time data stream from PumpPortal, processes trade events
+- **Token Tracker**: Central coordinator managing token lifecycle and state transitions
+- **Token**: Maintains token-specific data including volume history, holder metrics, and price information
+- **Position Manager**: Manages trading positions, entry/exit execution, and portfolio balance
+- **Safety Checker**: Validates token safety through holder analysis and market conditions
+- **Price Manager**: Handles price conversions and maintains current market rates
+
+### Logging & Analytics
+- **Error Logger**: Centralized error tracking and reporting
+- **Stats Logger**: Records trading statistics and performance metrics
+- **Safety Logger**: Tracks safety-related events and violations
+
+### Position Management
+- **Exit Strategies**: Implements various exit conditions including take profit, stop loss, and volume-based exits
+- **Wallet**: Manages account balance and transaction history
+- **Transaction Simulator**: Simulates transaction outcomes for risk assessment
+
+## Token Lifecycle
+
+```mermaid
 stateDiagram-v2
-    [*] --> New: Token Created || Overbought
-    New --> HeatingUp: Market Cap > HeatingUp Threshold
-    New --> Dead: After [Dead Timeout]
-    HeatingUp --> FirstPump: Market Cap > First Pump Threshold
-    HeatingUp --> Dead: After [Dead Timeout]
-    FirstPump --> Drawdown: Price Drop > Drawdown Min
-    FirstPump --> Dead: After [Dead Timeout]
-    Drawdown --> Pumping: Price Rise > Recovery Threshold
-    Drawdown --> Dead: Market Cap < Dead Threshold
-    Pumping --> InPosition: If position opened
-    Pumping --> Drawdown: Price Drop > Drawdown Min
-    Pumping --> Dead: Market Cap < Dead Threshold
-    Pumping --> Dead: After [Dead Timeout]
-    Drawdown --> Dead: After [Dead Timeout]
+    [*] --> New: Token Created
+    New --> HeatingUp: Market Cap > Threshold
+    HeatingUp --> FirstPump: Volume Increase
+    HeatingUp --> Dead: Timeout/Low Activity
+    FirstPump --> Drawdown: Price Decrease
+    FirstPump --> Dead: Safety Check Fail
+    Drawdown --> Pumping: Price Recovery
+    Drawdown --> Dead: Extended Drawdown
+    Pumping --> InPosition: Position Opened
+    Pumping --> Dead: Volume Drop
+    InPosition --> Closed: Exit Strategy Triggered
+    Closed --> [*]
     Dead --> [*]
-
-# Architecture Overview
-
-## Component Communication Flow
-
-```mermaid
-graph TD
-    A[TokenTracker] -->|Manages State| B[TokenState]
-    A -->|Validates Safety| C[SafetyChecker]
-    A -->|Manages Positions| D[PositionManager]
-    A -->|Broadcasts Events| E[WebSocket]
-
-    D -->|Returns Results| A
-    B -->|Provides State| A
-    C -->|Returns Validation| A
-````
-
-## Position Management Flow
-
-```mermaid
-sequenceDiagram
-    participant TT as TokenTracker
-    participant PM as PositionManager
-    participant WS as WebSocket
-
-    TT->>PM: openPosition(mint, marketCap)
-    PM-->>TT: position object
-    TT->>WS: broadcast("positionOpened")
-
-    TT->>PM: closePosition(mint, position, exitPrice)
-    PM-->>TT: result object
-    TT->>WS: broadcast("positionClosed")
 ```
 
-## Event Broadcasting
+## Data Flow
 
-All events are centralized through TokenTracker:
+1. **Market Data Ingestion**
+   - WebSocket Manager receives real-time trade data
+   - Data is validated and normalized
+   - Token updates are broadcast to Token Tracker
 
-- Position Events (opened, closed, loss)
-- State Changes (heating up, pumping, drawdown)
-- Safety Alerts (concentration, creator selling)
+2. **Token Processing**
+   - Token Tracker updates token states
+   - Safety checks are performed
+   - Volume and price metrics are calculated
+   - State transitions are evaluated
 
-## Configuration Management
+3. **Trading Operations**
+   - Position Manager evaluates entry conditions
+   - Exit Strategies monitor active positions
+   - Transaction Simulator validates trade feasibility
+   - Wallet updates reflect position changes
 
-```mermaid
-graph LR
-    A[config.js] -->|Trading Params| B[TokenTracker]
-    A -->|Position Params| C[PositionManager]
-    A -->|Safety Thresholds| D[SafetyChecker]
-```
+4. **Monitoring & Feedback**
+   - Dashboard displays real-time system state
+   - Loggers record system events and metrics
+   - Performance statistics are updated
+   - Safety violations are tracked and reported
 
-## Error Handling
+## Configuration
 
-```mermaid
-graph TD
-    A[Error Occurs] -->|Caught By| B[Component]
-    B -->|Logged| C[Console]
-    B -->|Broadcasted| D[WebSocket]
-    B -->|State Updated| E[TokenState]
-```
-
-# WebSocket Communication
-
-```mermaid
-sequenceDiagram
-    participant PP as PumpPortal
-    participant Bot as Trading Bot
-    participant DB as Dashboard
-
-    Bot->>PP: Subscribe to New Tokens
-    PP-->>Bot: Token Creation Event
-    Bot->>PP: Subscribe to Token Trades
-
-    loop Trade Monitoring
-        PP-->>Bot: Trade Update
-        Bot->>Bot: Process State Changes
-        Bot->>DB: Broadcast Updates
-    end
-
-    alt Token Dies
-        Bot->>PP: Unsubscribe from Token
-        Bot->>DB: Broadcast Token Death
-    end
-```
-
-# Error Handling
-
-```mermaid
-sequenceDiagram
-    participant WS as WebSocket
-    participant TT as TokenTracker
-    participant PM as PositionManager
-
-    WS->>TT: Connection Lost
-    TT->>TT: Queue Updates
-    TT->>WS: Attempt Reconnect
-
-    alt Reconnection Success
-        WS-->>TT: Connection Restored
-        TT->>TT: Process Queued Updates
-    else Reconnection Failure
-        TT->>PM: Mark Positions as Loss
-        TT->>TT: Clean Up State
-    end
-```
+The system is highly configurable through `config.js`, allowing adjustment of:
+- Trading parameters
+- Safety thresholds
+- Volume requirements
+- Exit strategy settings
+- Network configurations
+- Logging preferences

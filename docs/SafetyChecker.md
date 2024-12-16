@@ -1,165 +1,198 @@
-# SafetyChecker Component Documentation
+# Safety Checker Documentation
 
 ## Overview
 
-The SafetyChecker component ensures token safety by validating holder metrics, creator behavior, and market conditions.
+The Safety Checker is responsible for validating token safety through comprehensive security checks, including market cap analysis, trading patterns, holder distribution, and volume analysis. It integrates with a Safety Logger for detailed tracking of security decisions.
 
-## Core Safety Checks
+## Core Components
 
-### Token Safety Validation
-
+### Safety Management
 ```javascript
-isTokenSafe(holders, creatorBalance);
+{
+  safetyLogger: SafetyLogger,  // Logging component
+  priceManager: PriceManager   // Price conversion utility
+}
 ```
 
-Performs comprehensive safety checks:
+## Security Checks
 
-1. Holder concentration analysis
-2. Creator selling detection
-3. Unique holder count validation
-
-## Detailed Checks
-
-### 1. Holder Concentration
-
+### Market Cap Validation
 ```javascript
-checkHolderConcentration(holders);
+checkMarketCap(token)
+```
+- Minimum/maximum thresholds
+- USD value calculation
+- Market size assessment
+
+### Token Age Check
+```javascript
+checkTokenAge(token)
+```
+- Minimum age requirement
+- Creation time validation
+- Age-based risk assessment
+
+### Price Action Analysis
+```javascript
+checkPriceAction(token)
+```
+- Volatility measurement
+- Pump detection
+- Price movement patterns
+
+### Trading Pattern Analysis
+```javascript
+checkTradingPatterns(token)
+```
+- Wash trading detection
+- Manipulation patterns
+- Volume correlation
+
+### Holder Distribution
+```javascript
+checkHolderDistribution(token)
+```
+- Concentration analysis
+- Whale detection
+- Distribution fairness
+
+### Volume Pattern Analysis
+```javascript
+checkVolumePatterns(token)
+```
+- Wash trade percentage
+- Volume correlation
+- Trading authenticity
+
+## Security Results
+
+### Check Result Structure
+```javascript
+{
+  approved: Boolean,
+  rejectionCategory: String,
+  rejectionReason: String,
+  details: Object,
+  duration: Number
+}
 ```
 
-Validates token distribution:
+### Rejection Categories
+1. **Market Cap**
+   - `high`: Exceeds maximum cap
+   - `low`: Below minimum threshold
 
-- Calculates total supply
-- Analyzes top 10 holders
-- Checks concentration percentage
-- Enforces maximum threshold
+2. **Age**
+   - `tooNew`: Insufficient age
 
-#### Algorithm
+3. **Price Action**
+   - `volatilityTooHigh`: Excessive volatility
+   - `pumpTooHigh`: Suspicious price movement
 
-```javascript
-const totalSupply = Array.from(holders.values()).reduce((a, b) => a + b, 0);
-const topHolders = Array.from(holders.values())
-  .sort((a, b) => b - a)
-  .slice(0, 10);
+4. **Trading Patterns**
+   - `washTrading`: Suspicious trading
+   - `manipulation`: Market manipulation
 
-const topHoldersPercentage =
-  (topHolders.reduce((a, b) => a + b, 0) / totalSupply) * 100;
+5. **Holders**
+   - `concentration`: High holder concentration
+   - `whales`: Large holder dominance
 
-return topHoldersPercentage <= config.safety.maxHolderConcentration;
-```
-
-### 2. Creator Selling Detection
-
-```javascript
-hasCreatorSoldAll(creator, creatorBalance);
-```
-
-Monitors creator behavior:
-
-- Tracks creator balance
-- Detects complete selling
-- Optional check based on config
-
-### 3. Unique Holder Analysis
-
-```javascript
-hasEnoughUniqueHolders(holders);
-```
-
-Validates holder diversity:
-
-- Counts unique holders
-- Enforces minimum threshold
-- Prevents manipulation
+6. **Volume**
+   - `excessiveWashTrading`: Wash trade detection
+   - `lowCorrelation`: Volume anomalies
 
 ## Configuration Options
 
-### Safety Thresholds
-
 ```javascript
 {
-  maxHolderConcentration: 30,  // Maximum % for top holders
-  checkCreatorSoldAll: true,   // Enable creator checks
-  minHolders: 30               // Minimum unique holders
+  SAFETY: {
+    MAX_MARKET_CAP_USD: Number,
+    MIN_MARKET_CAP_USD: Number,
+    MAX_PRICE_VOLATILITY: Number,
+    MAX_WASH_TRADE_PERCENTAGE: Number,
+    MIN_TOKEN_AGE: Number,
+    MAX_HOLDER_CONCENTRATION: Number
+  }
 }
 ```
 
-## Usage Patterns
+## Integration Points
 
-### Basic Safety Check
+### Safety Logger
+- Check results recording
+- Rejection tracking
+- Performance monitoring
 
-```javascript
-const isSafe = safetyChecker.isTokenSafe(holders);
-```
+### Price Manager
+- USD conversions
+- Value calculations
+- Market cap validation
 
-### Holder Analysis
+### Token Tracker
+- Token state updates
+- Safety status tracking
+- Trading decisions
 
-```javascript
-const hasGoodDistribution = safetyChecker.checkHolderConcentration(holders);
-const hasEnoughHolders = safetyChecker.hasEnoughUniqueHolders(holders);
-```
+## Error Handling
 
-### Creator Monitoring
+### Check Failures
+1. **Data Validation**
+   - Missing metrics
+   - Invalid values
+   - Data consistency
 
-```javascript
-const creatorSold = safetyChecker.hasCreatorSoldAll(creator, balance);
-```
+2. **Calculation Errors**
+   - Numeric overflow
+   - Division by zero
+   - Precision issues
+
+3. **External Dependencies**
+   - Price feed issues
+   - Data availability
+   - Service timeouts
 
 ## Best Practices
 
-### 1. Data Validation
+### Security Analysis
+1. **Check Execution**
+   - Regular validation
+   - Comprehensive analysis
+   - Quick response
 
-- Verify holder data completeness
-- Validate balance calculations
-- Check for data consistency
+2. **Risk Assessment**
+   - Multiple factors
+   - Pattern recognition
+   - Historical context
 
-### 2. Performance Optimization
+3. **Performance**
+   - Efficient calculations
+   - Cached results
+   - Quick decisions
 
-- Cache holder calculations
-- Optimize sorting operations
-- Minimize redundant checks
+### Logging
+1. **Result Recording**
+   - Detailed logs
+   - Decision tracking
+   - Performance metrics
 
-## Implementation Tips
+2. **Analysis**
+   - Pattern identification
+   - Risk correlation
+   - Improvement areas
 
-### 1. Holder Analysis
+## Future Improvements
 
-- Sort holders efficiently
-- Use appropriate data structures
-- Consider memory usage
+1. **Security Checks**
+   - Advanced pattern detection
+   - Machine learning integration
+   - Real-time analysis
 
-### 2. Creator Tracking
+2. **Performance**
+   - Parallel processing
+   - Cached calculations
+   - Optimized algorithms
 
-- Monitor balance changes
-- Track selling patterns
-- Consider time factors
-
-### 3. Configuration
-
-- Make thresholds configurable
-- Allow feature toggles
-- Document all settings
-
-## Suggestions for Improvement
-
-- Consider enhancing performance by optimizing data structures and caching results where possible.
-- Ensure configuration options are easily adjustable to adapt to different market conditions.
-
-## Common Use Cases
-
-### 1. Trading Decisions
-
-```javascript
-// Verify before position
-const isSafe = safetyChecker.isTokenSafe(holders);
-
-if (isSafe) {
-  // Open position
-}
-```
-
-## Error Prevention
-
-### Edge Cases
-
-- Consider zero balances
-- Handle edge cases like creator selling
-- Ensure data integrity
+3. **Integration**
+   - External data sources
+   - Risk scoring systems
+   - Market intelligence
