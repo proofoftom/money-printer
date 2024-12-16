@@ -337,7 +337,7 @@ class Dashboard {
           try {
             // Calculate token age in seconds
             const now = Date.now();
-            const tokenAge = Math.floor((now - token.createdAt) / 1000);
+            const tokenAge = Math.floor((now - token.created) / 1000);
             const ageStr = `${tokenAge}s`;
 
             // Format market cap in USD
