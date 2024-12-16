@@ -1,32 +1,51 @@
 const EventEmitter = require('events');
 
 class Position extends EventEmitter {
-  constructor(data) {
+  constructor({ mint, symbol, entryPrice, size, token, priceManager, config }) {
     super();
-    this.mint = data.mint;
-    this.entryPrice = data.entryPrice;
-    this.size = data.size;
+    this.validateConstructorParams({ entryPrice, size, config });
+
+    this.mint = mint;
+    this.symbol = symbol;
+    this.entryPrice = entryPrice;
+    this.size = size;
+    this.token = token;
+    this.priceManager = priceManager;
+    this.config = config;
+
     this.remainingSize = 1.0;
-    this.currentPrice = data.entryPrice;
+    this.currentPrice = entryPrice;
     this.entryTime = Date.now();
     this.state = 'active';
-    this.highestPrice = data.entryPrice;
-    this.lowestPrice = data.entryPrice;
+    this.highestPrice = entryPrice;
+    this.lowestPrice = entryPrice;
     this.maxDrawdown = 0;
     this.maxUpside = 0;
     this.volumeHistory = [];
     this.candleHistory = [];
-    this.priceHistory = [data.entryPrice];
-    this.profitHistory = [0];
-    this.volume = 0;
-    this.volume1m = 0;
-    this.volume5m = 0;
-    this.volume30m = 0;
+    this.priceHistory = [entryPrice];
+    this.profitHistory = [{ pnl: 0, timestamp: Date.now() }];
     this.partialExits = [];
-    this.updates = [];
     this.lastUpdate = Date.now();
-    this.symbol = data.symbol;
-    this.priceManager = data.priceManager;
+    this.updates = [];
+  }
+
+  validateConstructorParams({ entryPrice, size, config }) {
+    if (!entryPrice || entryPrice <= 0) {
+      throw new Error('Invalid entry price');
+    }
+
+    if (!size || size <= 0) {
+      throw new Error('Invalid position size');
+    }
+
+    if (size > config.POSITIONS.MAX_SIZE) {
+      throw new Error(`Position size exceeds maximum allowed (${config.POSITIONS.MAX_SIZE})`);
+    }
+
+    if (size < config.POSITIONS.MIN_SIZE) {
+      throw new Error(`Position size below minimum allowed (${config.POSITIONS.MIN_SIZE})`);
+    }
   }
 
   update(data) {
@@ -49,11 +68,12 @@ class Position extends EventEmitter {
   }
 
   updatePrice(price) {
+    if (!price || price <= 0) {
+      throw new Error('Invalid price update');
+    }
+
     this.currentPrice = price;
     this.priceHistory.push(price);
-    if (this.priceHistory.length > 60) { // 60 data points at ~10s intervals = 10 minutes
-      this.priceHistory.shift();
-    }
 
     if (price > this.highestPrice) {
       this.highestPrice = price;
@@ -65,11 +85,8 @@ class Position extends EventEmitter {
       this.maxDrawdown = ((this.entryPrice - price) / this.entryPrice) * 100;
     }
 
-    const currentProfit = ((price - this.entryPrice) / this.entryPrice) * 100;
-    this.profitHistory.push(currentProfit);
-    if (this.profitHistory.length > 30) {
-      this.profitHistory.shift();
-    }
+    const currentPnL = this.calculatePnLPercent(price);
+    this.profitHistory.push({ pnl: currentPnL, timestamp: Date.now() });
 
     this.updates.push({
       timestamp: Date.now(),
@@ -77,89 +94,89 @@ class Position extends EventEmitter {
       type: 'priceUpdate'
     });
 
+    this.emit('updated', this);
     return this;
   }
 
-  updateVolume(volumeData) {
-    this.volumeHistory.push({
-      timestamp: Date.now(),
-      ...volumeData
-    });
-
-    if (this.volumeHistory.length > 30) { // 30 data points = 5 minutes
-      this.volumeHistory.shift();
-    }
-
-    this.volume = volumeData.volume || 0;
-    this.volume1m = volumeData.volume1m || 0;
-    this.volume5m = volumeData.volume5m || 0;
-    this.volume30m = volumeData.volume30m || 0;
-
-    return this;
-  }
-
-  updateCandles(candleData) {
-    this.candleHistory.push(candleData);
-    if (this.candleHistory.length > 30) {
-      this.candleHistory.shift();
-    }
-    return this;
-  }
-
-  recordPartialExit(data) {
-    this.partialExits.push({
-      ...data,
-      timestamp: Date.now()
-    });
-    this.remainingSize = data.remainingSize;
-    this.emit('partialExit', this);
-    return this;
-  }
-
-  close() {
-    this.state = 'closed';
-    this.closedAt = Date.now();
-    this.emit('closed', this);
-    return this;
-  }
-
-  getProfitLoss() {
-    return {
-      percentage: ((this.currentPrice - this.entryPrice) / this.entryPrice) * 100,
-      amount: ((this.currentPrice - this.entryPrice) / this.entryPrice) * this.size * this.remainingSize
-    };
-  }
-
-  getHoldTime() {
-    return Date.now() - this.entryTime;
-  }
-
-  isStale(threshold = 5 * 60 * 1000) { // 5 minutes by default
-    return Date.now() - this.lastUpdate > threshold;
+  calculatePnLPercent(price = this.currentPrice) {
+    return ((price - this.entryPrice) / this.entryPrice) * 100;
   }
 
   getCurrentValueUSD() {
     if (!this.priceManager) {
       throw new Error('PriceManager not initialized for position');
     }
-    return this.priceManager.solToUSD(this.currentPrice * this.remainingSize);
+    return this.priceManager.solToUSD(this.currentPrice * this.size * this.remainingSize);
   }
 
   getEntryValueUSD() {
     if (!this.priceManager) {
       throw new Error('PriceManager not initialized for position');
     }
-    return this.priceManager.solToUSD(this.entryPrice * this.size);
+    return this.priceManager.solToUSD(this.entryPrice * this.size * this.remainingSize);
   }
 
   getPnLUSD() {
-    return this.getCurrentValueUSD() - this.getEntryValueUSD();
+    if (!this.priceManager) {
+      throw new Error('PriceManager not initialized for position');
+    }
+    const currentValue = this.priceManager.solToUSD(this.currentPrice * this.size * this.remainingSize);
+    const entryValue = this.priceManager.solToUSD(this.entryPrice * this.size * this.remainingSize);
+    const unrealizedPnL = currentValue - entryValue;
+    const realizedPnL = this.getRealizedPnL();
+    return unrealizedPnL + realizedPnL;
   }
 
   getPnLPercentage() {
-    const entryValue = this.getEntryValueUSD();
-    if (entryValue === 0) return 0;
-    return (this.getPnLUSD() / entryValue) * 100;
+    return this.calculatePnLPercent();
+  }
+
+  recordPartialExit(portion, price) {
+    if (portion <= 0 || portion > this.remainingSize) {
+      throw new Error('Invalid exit portion');
+    }
+
+    const exit = {
+      portion,
+      price,
+      timestamp: Date.now(),
+      pnl: ((price - this.entryPrice) / this.entryPrice) * 100,
+      size: portion * this.size
+    };
+
+    this.partialExits.push(exit);
+    this.remainingSize = Math.max(0, this.remainingSize - portion);
+
+    this.emit('partialExit', exit);
+    return exit;
+  }
+
+  getRealizedPnL() {
+    return this.partialExits.reduce((total, exit) => {
+      const exitValue = exit.price * exit.size;
+      const entryValue = this.entryPrice * exit.size;
+      return total + (exitValue - entryValue);
+    }, 0);
+  }
+
+  isStale(threshold) {
+    return Date.now() - this.lastUpdate > threshold;
+  }
+
+  getUpdateFrequency() {
+    if (this.updates.length < 2) {
+      return { count: this.updates.length, averageInterval: 0 };
+    }
+
+    const intervals = [];
+    for (let i = 1; i < this.updates.length; i++) {
+      intervals.push(this.updates[i].timestamp - this.updates[i-1].timestamp);
+    }
+
+    return {
+      count: this.updates.length,
+      averageInterval: intervals.reduce((a, b) => a + b, 0) / intervals.length
+    };
   }
 
   toJSON() {
@@ -170,33 +187,15 @@ class Position extends EventEmitter {
       currentPrice: this.currentPrice,
       size: this.size,
       remainingSize: this.remainingSize,
-      entryTime: this.entryTime,
-      state: this.state,
-      profitLoss: this.getProfitLoss(),
-      holdTime: this.getHoldTime(),
-      volume: this.volume,
-      volume5m: this.volume5m,
-      highestPrice: this.highestPrice,
-      lowestPrice: this.lowestPrice,
+      pnlPercent: this.getPnLPercentage(),
+      pnlUSD: this.getPnLUSD(),
       maxDrawdown: this.maxDrawdown,
       maxUpside: this.maxUpside,
-      lastUpdate: this.lastUpdate
+      entryTime: this.entryTime,
+      lastUpdate: this.lastUpdate,
+      state: this.state,
+      partialExits: this.partialExits
     };
-  }
-
-  static fromJSON(data) {
-    return new Position({
-      mint: data.mint,
-      symbol: data.symbol,
-      entryPrice: data.entryPrice,
-      size: data.size
-    }).update({
-      currentPrice: data.currentPrice,
-      volumeData: {
-        volume: data.volume,
-        volume5m: data.volume5m
-      }
-    });
   }
 }
 

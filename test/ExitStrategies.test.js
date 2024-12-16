@@ -186,8 +186,16 @@ describe('ExitStrategies', () => {
 
   describe('Time-Based Exit', () => {
     it('should trigger after max hold time', () => {
-      const clock = sinon.useFakeTimers();
+      const clock = sinon.useFakeTimers(Date.now());
+      exitStrategies.entryTime = Date.now() / 1000;
+      
+      // Mock market conditions to be neutral
+      mockToken.getMarketConditions.returns({ trend: 'neutral', strength: 0.5 });
+      mockPosition.getPnLPercentage.returns(0);  // No profit/loss
+
+      // Advance time past max hold time
       clock.tick(mockConfig.EXIT_STRATEGIES.TIME_BASED.MAX_HOLD_TIME * 1000 + 1000);
+      
       const result = exitStrategies.checkTimeBasedExit(100);
       expect(result).to.be.true;
       clock.restore();

@@ -9,8 +9,11 @@ describe('Position', () => {
   let mockToken;
   let mockPriceManager;
   let mockConfig;
+  let clock;
 
   beforeEach(() => {
+    clock = sinon.useFakeTimers();
+    
     mockConfig = {
       POSITIONS: {
         MAX_SIZE: 1000000,
@@ -49,6 +52,7 @@ describe('Position', () => {
   });
 
   afterEach(() => {
+    clock.restore();
     sinon.restore();
   });
 
@@ -63,13 +67,23 @@ describe('Position', () => {
 
     it('should validate position parameters', () => {
       expect(() => new Position({
-        ...position,
-        size: mockConfig.POSITIONS.MAX_SIZE + 1
+        mint: mockToken.mint,
+        symbol: mockToken.symbol,
+        entryPrice: 100,
+        size: mockConfig.POSITIONS.MAX_SIZE + 1,
+        token: mockToken,
+        priceManager: mockPriceManager,
+        config: mockConfig
       })).to.throw();
 
       expect(() => new Position({
-        ...position,
-        size: mockConfig.POSITIONS.MIN_SIZE - 0.01
+        mint: mockToken.mint,
+        symbol: mockToken.symbol,
+        entryPrice: 100,
+        size: mockConfig.POSITIONS.MIN_SIZE - 0.01,
+        token: mockToken,
+        priceManager: mockPriceManager,
+        config: mockConfig
       })).to.throw();
     });
   });
@@ -103,21 +117,35 @@ describe('Position', () => {
 
   describe('Value Calculations', () => {
     it('should calculate current value in USD', () => {
+      const expectedValue = 1000; // 100 (mock USD value) * 10 (size)
+      mockPriceManager.solToUSD.returns(expectedValue);
+      
       const value = position.getCurrentValueUSD();
-      expect(mockPriceManager.solToUSD).to.have.been.called;
-      expect(value).to.be.a('number');
+      expect(mockPriceManager.solToUSD.calledOnce).to.be.true;
+      expect(value).to.equal(expectedValue);
     });
 
     it('should calculate entry value in USD', () => {
+      const expectedValue = 1000; // 100 (mock USD value) * 10 (size)
+      mockPriceManager.solToUSD.returns(expectedValue);
+      
       const value = position.getEntryValueUSD();
-      expect(mockPriceManager.solToUSD).to.have.been.called;
-      expect(value).to.be.a('number');
+      expect(mockPriceManager.solToUSD.calledOnce).to.be.true;
+      expect(value).to.equal(expectedValue);
     });
 
     it('should calculate PnL in USD', () => {
-      position.updatePrice(150);
+      position.updatePrice(150);  // 50% increase
+      
+      // Reset the stub to ensure clean state
+      mockPriceManager.solToUSD.reset();
+      
+      // Setup stub to handle both current and entry value calculations
+      mockPriceManager.solToUSD.withArgs(1500).returns(1500);  // current value: 150 * 10
+      mockPriceManager.solToUSD.withArgs(1000).returns(1000);  // entry value: 100 * 10
+      
       const pnl = position.getPnLUSD();
-      expect(pnl).to.be.a('number');
+      expect(pnl).to.equal(500);
     });
 
     it('should calculate PnL percentage', () => {
@@ -141,7 +169,8 @@ describe('Position', () => {
 
     it('should track cumulative realized PnL', () => {
       position.recordPartialExit(0.5, 150);
-      expect(position.getRealizedPnL()).to.be.a('number');
+      const realizedPnL = position.getRealizedPnL();
+      expect(realizedPnL).to.equal(250); // (150 - 100) * 0.5 * 10
     });
   });
 
@@ -166,21 +195,23 @@ describe('Position', () => {
 
   describe('Position Health', () => {
     it('should detect stale position', () => {
-      const clock = sinon.useFakeTimers();
       const threshold = 300000; // 5 minutes
       
       expect(position.isStale(threshold)).to.be.false;
       
       clock.tick(threshold + 1000);
       expect(position.isStale(threshold)).to.be.true;
-      
-      clock.restore();
     });
 
     it('should track update frequency', () => {
+      clock.tick(1000);
+      position.updatePrice(110);
+      clock.tick(2000);
+      position.updatePrice(120);
+      
       const updates = position.getUpdateFrequency();
-      expect(updates).to.have.property('count');
-      expect(updates).to.have.property('averageInterval');
+      expect(updates.count).to.equal(2);
+      expect(updates.averageInterval).to.equal(2000);
     });
   });
 });

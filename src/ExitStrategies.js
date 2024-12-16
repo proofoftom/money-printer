@@ -41,13 +41,16 @@ class ExitStrategies extends EventEmitter {
   handlePriceUpdate(priceData) {
     const result = this.shouldExit(priceData.price, this.token.volume);
     if (result.shouldExit) {
-      this.emit('exit', { 
-        reason: result.reason, 
-        portion: result.portion,
-        price: priceData.price,
-        volume: this.token.volume
+      setImmediate(() => {
+        this.emit('exit', { 
+          reason: result.reason, 
+          portion: result.portion,
+          price: priceData.price,
+          volume: this.token.volume
+        });
       });
     }
+    return result;
   }
 
   handleSolPriceUpdate(priceData) {
@@ -128,15 +131,17 @@ class ExitStrategies extends EventEmitter {
   checkStopLoss(currentPrice) {
     if (!this.config.EXIT_STRATEGIES.STOP_LOSS.ENABLED) return false;
     
-    if (this.config.EXIT_STRATEGIES.USD_BASED_THRESHOLDS) {
-      const currentValueUSD = this.position.getCurrentValueUSD();
-      const entryValueUSD = this.position.getEntryValueUSD();
-      const usdLoss = currentValueUSD - entryValueUSD;
-      return usdLoss <= this.config.EXIT_STRATEGIES.STOP_LOSS.USD_THRESHOLD;
+    const pnlPercentage = this.position.getPnLPercentage();
+    const pnlUSD = this.position.getPnLUSD();
+    
+    // Check both USD and percentage thresholds
+    if (this.config.EXIT_STRATEGIES.USD_BASED_THRESHOLDS && 
+        this.config.EXIT_STRATEGIES.STOP_LOSS.USD_THRESHOLD && 
+        pnlUSD <= this.config.EXIT_STRATEGIES.STOP_LOSS.USD_THRESHOLD) {
+      return true;
     }
     
-    const percentageChange = this.position.calculatePnLPercent(currentPrice);
-    return percentageChange <= this.config.EXIT_STRATEGIES.STOP_LOSS.THRESHOLD;
+    return pnlPercentage <= this.config.EXIT_STRATEGIES.STOP_LOSS.THRESHOLD;
   }
 
   checkTrailingStop(currentPrice) {
@@ -218,21 +223,22 @@ class ExitStrategies extends EventEmitter {
 
     const currentTime = Date.now() / 1000;
     const elapsedSeconds = currentTime - this.entryTime;
-    
-    // Use token's market conditions to adjust time limit
-    const marketConditions = this.token.getMarketConditions();
     let maxHoldTime = timeConfig.MAX_HOLD_TIME;
-
-    if (marketConditions.trend === 'bullish' && this.position.getPnLPercentage() > 0) {
-      maxHoldTime *= timeConfig.BULL_MARKET_MULTIPLIER || 1.5;
-    } else if (marketConditions.trend === 'bearish') {
-      maxHoldTime *= timeConfig.BEAR_MARKET_MULTIPLIER || 0.7;
-    }
 
     // Check if we should extend the time limit
     if (!this.timeExtended && this.position.getPnLPercentage() >= timeConfig.EXTENSION_THRESHOLD) {
       this.timeExtended = true;
       maxHoldTime += timeConfig.EXTENSION_TIME;
+    }
+
+    // Only apply market condition adjustments if not in extension
+    if (!this.timeExtended) {
+      const marketConditions = this.token.getMarketConditions();
+      if (marketConditions.trend === 'bullish' && this.position.getPnLPercentage() > 0) {
+        maxHoldTime *= timeConfig.BULL_MARKET_MULTIPLIER;
+      } else if (marketConditions.trend === 'bearish') {
+        maxHoldTime *= timeConfig.BEAR_MARKET_MULTIPLIER;
+      }
     }
 
     return elapsedSeconds >= maxHoldTime;
@@ -247,19 +253,16 @@ class ExitStrategies extends EventEmitter {
     const pnlPercentage = this.position.getPnLPercentage();
     const marketConditions = this.token.getMarketConditions();
     
-    // Adjust take profit thresholds based on market conditions
+    // Sort tiers by threshold in ascending order to trigger lower thresholds first
     const sortedTiers = [...takeProfitConfig.TIERS]
-      .map(tier => ({
-        ...tier,
-        THRESHOLD: this.adjustTakeProfitThreshold(tier.THRESHOLD, marketConditions)
-      }))
-      .sort((a, b) => b.THRESHOLD - a.THRESHOLD);
+      .sort((a, b) => a.THRESHOLD - b.THRESHOLD);
 
     for (const tier of sortedTiers) {
-      if (pnlPercentage >= tier.THRESHOLD && !this.triggeredTiers.has(tier.THRESHOLD)) {
-        this.triggeredTiers.add(tier.THRESHOLD);
+      const adjustedThreshold = this.adjustTakeProfitThreshold(tier.THRESHOLD, marketConditions);
+      if (pnlPercentage >= adjustedThreshold && !this.triggeredTiers.has(adjustedThreshold)) {
+        this.triggeredTiers.add(adjustedThreshold);
         const portion = Math.min(tier.PORTION, this.remainingPosition);
-        this.remainingPosition = this.roundToDecimals(this.remainingPosition - portion);
+        this.remainingPosition = Math.max(0, this.roundToDecimals(this.remainingPosition - portion));
         return { shouldExit: true, portion: this.roundToDecimals(portion) };
       }
     }
