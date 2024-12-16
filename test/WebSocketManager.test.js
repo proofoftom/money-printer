@@ -2,21 +2,21 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const WebSocket = require('ws');
 const WebSocketManager = require('../src/WebSocketManager');
-const TokenTracker = require('../src/TokenTracker');
+const TokenManager = require('../src/TokenManager');
 const MockPriceManager = require('./mocks/mockPriceManager');
 const EventEmitter = require('events');
 
 describe('WebSocketManager', () => {
   let wsManager;
-  let tokenTracker;
+  let tokenManager;
   let priceManager;
   let mockWs;
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
-    tokenTracker = new TokenTracker();
+    tokenManager = new TokenManager();
     priceManager = new MockPriceManager(1); // Set SOL price to $1 for simpler testing
-    wsManager = new WebSocketManager(tokenTracker, priceManager);
+    wsManager = new WebSocketManager(tokenManager, priceManager);
     
     // Create a mock WebSocket with all necessary methods
     mockWs = new EventEmitter();
@@ -66,7 +66,7 @@ describe('WebSocketManager', () => {
 
   describe('message handling', () => {
     it('should handle new token messages', () => {
-      const spy = sinon.spy(tokenTracker, 'handleNewToken');
+      const spy = sinon.spy(tokenManager, 'handleNewToken');
       const message = {
         signature: '3qQ2EDRHz5jVxKFe4pkiaY8ZfP6okJNH75a5ckGqRCo1e3eSZD8oeDUdpwMjgwZyQ2iLymAwc8a1Ly62ZQtdNFDn',
         mint: 'HALHiUFutmGJ48n5WLFihE566BTgxYG9JFsHkKMZN2UW',
@@ -87,7 +87,7 @@ describe('WebSocketManager', () => {
     });
 
     it('should handle trade messages', () => {
-      const spy = sinon.spy(tokenTracker, 'handleTokenUpdate');
+      const spy = sinon.spy(tokenManager, 'handleTokenUpdate');
       const message = {
         signature: '3AvtrNLxSctDZNU5CEPZ7A4iJcq64ocpZyZtaKaL3nRKm8PTQ2fBGewtUqhucatoQnzCg8FLG91pKt5Fn12D2gxD',
         mint: 'G31NnZDkmgo59CN4AhDhYWyFqZWXV29W5VcUar5Xpump',
@@ -106,7 +106,7 @@ describe('WebSocketManager', () => {
     });
 
     it('should ignore subscription confirmation messages', () => {
-      const spy = sinon.spy(tokenTracker, 'handleTokenUpdate');
+      const spy = sinon.spy(tokenManager, 'handleTokenUpdate');
       const message = {
         message: 'Successfully subscribed to token trades'
       };

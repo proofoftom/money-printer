@@ -1,11 +1,11 @@
 const { expect } = require("chai");
 const sinon = require("sinon");
-const TokenTracker = require("../src/TokenTracker");
 const Token = require("../src/Token");
+const TokenManager = require("../src/TokenManager");
 const MockPriceManager = require("./mocks/mockPriceManager");
 
-describe("TokenTracker", () => {
-  let tokenTracker;
+describe("TokenManager", () => {
+  let tokenManager;
   let safetyChecker;
   let positionManager;
   let priceManager;
@@ -47,7 +47,7 @@ describe("TokenTracker", () => {
       marketCapSol: 100,
     };
 
-    tokenTracker = new TokenTracker(safetyChecker, positionManager, priceManager);
+    tokenManager = new TokenManager(safetyChecker, positionManager, priceManager);
   });
 
   afterEach(() => {
@@ -56,23 +56,23 @@ describe("TokenTracker", () => {
 
   describe("Token Management", () => {
     it("should add new tokens and emit events", () => {
-      const token = tokenTracker.handleNewToken(tokenData);
+      const token = tokenManager.handleNewToken(tokenData);
       expect(token).to.be.instanceOf(Token);
-      expect(tokenTracker.tokens.get(tokenData.mint)).to.equal(token);
+      expect(tokenManager.tokens.get(tokenData.mint)).to.equal(token);
     });
 
     it("should track token state transitions", () => {
-      const token = tokenTracker.handleNewToken(tokenData);
+      const token = tokenManager.handleNewToken(tokenData);
       token.setState("heatingUp");
       expect(token.state).to.equal("heatingUp");
     });
 
     it("should manage positions based on token state", async () => {
-      const token = tokenTracker.handleNewToken(tokenData);
+      const token = tokenManager.handleNewToken(tokenData);
       token.setState("drawdown");
       token.drawdownLow = 80;
       
-      await tokenTracker.handleTokenUpdate({
+      await tokenManager.handleTokenUpdate({
         ...tokenData,
         marketCapSol: 90
       });
@@ -85,7 +85,7 @@ describe("TokenTracker", () => {
 
   describe("Position Management", () => {
     it("should handle take profit execution", async () => {
-      const token = tokenTracker.handleNewToken(tokenData);
+      const token = tokenManager.handleNewToken(tokenData);
       token.setState("inPosition");
       
       // Mock a partial exit (take profit)
@@ -96,7 +96,7 @@ describe("TokenTracker", () => {
         exitPrice: 15000
       });
       
-      await tokenTracker.handleTokenUpdate({
+      await tokenManager.handleTokenUpdate({
         ...tokenData,
         marketCapSol: 150
       });
@@ -106,7 +106,7 @@ describe("TokenTracker", () => {
     });
 
     it("should handle stop loss", async () => {
-      const token = tokenTracker.handleNewToken(tokenData);
+      const token = tokenManager.handleNewToken(tokenData);
       token.setState("inPosition");
       
       // Mock a full exit (stop loss)
@@ -117,7 +117,7 @@ describe("TokenTracker", () => {
         exitPrice: 8000
       });
       
-      await tokenTracker.handleTokenUpdate({
+      await tokenManager.handleTokenUpdate({
         ...tokenData,
         marketCapSol: 70
       });
@@ -129,13 +129,13 @@ describe("TokenTracker", () => {
 
   describe("Token Queries", () => {
     it("should get tokens by state", () => {
-      const token1 = tokenTracker.handleNewToken({ ...tokenData, mint: "mint1" });
-      const token2 = tokenTracker.handleNewToken({ ...tokenData, mint: "mint2" });
+      const token1 = tokenManager.handleNewToken({ ...tokenData, mint: "mint1" });
+      const token2 = tokenManager.handleNewToken({ ...tokenData, mint: "mint2" });
       
       token1.setState("heatingUp");
       token2.setState("heatingUp");
       
-      const heatingUpTokens = tokenTracker.getTokensByState("heatingUp");
+      const heatingUpTokens = tokenManager.getTokensByState("heatingUp");
       expect(heatingUpTokens).to.have.lengthOf(2);
     });
   });

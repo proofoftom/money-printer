@@ -1,7 +1,7 @@
 // Entry point for the Money Printer trading bot
 
 const config = require("./config");
-const TokenTracker = require("./TokenTracker");
+const TokenManager = require("./TokenManager");
 const WebSocketManager = require("./WebSocketManager");
 const SafetyChecker = require("./SafetyChecker");
 const PositionManager = require("./PositionManager");
@@ -144,27 +144,27 @@ const priceManager = initializeComponent(new PriceManager(), 'PriceManager');
 const positionManager = initializeComponent(new PositionManager(wallet), 'PositionManager');
 const safetyChecker = initializeComponent(new SafetyChecker(config.SAFETY, priceManager), 'SafetyChecker');
 
-// Initialize TokenTracker and WebSocketManager
-const tokenTracker = initializeComponent(
-  new TokenTracker(
+// Initialize TokenManager and WebSocketManager
+const tokenManager = initializeComponent(
+  new TokenManager(
     safetyChecker,
     positionManager,
     priceManager
   ),
-  'TokenTracker'
+  'TokenManager'
 );
 
 const wsManager = initializeComponent(
-  new WebSocketManager(tokenTracker, priceManager),
+  new WebSocketManager(tokenManager, priceManager),
   'WebSocketManager'
 );
 
-// Set WebSocketManager in TokenTracker after initialization
-tokenTracker.webSocketManager = wsManager;
+// Set WebSocketManager in TokenManager after initialization
+tokenManager.webSocketManager = wsManager;
 
 // Create dashboard and store globally for error handler access
 global.dashboard = initializeComponent(
-  new Dashboard(wallet, tokenTracker, positionManager, safetyChecker, priceManager),
+  new Dashboard(wallet, tokenManager, positionManager, safetyChecker, priceManager),
   'Dashboard'
 );
 
@@ -182,7 +182,7 @@ async function start() {
 }
 
 // Set up event listeners for token lifecycle events
-tokenTracker.on("tokenAdded", (token) => {
+tokenManager.on("tokenAdded", (token) => {
   global.dashboard.logStatus(`Token ${token.symbol} (${token.mint}) minted!`, "info");
   global.dashboard.logStatus(
     `Market cap: ${priceManager.solToUSD(token.marketCapSol)}`,
@@ -190,7 +190,7 @@ tokenTracker.on("tokenAdded", (token) => {
   );
 });
 
-tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
+tokenManager.on("tokenStateChanged", ({ token, from, to }) => {
   global.dashboard.logStatus(
     `Token ${token.symbol} state changed: ${from} -> ${to}`,
     "info"
@@ -215,7 +215,7 @@ tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
   }
 });
 
-tokenTracker.on("positionOpened", (token) => {
+tokenManager.on("positionOpened", (token) => {
   const position = positionManager.getPosition(token.mint);
   global.dashboard.logStatus(`Opened position for ${token.symbol}`, "info");
   global.dashboard.logStatus(`Entry price: ${position.entryPrice} SOL`, "info");
@@ -228,7 +228,7 @@ tokenTracker.on("positionOpened", (token) => {
   });
 });
 
-tokenTracker.on("takeProfitExecuted", ({ token, percentage, portion }) => {
+tokenManager.on("takeProfitExecuted", ({ token, percentage, portion }) => {
   global.dashboard.logStatus(`Take profit hit for ${token.symbol}`, "info");
   global.dashboard.logStatus(
     `Sold ${(portion * 100).toFixed(0)}% at ${percentage}% profit`,
@@ -243,7 +243,7 @@ tokenTracker.on("takeProfitExecuted", ({ token, percentage, portion }) => {
   });
 });
 
-tokenTracker.on("positionClosed", ({ token, reason }) => {
+tokenManager.on("positionClosed", ({ token, reason }) => {
   global.dashboard.logStatus(`Position closed for ${token.symbol}`, "info");
   global.dashboard.logStatus(`Reason: ${reason}`, "info");
   global.dashboard.logStatus(`Final market cap: ${token.marketCapSol} SOL`, "info");
@@ -255,7 +255,7 @@ tokenTracker.on("positionClosed", ({ token, reason }) => {
   });
 });
 
-tokenTracker.on("error", ({ token, error }) => {
+tokenManager.on("error", ({ token, error }) => {
   global.dashboard.logStatus(
     `Error with token ${token.symbol}: ${error.message}`,
     "error"

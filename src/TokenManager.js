@@ -2,7 +2,7 @@ const EventEmitter = require("events");
 const Token = require("./Token");
 const config = require("./config");
 
-class TokenTracker extends EventEmitter {
+class TokenManager extends EventEmitter {
   constructor(
     safetyChecker,
     positionManager,
@@ -195,4 +195,4 @@ class TokenTracker extends EventEmitter {
   }
 }
 
-module.exports = TokenTracker;
+module.exports = TokenManager;
