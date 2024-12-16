@@ -142,20 +142,21 @@ class SafetyChecker {
   checkPumpDynamics(token) {
     // Fast check for pump characteristics
     const pumpMetrics = token.pumpMetrics;
+    const pumpConfig = config.SAFETY.PUMP_DETECTION;
     
-    // Check price acceleration (lowered from 0.5 to 0.3)
-    if (pumpMetrics.priceAcceleration > 0.3) {
+    // Check price acceleration
+    if (pumpMetrics.priceAcceleration > pumpConfig.MIN_PRICE_ACCELERATION) {
       // Strong positive acceleration indicates potential pump
       const volumeSpikes = pumpMetrics.volumeSpikes;
       if (volumeSpikes.length > 0) {
-        // Analyze volume spikes pattern (lowered from 200% to 150%)
+        // Analyze volume spikes pattern
         const recentSpike = volumeSpikes[volumeSpikes.length - 1];
-        const volumeIncrease = recentSpike.volume / token.getRecentVolume(5 * 60 * 1000) * 100;
+        const volumeIncrease = recentSpike.volume / token.getRecentVolume(pumpConfig.PUMP_WINDOW_MS) * 100;
         
-        if (volumeIncrease > 150) { // Volume spike over 150%
-          // Check if price movement correlates with volume (lowered correlation from 0.3 to 0.2)
+        if (volumeIncrease > pumpConfig.MIN_VOLUME_SPIKE) {
+          // Check if price movement correlates with volume
           const priceChange = recentSpike.priceChange;
-          if (priceChange > 0 && priceChange/volumeIncrease > 0.2) {
+          if (priceChange > 0 && priceChange/volumeIncrease > pumpConfig.MIN_PRICE_VOLUME_CORRELATION) {
             // Price movement correlates well with volume
             return true;
           }
@@ -163,8 +164,8 @@ class SafetyChecker {
       }
     }
     
-    // Check gain rate (lowered from 2% to 1% per second)
-    if (pumpMetrics.highestGainRate > 1) { // More than 1% per second
+    // Check gain rate
+    if (pumpMetrics.highestGainRate > pumpConfig.MIN_GAIN_RATE) {
       const priceStats = token.getPriceStats();
       if (priceStats.volatility < config.SAFETY.MAX_PRICE_VOLATILITY) {
         return true;
@@ -173,17 +174,17 @@ class SafetyChecker {
     
     // Check market cap momentum
     const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-    if (marketCapUSD > 20000) { // Over $20k MC
+    if (marketCapUSD > pumpConfig.LARGE_TOKEN_MC_USD) {
       const mcGainRate = pumpMetrics.marketCapGainRate || 0;
-      if (mcGainRate > 0.5) { // 0.5% gain per second in MC
+      if (mcGainRate > pumpConfig.MIN_MC_GAIN_RATE) {
         return true;
       }
     }
     
-    // Check pump frequency (lowered count from 2 to 1)
-    if (pumpMetrics.pumpCount >= 1) {
+    // Check pump frequency
+    if (pumpMetrics.pumpCount >= pumpConfig.MIN_PUMP_COUNT) {
       const timeSinceLastPump = Date.now() - pumpMetrics.lastPumpTime;
-      if (timeSinceLastPump < 5 * 60 * 1000) { // Within last 5 minutes
+      if (timeSinceLastPump < pumpConfig.PUMP_WINDOW_MS) {
         return true;
       }
     }

@@ -8,8 +8,8 @@ module.exports = {
   THRESHOLDS: {
     // Market Cap Thresholds (in USD)
     MAX_ENTRY_CAP_USD: 50000, // Increased to catch larger pumps ($50k)
-    DEAD_USD: 5000, // Lower threshold for considering token dead ($5k)
-    HEATING_UP_USD: 7000, // Lower threshold for heating up ($7k)
+    DEAD_USD: 7000, // Lower threshold for considering token dead ($5k)
+    HEATING_UP_USD: 9000, // Lower threshold for heating up ($7k)
     FIRST_PUMP_USD: 10000, // Lower threshold for first pump ($10k)
     PUMP_DRAWDOWN: 15, // Reduced drawdown for quicker recovery entry
     RECOVERY: 8, // Lower recovery threshold for faster reentry
@@ -45,32 +45,25 @@ module.exports = {
 
   // Safety configuration
   SAFETY: {
-    // Volume and liquidity thresholds
-    MIN_LIQUIDITY_SOL: 1.5, // Lower liquidity requirement
-    MIN_VOLUME_SOL: 0.3, // Lower volume requirement
-    MAX_WALLET_VOLUME_PERCENTAGE: 40, // Allow higher concentration
-    MIN_VOLUME_PRICE_CORRELATION: 0.25, // Lower correlation requirement
-    MAX_WASH_TRADE_PERCENTAGE: 45, // More tolerant of wash trading
+    MIN_TOKEN_AGE_SECONDS: 60,
+    MIN_LIQUIDITY_SOL: 0.1,
+    MAX_PRICE_VOLATILITY: 1.5,
+    MAX_TOP_HOLDER_CONCENTRATION: 40,
+    MAX_CREATOR_HOLDINGS: 30,
+    MIN_HOLDERS: 5,
+    MAX_SUPPLY_CONCENTRATION: 50,
 
-    // Time-based parameters
-    MIN_TOKEN_AGE_SECONDS: 20, // Reduced minimum age
-    MAX_HOLD_TIME_SECONDS: 240, // 4 minutes max hold
-
-    // Price action thresholds
-    MAX_PRICE_CHANGE_PERCENT: 250, // Allow bigger pumps
-    MIN_PRICE_CHANGE_PERCENT: -35, // More tolerant of dips
-    MAX_PRICE_VOLATILITY: 175, // Higher volatility tolerance
-
-    // Holder distribution thresholds
-    MIN_HOLDERS: 40, // Lower holder requirement
-    MAX_TOP_HOLDER_CONCENTRATION: 45, // Allow higher concentration
-
-    // Creator thresholds
-    MAX_CREATOR_HOLDINGS_PERCENT: 20, // Allow higher creator holdings
-
-    // Recovery thresholds
-    RECOVERY_THRESHOLD_PERCENT: 8, // Lower recovery threshold
-    MAX_DRAWDOWN_PERCENT: 25, // Lower maximum drawdown
+    // Pump pattern detection thresholds
+    PUMP_DETECTION: {
+      MIN_PRICE_ACCELERATION: 0.3,    // Minimum price acceleration to consider
+      MIN_VOLUME_SPIKE: 150,          // Minimum volume spike percentage
+      MIN_PRICE_VOLUME_CORRELATION: 0.2, // Minimum correlation between price and volume
+      MIN_GAIN_RATE: 1.0,            // Minimum gain rate per second
+      MIN_MC_GAIN_RATE: 0.5,         // Minimum market cap gain rate for large tokens
+      LARGE_TOKEN_MC_USD: 20000,     // Threshold for large token market cap
+      MIN_PUMP_COUNT: 1,             // Minimum number of pumps
+      PUMP_WINDOW_MS: 300000,        // Time window for pump count (5 minutes)
+    }
   },
 
   // Position sizing
