@@ -259,11 +259,51 @@ class Token extends EventEmitter {
   }
 
   getTotalTokensHeld() {
-    const holdersTotal = Array.from(this.holders.values()).reduce(
+    // Sum only the tokens held by actual holders (excluding liquidity pool)
+    return Array.from(this.holders.values()).reduce(
       (sum, balance) => sum + balance,
       0
     );
-    return holdersTotal + this.vTokensInBondingCurve;
+  }
+
+  getTotalSupply() {
+    // Total supply includes both held tokens and tokens in the liquidity pool
+    return this.getTotalTokensHeld() + (this.vTokensInBondingCurve || 0);
+  }
+
+  getTopHolderConcentration(topN = 10) {
+    const totalSupply = this.getTotalSupply();
+    if (totalSupply === 0) return 0;
+
+    // Get holder balances (excluding bonding curve)
+    const holderBalances = Array.from(this.holders.values());
+
+    // Sort balances in descending order and take top N
+    const topBalances = holderBalances
+      .sort((a, b) => b - a)
+      .slice(0, Math.min(topN, holderBalances.length));
+
+    // Calculate total balance of top holders
+    const topHoldersBalance = topBalances.reduce((sum, balance) => sum + balance, 0);
+
+    // Calculate concentration as percentage of total supply
+    return (topHoldersBalance / totalSupply) * 100;
+  }
+
+  isHeatingUp(threshold) {
+    return this.marketCapSol > threshold;
+  }
+
+  isFirstPump(threshold) {
+    return this.marketCapSol > threshold;
+  }
+
+  isDead(threshold) {
+    return this.marketCapSol < threshold;
+  }
+
+  getTokenPrice() {
+    return this.currentPrice;
   }
 
   getCreatorHoldings() {
@@ -289,44 +329,6 @@ class Token extends EventEmitter {
       .sort(([, a], [, b]) => b - a)
       .slice(0, count)
       .map(([address, balance]) => ({ address, balance }));
-  }
-
-  getTopHolderConcentration(topN = 10) {
-    const totalSupply = this.getTotalTokensHeld();
-    if (totalSupply === 0) return 0;
-
-    // Get all holder balances including bonding curve
-    const allBalances = [
-      ...Array.from(this.holders.values()),
-      this.vTokensInBondingCurve,
-    ];
-
-    // Sort balances in descending order and take top N
-    const topBalances = allBalances.sort((a, b) => b - a).slice(0, topN);
-
-    // Calculate total balance of top holders
-    const topHoldersBalance = topBalances.reduce(
-      (sum, balance) => sum + balance,
-      0
-    );
-
-    return (topHoldersBalance / totalSupply) * 100;
-  }
-
-  isHeatingUp(threshold) {
-    return this.marketCapSol > threshold;
-  }
-
-  isFirstPump(threshold) {
-    return this.marketCapSol > threshold;
-  }
-
-  isDead(threshold) {
-    return this.marketCapSol < threshold;
-  }
-
-  getTokenPrice() {
-    return this.currentPrice;
   }
 }
 

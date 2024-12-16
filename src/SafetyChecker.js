@@ -190,13 +190,12 @@ class SafetyChecker {
   }
 
   hasEnoughHolders(token) {
-    return token.holderCount >= config.SAFETY.MIN_HOLDERS;
+    return token.getHolderCount() >= config.SAFETY.MIN_HOLDERS;
   }
 
   isHolderConcentrationSafe(token) {
-    return (
-      token.topHolderConcentration <= config.SAFETY.MAX_TOP_HOLDER_CONCENTRATION
-    );
+    const topHolderConcentration = token.getTopHolderConcentration(10);
+    return topHolderConcentration <= config.SAFETY.MAX_TOP_HOLDER_CONCENTRATION;
   }
 
   isCreatorFullyExited(token) {
