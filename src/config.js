@@ -28,7 +28,6 @@ module.exports = {
     MAX_PRICE_VOLATILITY: 50, // Maximum price volatility percentage
 
     // Trading Pattern Thresholds
-    MIN_UNIQUE_BUYERS: 15, // Minimum number of unique buyers
     MAX_AVG_TRADE_SIZE_USD: 500, // Maximum average trade size in USD
     MIN_BUY_SELL_RATIO: 0.6, // Minimum ratio of buys to total trades
     MAX_SINGLE_WALLET_VOLUME: 25, // Maximum percentage of volume from a single wallet
@@ -40,34 +39,30 @@ module.exports = {
 
   // Safety configuration
   SAFETY: {
-    // Market cap thresholds in USD
-    MIN_MARKET_CAP_USD: 5000, // Lowered from 10000 to catch smaller opportunities
-    MAX_MARKET_CAP_USD: 5000000, // Increased from 1M to allow more opportunities
+    // Volume and liquidity thresholds
+    MIN_LIQUIDITY_SOL: 5,
+    MIN_VOLUME_SOL: 1,
+    MAX_WALLET_VOLUME_PERCENTAGE: 25,
+    MIN_VOLUME_PRICE_CORRELATION: 0.5,
+    MAX_WASH_TRADE_PERCENTAGE: 30,
+
+    // Price reference
     SOL_PRICE_USD: 100, // Reference price for calculations
 
     // Time-based parameters
-    MIN_TOKEN_AGE_SECONDS: 1800, // Reduced from 3600 to enter earlier
+    MIN_TOKEN_AGE_SECONDS: 60, // Reduced from 3600 to enter earlier
     MAX_HOLD_TIME_SECONDS: 7200, // Reduced from 14400 for faster turnover
 
     // Price action thresholds
-    MAX_PUMP_MULTIPLE: 5, // Reduced from 10 to take profits earlier
-    MAX_PRICE_VOLATILITY: 40, // Increased from 30 to allow more volatile tokens
-    MAX_DRAWDOWN_PERCENTAGE: 25, // Kept the same for risk management
+    MAX_PRICE_CHANGE_PERCENT: 50,
+    MIN_PRICE_CHANGE_PERCENT: -50,
 
-    // Trading pattern requirements
-    MIN_UNIQUE_BUYERS: 40, // Reduced from 50 to enter earlier
-    MAX_AVG_TRADE_SIZE_USD: 2000, // Reduced from 5000 to allow smaller trades
-    MIN_BUY_SELL_RATIO: 0.35, // Reduced from 0.4 to be less strict
-    MAX_SINGLE_WALLET_VOLUME: 20, // Increased from 15 to allow more concentrated trading
+    // Holder distribution thresholds
+    MIN_HOLDERS: 100,
+    MAX_TOP_HOLDER_CONCENTRATION: 30,
 
-    // Holder distribution requirements
-    MIN_HOLDERS: 100, // Reduced from 150 for earlier entry
-    MAX_TOP_HOLDER_CONCENTRATION: 30, // Increased from 25 to allow more concentration
-    MIN_HOLDER_WALLET_AGE: 7, // Reduced from 10 days for earlier entry
-
-    // Volume pattern requirements
-    MIN_VOLUME_PRICE_CORRELATION: 0.6, // Reduced from 0.7 to be less strict
-    MAX_WASH_TRADE_PERCENTAGE: 15, // Increased from 10 to allow more wash trading
+    // Creator thresholds
+    MAX_CREATOR_HOLDINGS_PERCENT: 5,
   },
 
   // Position sizing

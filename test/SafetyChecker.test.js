@@ -29,7 +29,6 @@ describe("SafetyChecker", () => {
       maxWalletVolumePercentage: 15,
       holderCount: 150,
       topHolderConcentration: 25,
-      minHolderWalletAge: 10,
       volumePriceCorrelation: 0.7,
       suspectedWashTradePercentage: 10,
     };
@@ -88,54 +87,29 @@ describe("SafetyChecker", () => {
     });
   });
 
-  describe("Trading Pattern Checks", () => {
-    it("should reject if not enough unique buyers", () => {
-      mockMarketData.uniqueBuyers = config.SAFETY.MIN_UNIQUE_BUYERS - 10;
-      assert.strictEqual(
-        safetyChecker.checkTradingPatterns(mockMarketData),
-        false
-      );
+  describe("Trading Pattern Tests", () => {
+    beforeEach(() => {
+      mockMarketData = {
+        maxWalletVolumePercentage: 15,
+        volumePriceCorrelation: 0.7,
+        suspectedWashTradePercentage: 10,
+      };
     });
 
-    it("should reject if average trade size is too high", () => {
-      mockMarketData.avgTradeSize =
-        config.SAFETY.MAX_AVG_TRADE_SIZE_USD / 100 + 1;
-      assert.strictEqual(
-        safetyChecker.checkTradingPatterns(mockMarketData),
-        false
-      );
+    it("should reject if wallet volume percentage is too high", () => {
+      mockMarketData.maxWalletVolumePercentage = config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE + 5;
+      assert.strictEqual(safetyChecker.checkTradingPatterns(mockMarketData), false);
     });
 
-    it("should reject if buy/sell ratio is too low", () => {
-      mockMarketData.buyCount = 40;
-      mockMarketData.sellCount = 160;
-      assert.strictEqual(
-        safetyChecker.checkTradingPatterns(mockMarketData),
-        false
-      );
-    });
-
-    it("should reject if single wallet volume is too high", () => {
-      mockMarketData.maxWalletVolumePercentage =
-        config.SAFETY.MAX_SINGLE_WALLET_VOLUME + 5;
-      assert.strictEqual(
-        safetyChecker.checkTradingPatterns(mockMarketData),
-        false
-      );
+    it("should reject if volume-price correlation is too low", () => {
+      mockMarketData.volumePriceCorrelation = config.SAFETY.MIN_VOLUME_PRICE_CORRELATION - 0.2;
+      assert.strictEqual(safetyChecker.checkTradingPatterns(mockMarketData), false);
     });
 
     it("should accept valid trading patterns", () => {
-      mockMarketData.uniqueBuyers = config.SAFETY.MIN_UNIQUE_BUYERS + 10;
-      mockMarketData.avgTradeSize =
-        config.SAFETY.MAX_AVG_TRADE_SIZE_USD / 100 - 1;
-      mockMarketData.buyCount = 80;
-      mockMarketData.sellCount = 20;
-      mockMarketData.maxWalletVolumePercentage =
-        config.SAFETY.MAX_SINGLE_WALLET_VOLUME - 5;
-      assert.strictEqual(
-        safetyChecker.checkTradingPatterns(mockMarketData),
-        true
-      );
+      mockMarketData.maxWalletVolumePercentage = config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE - 5;
+      mockMarketData.volumePriceCorrelation = config.SAFETY.MIN_VOLUME_PRICE_CORRELATION + 0.1;
+      assert.strictEqual(safetyChecker.checkTradingPatterns(mockMarketData), true);
     });
   });
 
@@ -157,21 +131,10 @@ describe("SafetyChecker", () => {
       );
     });
 
-    it("should reject if holder wallet age is too low", () => {
-      mockMarketData.minHolderWalletAge =
-        config.SAFETY.MIN_HOLDER_WALLET_AGE - 2;
-      assert.strictEqual(
-        safetyChecker.checkHolderDistribution(mockMarketData),
-        false
-      );
-    });
-
     it("should accept valid holder distribution", () => {
       mockMarketData.holderCount = config.SAFETY.MIN_HOLDERS + 10;
       mockMarketData.topHolderConcentration =
         config.SAFETY.MAX_TOP_HOLDER_CONCENTRATION - 5;
-      mockMarketData.minHolderWalletAge =
-        config.SAFETY.MIN_HOLDER_WALLET_AGE + 3;
       assert.strictEqual(
         safetyChecker.checkHolderDistribution(mockMarketData),
         true
