@@ -20,8 +20,8 @@ class TokenStateManager extends EventEmitter {
       heatingUp: ["firstPump", "inPosition", "dead"],
       firstPump: ["inPosition", "drawdown", "dead"],
       inPosition: ["drawdown", "closed", "dead"],
-      drawdown: ["unsafeRecovery", "closed", "dead"],
-      unsafeRecovery: ["inPosition", "closed", "dead"],
+      drawdown: ["unsafeRecovery", "inPosition", "closed", "dead"],
+      unsafeRecovery: ["inPosition", "drawdown", "closed", "dead"],
       closed: ["dead"],
       dead: []
     };

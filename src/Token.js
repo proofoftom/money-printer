@@ -468,12 +468,15 @@ class Token extends EventEmitter {
       if (this.state === "unsafeRecovery") {
         // Check if token has become safe
         const isSecure = await safetyChecker.runSecurityChecks(this);
+        
         if (isSecure) {
           // Only enter position if gain is less than threshold
           if (gainPercentage <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
+            this.setState("inPosition");
             this.emit("readyForPosition", this);
           } else {
-            // If gain is too high, stay in unsafeRecovery but notify
+            // If gain is too high, go back to drawdown to wait for better entry
+            this.setState("drawdown");
             this.emit("recoveryGainTooHigh", {
               token: this,
               gainPercentage,
@@ -482,7 +485,15 @@ class Token extends EventEmitter {
           }
         } else {
           // Update unsafe reason if it changed
-          this.unsafeReason = safetyChecker.getFailureReason();
+          const newReason = safetyChecker.getFailureReason();
+          if (JSON.stringify(newReason) !== JSON.stringify(this.unsafeReason)) {
+            this.unsafeReason = newReason;
+            this.emit("unsafeRecoveryUpdate", {
+              token: this,
+              reason: this.unsafeReason.reason,
+              value: this.unsafeReason.value
+            });
+          }
         }
       }
     } catch (error) {
