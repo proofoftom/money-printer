@@ -20,7 +20,7 @@ class SafetyChecker {
   async runSecurityChecks(token) {
     const startTime = Date.now();
     let approved = true;
-    let failedCheck = null;
+    let failedChecks = [];
 
     try {
       // Reset failure reason at start of checks
@@ -29,38 +29,38 @@ class SafetyChecker {
       // Basic safety checks that even pump tokens must pass
       if (!this.checkMinimumRequirements(token)) {
         approved = false;
-        failedCheck = {
+        failedChecks.push({
           name: 'MINIMUM_REQUIREMENTS',
           reason: this.lastFailureReason?.reason || 'minimumRequirements',
           actual: this.lastFailureReason?.value,
           configPath: 'SAFETY.MIN_TOKEN_AGE_SECONDS'
-        };
+        });
       } 
       // Check for rug pull signals
       else if (!this.checkRugSignals(token)) {
         approved = false;
-        failedCheck = {
+        failedChecks.push({
           name: 'RUG_SIGNALS',
           reason: this.lastFailureReason?.reason || 'rugSignals',
           actual: this.lastFailureReason?.value,
           configPath: 'SAFETY.MAX_TOP_HOLDER_CONCENTRATION'
-        };
+        });
       }
       // Pump-specific checks
       else if (!this.checkPumpDynamics(token)) {
         approved = false;
-        failedCheck = {
+        failedChecks.push({
           name: 'PUMP_DYNAMICS',
           reason: this.lastFailureReason?.reason || 'invalidPumpPattern',
           actual: this.lastFailureReason?.value,
           configPath: 'THRESHOLDS.PUMP'
-        };
+        });
       }
 
-      // Track the token for missed opportunity analysis if it failed checks
-      if (!approved && failedCheck) {
-        this.missedOpportunityLogger.trackToken(token, failedCheck);
-        token.unsafeReason = failedCheck.reason;
+      // Track the token for missed opportunity analysis if it failed any checks
+      if (!approved && failedChecks.length > 0) {
+        this.missedOpportunityLogger.trackToken(token, failedChecks);
+        token.unsafeReason = failedChecks.map(check => check.reason).join(', ');
       }
 
       return approved;
@@ -72,6 +72,7 @@ class SafetyChecker {
         actual: error.message,
         configPath: null
       };
+      failedChecks.push(errorCheck);
       this.missedOpportunityLogger.trackToken(token, errorCheck);
       return false;
     }
@@ -184,7 +185,9 @@ class SafetyChecker {
 
   updateTrackedTokens(token) {
     // Update metrics for tracked tokens that failed safety checks
-    this.missedOpportunityLogger.updateTokenMetrics(token);
+    if (token.marketCapSol) {  // Only update if we have valid market cap data
+      this.missedOpportunityLogger.updateTokenMetrics(token);
+    }
   }
 
   getSafetyMetrics() {

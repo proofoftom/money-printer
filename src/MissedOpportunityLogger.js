@@ -118,12 +118,16 @@ class MissedOpportunityLogger {
     if (!trackedToken.potentialProfit) return false;
     
     // Consider it significant if:
-    // 1. Potential gain was over 50%
-    // 2. Time to peak was reasonable (under 5 minutes)
-    // 3. Missed profit would have been at least 0.1 SOL
-    return trackedToken.potentialProfit.percentage > 50 &&
-           trackedToken.potentialProfit.timeToReachSeconds < 300 &&
-           trackedToken.potentialProfit.missedProfitSOL > 0.1;
+    // 1. Potential gain was over 30% (lowered from 50%)
+    // 2. Time to peak was reasonable (under 15 minutes, increased from 5)
+    // 3. Missed profit would have been at least 0.05 SOL (lowered from 0.1)
+    // 4. Initial market cap was below 20k USD (new check)
+    const initialMarketCapUSD = trackedToken.initialMarketCap * config.PRICE.SOL_USD_PRICE;
+    
+    return trackedToken.potentialProfit.percentage > 30 &&
+           trackedToken.potentialProfit.timeToReachSeconds < 900 &&
+           trackedToken.potentialProfit.missedProfitSOL > 0.05 &&
+           initialMarketCapUSD < 20000;
   }
 
   analyzeThresholds(trackedToken) {
