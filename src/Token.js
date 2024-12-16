@@ -165,7 +165,8 @@ class Token extends EventEmitter {
   }
 
   getTotalTokensHeld() {
-    return Array.from(this.holders.values()).reduce((sum, balance) => sum + balance, 0);
+    const holdersTotal = Array.from(this.holders.values()).reduce((sum, balance) => sum + balance, 0);
+    return holdersTotal + this.vTokensInBondingCurve;
   }
 
   getCreatorHoldings() {
@@ -195,7 +196,23 @@ class Token extends EventEmitter {
 
     const topHolders = this.getTopHolders(topN);
     const topHoldersBalance = topHolders.reduce((sum, { balance }) => sum + balance, 0);
-    return (topHoldersBalance / totalSupply) * 100;
+    
+    // Include bonding curve in concentration if it would be among top holders
+    const bondingCurveBalance = this.vTokensInBondingCurve;
+    let adjustedTopBalance = topHoldersBalance;
+    
+    // Check if bonding curve balance would be among top holders
+    const smallestTopHolder = topHolders.length > 0 ? topHolders[topHolders.length - 1].balance : 0;
+    if (bondingCurveBalance > smallestTopHolder) {
+      // Add bonding curve balance and remove the smallest top holder if we've hit our limit
+      adjustedTopBalance = topHoldersBalance;
+      if (topHolders.length >= topN) {
+        adjustedTopBalance -= smallestTopHolder;
+      }
+      adjustedTopBalance += bondingCurveBalance;
+    }
+
+    return (adjustedTopBalance / totalSupply) * 100;
   }
 
   isHeatingUp(threshold) {
