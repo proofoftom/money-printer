@@ -311,7 +311,7 @@ class Dashboard {
       return [
         `${pos.mint?.slice(0, 8)}... | ${holdTimeStr} | P/L: ${plStr}`,
         `Price: ${pos.currentPrice?.toFixed(4)} SOL ${velocityIndicator}`,
-        `Vol: ${volumeUSD.toFixed(0)}$ ${volumeIndicator}`,
+        `Vol: ${this.formatVolume(pos.volume5m || 0)}$ ${volumeIndicator}`,
         `Entry: ${pos.entryPrice?.toFixed(4)} | High: ${pos.highPrice?.toFixed(4)}`,
         "─".repeat(50) // Separator
       ].join("\n");

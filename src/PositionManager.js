@@ -92,7 +92,10 @@ Partial Exit:
         candleHistory: [],
         simulatedDelay: delay,
         priceHistory: [executionPrice],
-        volumeHistory: [],
+        volume: 0,
+        volume1m: 0,
+        volume5m: 0,
+        volume30m: 0,
         profitHistory: [0],
         highPrice: executionPrice
       };
@@ -156,7 +159,13 @@ Partial Exit:
     // Update volume history (keep last 5 minutes of data)
     const volumeHistory = position.volumeHistory || [];
     if (volumeData) {
-      volumeHistory.push(volumeData);
+      volumeHistory.push({
+        timestamp: Date.now(),
+        volume: volumeData.volume || 0,
+        volume1m: volumeData.volume1m || 0,
+        volume5m: volumeData.volume5m || 0,
+        volume30m: volumeData.volume30m || 0
+      });
       if (volumeHistory.length > 30) { // 30 data points = 5 minutes
         volumeHistory.shift();
       }
@@ -175,6 +184,9 @@ Partial Exit:
 
     // Get latest volume from volumeData or keep existing
     const volume = volumeData?.volume || position.volume || 0;
+    const volume1m = volumeData?.volume1m || position.volume1m || 0;
+    const volume5m = volumeData?.volume5m || position.volume5m || 0;
+    const volume30m = volumeData?.volume30m || position.volume30m || 0;
 
     return this.stateManager.updatePosition(mint, {
       currentPrice,
@@ -183,6 +195,9 @@ Partial Exit:
       profitHistory,
       highPrice,
       volume,
+      volume1m,
+      volume5m,
+      volume30m,
       candleHistory: candleData ? [...(position.candleHistory || []), candleData] : undefined
     });
   }

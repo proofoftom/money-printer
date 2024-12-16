@@ -121,8 +121,15 @@ class Token extends EventEmitter {
       this.updateWalletBalance(data.traderPublicKey, data.newTokenBalance, now);
     }
 
-    // Update all metrics
-    this.updateMetrics();
+    // Emit price and volume updates together
+    this.emit('priceUpdate', { 
+      price: this.currentPrice, 
+      acceleration: this.pumpMetrics.priceAcceleration,
+      pumpMetrics: this.pumpMetrics,
+      volume1m: this.volume1m,
+      volume5m: this.volume5m,
+      volume30m: this.volume30m
+    });
   }
 
   updatePriceMetrics() {
@@ -185,11 +192,6 @@ class Token extends EventEmitter {
     }
     
     this.currentPrice = newPrice;
-    this.emit('priceUpdate', { 
-      price: newPrice, 
-      acceleration: this.pumpMetrics.priceAcceleration,
-      pumpMetrics: this.pumpMetrics
-    });
   }
 
   getRecentVolume(timeWindow) {

@@ -127,7 +127,11 @@ class TokenTracker extends EventEmitter {
         const result = this.positionManager.updatePosition(
           token.mint,
           token.marketCapSol,
-          { volume: token.volume24h }
+          { 
+            volume: token.volume5m || 0, // Use 5-minute volume
+            volume1m: token.volume1m || 0,
+            volume30m: token.volume30m || 0
+          }
         );
         if (result) {
           if (result.portion === 1.0) {
