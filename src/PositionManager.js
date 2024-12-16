@@ -253,6 +253,10 @@ Partial Position Close:
   getPosition(mint) {
     return this.positions.get(mint);
   }
+
+  getActivePositions() {
+    return Array.from(this.positions.values());
+  }
 }
 
 module.exports = PositionManager;
