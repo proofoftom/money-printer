@@ -20,9 +20,26 @@ class Dashboard {
       y: [],
     };
 
-    // Store original console methods
+    // Store original console methods before overriding
     this.originalConsoleLog = console.log;
     this.originalConsoleError = console.error;
+
+    // Override console methods immediately to prevent any logs from bypassing the dashboard
+    console.log = (...args) => {
+      if (!this.statusBox) {
+        this.originalConsoleLog.apply(console, args);
+        return;
+      }
+      this.logStatus(args.join(" "));
+    };
+
+    console.error = (...args) => {
+      if (!this.statusBox) {
+        this.originalConsoleError.apply(console, args);
+        return;
+      }
+      this.logStatus(args.join(" "), "error");
+    };
 
     this.initializeDashboard();
   }
@@ -97,26 +114,12 @@ class Dashboard {
       scrollable: true,
       alwaysScroll: true,
       border: "line",
-      tags: false,
+      tags: true,
       padding: 1,
       style: {
         label: { bold: true },
       },
     });
-
-    // Redirect console.log to status box
-    console.log = (...args) => {
-      this.logStatus(args.join(" "));
-      // Keep original logging for debugging
-      this.originalConsoleLog.apply(console, args);
-    };
-
-    console.error = (...args) => {
-      const errorMessage = args.join(" ");
-      this.logStatus(errorMessage, "error");
-      // Keep original error logging for debugging
-      this.originalConsoleError.apply(console, args);
-    };
 
     // Token state boxes in second row, extending to bottom
     this.heatingUpBox = this.grid.set(3, 0, 9, 3, blessed.box, {
@@ -339,15 +342,32 @@ class Dashboard {
 
   logStatus(message, type = "info") {
     try {
+      if (!this.statusBox) return;
+      
       const timestamp = new Date().toLocaleTimeString();
-      const prefix = type === "error" ? "" : 
-                    type === "warning" ? "" : 
-                    type === "success" ? "" : 
-                    "";
-      this.statusBox.log(`[${timestamp}] ${prefix} ${message}`);
+      let formattedMessage = `[${timestamp}] `;
+      
+      switch (type) {
+        case "error":
+          formattedMessage += "{red-fg}";
+          break;
+        case "warning":
+          formattedMessage += "{yellow-fg}";
+          break;
+        case "success":
+          formattedMessage += "{green-fg}";
+          break;
+        default:
+          formattedMessage += "{white-fg}";
+      }
+      
+      formattedMessage += message + "{/}";
+      this.statusBox.pushLine(formattedMessage);
+      this.statusBox.setScrollPerc(100); // Auto-scroll to bottom
       this.screen.render();
     } catch (error) {
-      throw error;
+      // If there's an error in logging, fall back to original console
+      this.originalConsoleError.apply(console, [`Error in logStatus: ${error.message}`]);
     }
   }
 

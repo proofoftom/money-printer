@@ -90,10 +90,11 @@ class WebSocketManager extends EventEmitter {
       return;
     }
 
-    // Handle subscription confirmation messages silently
+    // Handle subscription and unsubscription confirmation messages silently
     if (
       message.message &&
-      message.message.includes("Successfully subscribed")
+      (message.message.includes("Successfully subscribed") ||
+       message.message.includes("Unsubscribed"))
     ) {
       return;
     }
