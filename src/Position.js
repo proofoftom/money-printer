@@ -26,6 +26,7 @@ class Position extends EventEmitter {
     this.updates = [];
     this.lastUpdate = Date.now();
     this.symbol = data.symbol;
+    this.priceManager = data.priceManager;
   }
 
   update(data) {
@@ -135,6 +136,30 @@ class Position extends EventEmitter {
 
   isStale(threshold = 5 * 60 * 1000) { // 5 minutes by default
     return Date.now() - this.lastUpdate > threshold;
+  }
+
+  getCurrentValueUSD() {
+    if (!this.priceManager) {
+      throw new Error('PriceManager not initialized for position');
+    }
+    return this.priceManager.solToUSD(this.currentPrice * this.remainingSize);
+  }
+
+  getEntryValueUSD() {
+    if (!this.priceManager) {
+      throw new Error('PriceManager not initialized for position');
+    }
+    return this.priceManager.solToUSD(this.entryPrice * this.size);
+  }
+
+  getPnLUSD() {
+    return this.getCurrentValueUSD() - this.getEntryValueUSD();
+  }
+
+  getPnLPercentage() {
+    const entryValue = this.getEntryValueUSD();
+    if (entryValue === 0) return 0;
+    return (this.getPnLUSD() / entryValue) * 100;
   }
 
   toJSON() {
