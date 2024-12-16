@@ -133,8 +133,8 @@ class TraderManager extends EventEmitter {
       if (!group.members.includes(trader1.publicKey)) {
         group.members.push(trader1.publicKey);
       }
-      if (!group.members.includes(trader2.publicKey)) {
-        group.members.push(trader2.publicKey);
+      if (!group.members.includes(trader2PublicKey)) {
+        group.members.push(trader2PublicKey);
       }
       group.lastActivity = Date.now();
       group.patterns.push({ type: reason, timestamp: Date.now() });
@@ -142,7 +142,7 @@ class TraderManager extends EventEmitter {
       // Create new group
       group = {
         id: `group_${Date.now()}`,
-        members: [trader1.publicKey, trader2.publicKey],
+        members: [trader1.publicKey, trader2PublicKey],
         created: Date.now(),
         lastActivity: Date.now(),
         patterns: [{ type: reason, timestamp: Date.now() }],
@@ -354,6 +354,39 @@ class TraderManager extends EventEmitter {
       trader.tradeHistory['5m'] = trader.tradeHistory['5m'].filter(t => t.timestamp > cutoffTime - 300000);
       trader.tradeHistory['30m'] = trader.tradeHistory['30m'].filter(t => t.timestamp > cutoffTime - 1800000);
     });
+  }
+
+  getRepeatPumpParticipants(pumpTimes, minParticipation = 2) {
+    // Create a map to track trader participation in pumps
+    const participationCount = new Map();
+    const repeatParticipants = new Set();
+
+    // Go through each pump time and find traders who were active
+    pumpTimes.forEach(pumpTime => {
+      // Look at trades within 5 minutes of pump
+      const startTime = pumpTime - (5 * 60 * 1000);
+      const endTime = pumpTime + (5 * 60 * 1000);
+
+      // Find traders active during this pump
+      this.traders.forEach(trader => {
+        const wasActive = trader.trades.some(trade => {
+          const tradeTime = trade.timestamp;
+          return tradeTime >= startTime && tradeTime <= endTime;
+        });
+
+        if (wasActive) {
+          const count = (participationCount.get(trader.publicKey) || 0) + 1;
+          participationCount.set(trader.publicKey, count);
+
+          // If trader has participated in multiple pumps, add to repeat participants
+          if (count >= minParticipation) {
+            repeatParticipants.add(trader.publicKey);
+          }
+        }
+      });
+    });
+
+    return Array.from(repeatParticipants);
   }
 }
 
