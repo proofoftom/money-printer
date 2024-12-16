@@ -28,52 +28,23 @@ class SafetyChecker {
       // Reset failure reason at start of checks
       this.lastFailureReason = null;
 
-      // Run all checks
-      if (!this.checkMarketCap(token)) {
+      // Basic safety checks that even pump tokens must pass
+      if (!this.checkMinimumRequirements(token)) {
         approved = false;
-        rejectionCategory = "marketCap";
-        rejectionReason =
-          token.marketCapSol * config.SAFETY.SOL_PRICE_USD >
-          config.SAFETY.MAX_MARKET_CAP_USD
-            ? "high"
-            : "low";
-        this.setFailureReason(rejectionReason, token.marketCapSol);
-      } else if (!this.checkTokenAge(token)) {
+        rejectionCategory = "basic";
+        rejectionReason = this.lastFailureReason?.reason || "minimumRequirements";
+      } 
+      // Check for rug pull signals
+      else if (!this.checkRugSignals(token)) {
         approved = false;
-        rejectionCategory = "age";
-        rejectionReason = "tooNew";
-        const tokenAge = (Date.now() - token.minted) / 1000;
-        this.setFailureReason(rejectionReason, tokenAge);
-      } else if (!this.checkPriceAction(token)) {
+        rejectionCategory = "rugPull";
+        rejectionReason = this.lastFailureReason?.reason || "rugSignals";
+      }
+      // Pump-specific checks
+      else if (!this.checkPumpDynamics(token)) {
         approved = false;
-        rejectionCategory = "priceAction";
-        rejectionReason =
-          token.priceVolatility > config.SAFETY.MAX_PRICE_VOLATILITY
-            ? "volatilityTooHigh"
-            : "pumpTooHigh";
-        this.setFailureReason(rejectionReason, token.priceVolatility);
-      } else if (!this.checkTradingPatterns(token)) {
-        approved = false;
-        rejectionCategory = "tradingPatterns";
-        rejectionReason = this.getTradingPatternRejectionReason(token);
-        this.setFailureReason(rejectionReason, token.uniqueBuyers);
-      } else if (!this.checkHolderDistribution(token)) {
-        approved = false;
-        rejectionCategory = "holders";
-        rejectionReason = this.getHolderDistributionRejectionReason(token);
-        this.setFailureReason(rejectionReason, token.holderCount);
-      } else if (!this.checkVolumePatterns(token)) {
-        approved = false;
-        rejectionCategory = "volume";
-        rejectionReason =
-          token.suspectedWashTradePercentage >
-          config.SAFETY.MAX_WASH_TRADE_PERCENTAGE
-            ? "excessiveWashTrading"
-            : "lowCorrelation";
-        this.setFailureReason(
-          rejectionReason,
-          token.suspectedWashTradePercentage
-        );
+        rejectionCategory = "pumpDynamics";
+        rejectionReason = this.lastFailureReason?.reason || "invalidPumpPattern";
       }
 
       // Log the check results
@@ -90,7 +61,6 @@ class SafetyChecker {
       return approved;
     } catch (error) {
       console.error("Error in security checks:", error);
-
       this.safetyLogger.logSafetyCheck({
         token: token.mint,
         approved: false,
@@ -99,123 +69,79 @@ class SafetyChecker {
         details,
         duration: Date.now() - startTime,
       });
-
       this.setFailureReason("Error running checks");
       return false;
     }
   }
 
-  checkMarketCap(token) {
-    const marketCapUSD = token.marketCapSol * config.SAFETY.SOL_PRICE_USD;
-    return (
-      marketCapUSD <= config.SAFETY.MAX_MARKET_CAP_USD &&
-      marketCapUSD >= config.SAFETY.MIN_MARKET_CAP_USD
-    );
-  }
-
-  checkTokenAge(token) {
+  checkMinimumRequirements(token) {
+    // Check absolute minimum requirements
     const ageInSeconds = (Date.now() - token.minted) / 1000;
-    return ageInSeconds >= config.SAFETY.MIN_TOKEN_AGE_SECONDS;
-  }
-
-  checkPriceAction(token) {
-    const priceMultiplier = token.currentPrice / token.initialPrice;
-    if (priceMultiplier > config.SAFETY.MAX_PUMP_MULTIPLE) return false;
-    if (token.priceVolatility > config.SAFETY.MAX_PRICE_VOLATILITY)
-      return false;
-    return true;
-  }
-
-  checkTradingPatterns(token) {
-    if (token.maxWalletVolumePercentage > config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE) {
-      this.setFailureReason("High wallet volume", token.maxWalletVolumePercentage);
+    if (ageInSeconds < config.SAFETY.MIN_TOKEN_AGE_SECONDS) {
+      this.setFailureReason("Token too young", ageInSeconds);
       return false;
     }
 
-    // Check correlation between volume and price
-    if (token.volumePriceCorrelation < config.SAFETY.MIN_VOLUME_PRICE_CORRELATION) {
-      const rejectionReason =
-        token.suspectedWashTradePercentage >
-        config.SAFETY.MAX_WASH_TRADE_PERCENTAGE
-          ? "excessiveWashTrading"
-          : "lowCorrelation";
-      this.setFailureReason(
-        rejectionReason,
-        token.suspectedWashTradePercentage
-      );
+    // Minimum liquidity check
+    if (token.vSolInBondingCurve < config.SAFETY.MIN_LIQUIDITY_SOL) {
+      this.setFailureReason("Insufficient liquidity", token.vSolInBondingCurve);
       return false;
     }
 
     return true;
   }
 
-  getTradingPatternRejectionReason(token) {
-    if (
-      token.avgTradeSize * config.SAFETY.SOL_PRICE_USD >
-      config.SAFETY.MAX_AVG_TRADE_SIZE_USD
-    )
-      return "tradeSizeTooHigh";
-    if (
-      token.buyCount / (token.buyCount + token.sellCount) <
-      config.SAFETY.MIN_BUY_SELL_RATIO
-    )
-      return "lowBuySellRatio";
-    if (
-      token.maxWalletVolumePercentage > config.SAFETY.MAX_SINGLE_WALLET_VOLUME
-    )
-      return "walletConcentration";
-    return null;
-  }
+  checkRugSignals(token) {
+    // Check for extreme concentration
+    if (token.getTopHolderConcentration(3) > 80) {
+      this.setFailureReason("Extreme holder concentration", token.getTopHolderConcentration(3));
+      return false;
+    }
 
-  checkHolderDistribution(token) {
-    if (!this.hasEnoughHolders(token)) return false;
-    if (!this.isHolderConcentrationSafe(token)) return false;
+    // Check for suspicious creator behavior
+    const creatorHoldings = token.getCreatorHoldings();
+    if (creatorHoldings > config.SAFETY.MAX_CREATOR_HOLDINGS_PERCENT) {
+      this.setFailureReason("High creator holdings", creatorHoldings);
+      return false;
+    }
+
+    // Check for extreme price drops
+    const priceChange = ((token.currentPrice - token.initialPrice) / token.initialPrice) * 100;
+    if (priceChange < config.SAFETY.MIN_PRICE_CHANGE_PERCENT) {
+      this.setFailureReason("Extreme price drop", priceChange);
+      return false;
+    }
 
     return true;
   }
 
-  getHolderDistributionRejectionReason(token) {
-    if (!this.hasEnoughHolders(token)) return "insufficientHolders";
-    if (!this.isHolderConcentrationSafe(token)) return "concentrationTooHigh";
-
-    return null;
-  }
-
-  checkVolumePatterns(token) {
-    if (
-      token.volumePriceCorrelation < config.SAFETY.MIN_VOLUME_PRICE_CORRELATION
-    )
+  checkPumpDynamics(token) {
+    // Volume pattern checks
+    if (token.volumeData.maxWalletVolumePercentage > config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE) {
+      this.setFailureReason("High wallet volume", token.volumeData.maxWalletVolumePercentage);
       return false;
-    if (
-      token.suspectedWashTradePercentage >
-      config.SAFETY.MAX_WASH_TRADE_PERCENTAGE
-    )
+    }
+
+    // Allow higher wash trading for pump tokens
+    if (token.volumeData.suspectedWashTradePercentage > config.SAFETY.MAX_WASH_TRADE_PERCENTAGE) {
+      this.setFailureReason("Excessive wash trading", token.volumeData.suspectedWashTradePercentage);
       return false;
+    }
+
+    // Check if the token is in a valid pump pattern
+    const recentVolume = token.getVolume("5m");
+    if (recentVolume < config.SAFETY.MIN_VOLUME_SOL) {
+      this.setFailureReason("Insufficient volume", recentVolume);
+      return false;
+    }
+
+    // Price volatility is expected in pumps, but should still be within limits
+    if (token.priceVolatility > config.SAFETY.MAX_PRICE_VOLATILITY) {
+      this.setFailureReason("Extreme volatility", token.priceVolatility);
+      return false;
+    }
+
     return true;
-  }
-
-  hasEnoughHolders(token) {
-    return token.getHolderCount() >= config.SAFETY.MIN_HOLDERS;
-  }
-
-  isHolderConcentrationSafe(token) {
-    const topHolderConcentration = token.getTopHolderConcentration(10);
-    return topHolderConcentration <= config.SAFETY.MAX_TOP_HOLDER_CONCENTRATION;
-  }
-
-  isCreatorFullyExited(token) {
-    return token.creatorExited;
-  }
-
-  checkAll(token) {
-    return (
-      this.checkMarketCap(token) &&
-      this.checkTokenAge(token) &&
-      this.checkPriceAction(token) &&
-      this.checkTradingPatterns(token) &&
-      this.checkHolderDistribution(token) &&
-      this.checkVolumePatterns(token)
-    );
   }
 
   getSafetyMetrics() {

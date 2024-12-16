@@ -35,34 +35,45 @@ module.exports = {
     // Volume Pattern Thresholds
     MIN_VOLUME_PRICE_CORRELATION: 0.5, // Minimum correlation between volume and price
     MAX_WASH_TRADE_PERCENTAGE: 20, // Maximum percentage of suspected wash trades
+
+    // Pump token sniper thresholds
+    PUMP: 30, // Consider it a pump at 30% gain
+    RECOVERY: 15, // Lower recovery threshold for quick reentry
+    SAFE_RECOVERY_GAIN: 25, // Maximum gain to consider a recovery safe
+    DEAD: -25, // Consider it dead at 25% loss
   },
 
   // Safety configuration
   SAFETY: {
-    // Volume and liquidity thresholds
-    MIN_LIQUIDITY_SOL: 5,
-    MIN_VOLUME_SOL: 1,
-    MAX_WALLET_VOLUME_PERCENTAGE: 25,
-    MIN_VOLUME_PRICE_CORRELATION: 0.5,
-    MAX_WASH_TRADE_PERCENTAGE: 30,
+    // Volume and liquidity thresholds - More lenient for quick entry
+    MIN_LIQUIDITY_SOL: 2, // Reduced minimum liquidity requirement
+    MIN_VOLUME_SOL: 0.5, // Lower volume requirement for early entry
+    MAX_WALLET_VOLUME_PERCENTAGE: 35, // Allow higher concentration initially
+    MIN_VOLUME_PRICE_CORRELATION: 0.3, // Lower correlation requirement for early-stage tokens
+    MAX_WASH_TRADE_PERCENTAGE: 40, // More tolerant of wash trading in pump tokens
 
     // Price reference
     SOL_PRICE_USD: 100, // Reference price for calculations
 
-    // Time-based parameters
-    MIN_TOKEN_AGE_SECONDS: 60, // Reduced from 3600 to enter earlier
-    MAX_HOLD_TIME_SECONDS: 7200, // Reduced from 14400 for faster turnover
+    // Time-based parameters - Extremely short for quick entry
+    MIN_TOKEN_AGE_SECONDS: 30, // Just enough to verify it's not an instant rug
+    MAX_HOLD_TIME_SECONDS: 300, // 5 minutes max hold for pump tokens
 
-    // Price action thresholds
-    MAX_PRICE_CHANGE_PERCENT: 50,
-    MIN_PRICE_CHANGE_PERCENT: -50,
+    // Price action thresholds - Adjusted for pump dynamics
+    MAX_PRICE_CHANGE_PERCENT: 200, // Allow for bigger pumps
+    MIN_PRICE_CHANGE_PERCENT: -40, // Catch dips but avoid rugs
+    MAX_PRICE_VOLATILITY: 150, // High volatility is expected in pumps
 
-    // Holder distribution thresholds
-    MIN_HOLDERS: 100,
-    MAX_TOP_HOLDER_CONCENTRATION: 30,
+    // Holder distribution thresholds - More lenient
+    MIN_HOLDERS: 50, // Lower holder requirement for early entry
+    MAX_TOP_HOLDER_CONCENTRATION: 40, // Allow higher concentration in early stages
 
     // Creator thresholds
-    MAX_CREATOR_HOLDINGS_PERCENT: 5,
+    MAX_CREATOR_HOLDINGS_PERCENT: 15, // Allow higher creator holdings initially
+
+    // Recovery thresholds
+    RECOVERY_THRESHOLD_PERCENT: 10, // Lower recovery threshold for quick entries
+    MAX_DRAWDOWN_PERCENT: 30, // Maximum drawdown before considering it a failed pump
   },
 
   // Position sizing
@@ -79,15 +90,15 @@ module.exports = {
     LIQUIDITY_SCALING_FACTOR: 0.7, // Scales position size based on liquidity
 
     // Exit parameters
-    STOP_LOSS_PERCENTAGE: 7.5, // Tightened from 10 for faster exits
+    STOP_LOSS_PERCENTAGE: 15, // Tight stop loss for pump tokens
     TRAILING_STOP_ACTIVATION: 5, // Reduced from 10 to lock in profits earlier
     TRAILING_STOP_DISTANCE: 3, // Reduced from 5 to lock in more profits
 
     // Take profit tiers
     TAKE_PROFIT_TIERS: [
-      { percentage: 10, size: 0.3 }, // First tier earlier
-      { percentage: 20, size: 0.3 }, // Second tier earlier
-      { percentage: 30, size: 0.4 }, // Final tier earlier
+      { percentage: 20, size: 0.3 }, // Take 30% profit at 20% gain
+      { percentage: 50, size: 0.4 }, // Take 40% profit at 50% gain
+      { percentage: 100, size: 0.3 }, // Take remaining at 100% gain
     ],
 
     // Volume-based exit
