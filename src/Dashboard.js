@@ -434,40 +434,51 @@ class Dashboard {
             const lowStr = drawdownLowUSD ? formatUSD(drawdownLowUSD) : "N/A";
             const volStr = formatUSD(volumeUSD);
 
-            const holderCount = token.getHolderCount();
-            const topHolderConcentration = token.getTopHolderConcentration(10);
+            let firstRow, secondRow, thirdRow;
 
-            let thirdRow = `Holders: ${holderCount} | Top10: ${topHolderConcentration.toFixed(1)}%`;
-            
-            // For unsafe recovery, show the reason and value
-            if (state === "unsafeRecovery" && token.unsafeReason) {
-              const { reason, value } = token.unsafeReason;
-              let valueStr = value;
+            if (state === "unsafeRecovery") {
+              firstRow = `${token.symbol || token.mint.slice(0, 8)}... | MC: ${mcStr} | Vol: ${volStr}`;
+              secondRow = `High: ${highStr} | Low: ${lowStr}`;
               
-              // Format the value based on the reason
-              switch (reason) {
-                case "High holder concentration":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "Token too young":
-                  valueStr = `${Math.floor(value)}s`;
-                  break;
-                case "Creator holdings too high":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "volatilityTooHigh":
-                  valueStr = `${value.toFixed(2)}`;
-                  break;
-                default:
-                  valueStr = value ? value.toString() : "N/A";
+              if (token.unsafeReason) {
+                const { reason, value } = token.unsafeReason;
+                let valueStr = value;
+                
+                // Format the value based on the reason
+                switch (reason) {
+                  case "High holder concentration":
+                    valueStr = `${value.toFixed(1)}%`;
+                    break;
+                  case "Token too young":
+                    valueStr = `${Math.floor(value)}s`;
+                    break;
+                  case "Creator holdings too high":
+                    valueStr = `${value.toFixed(1)}%`;
+                    break;
+                  case "volatilityTooHigh":
+                    valueStr = `${value.toFixed(2)}`;
+                    break;
+                  default:
+                    valueStr = value ? value.toString() : "N/A";
+                }
+                
+                thirdRow = `Unsafe: ${reason} (${valueStr})`;
+              } else {
+                thirdRow = "Unsafe: Unknown reason";
               }
+            } else {
+              // Original format for other states
+              const holderCount = token.getHolderCount();
+              const topHolderConcentration = token.getTopHolderConcentration(10);
               
-              thirdRow = `Unsafe: ${reason} (${valueStr})`;
+              firstRow = `${token.symbol || token.mint.slice(0, 8)}... | MC: ${mcStr}`;
+              secondRow = `High: ${highStr} | Low: ${lowStr}`;
+              thirdRow = `Vol: ${volStr} | Holders: ${holderCount} | Top10: ${topHolderConcentration.toFixed(1)}%`;
             }
 
             return [
-              `${token.symbol || token.mint.slice(0, 8)}... | MC: ${mcStr} | Vol: ${volStr}`,
-              `High: ${highStr} | Low: ${lowStr}`,
+              firstRow,
+              secondRow,
               thirdRow,
               "─".repeat(50), // Add horizontal rule between tokens
             ].join("\n");
