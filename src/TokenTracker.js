@@ -6,12 +6,14 @@ class TokenTracker extends EventEmitter {
   constructor(
     safetyChecker,
     positionManager,
-    priceManager
+    priceManager,
+    webSocketManager
   ) {
     super();
     this.safetyChecker = safetyChecker;
     this.positionManager = positionManager;
     this.priceManager = priceManager;
+    this.webSocketManager = webSocketManager;
     this.tokens = new Map();
   }
 
@@ -31,6 +33,12 @@ class TokenTracker extends EventEmitter {
 
     token.on("stateChanged", ({ token, from, to }) => {
       this.emit("tokenStateChanged", { token, from, to });
+      
+      // Unsubscribe from WebSocket updates when token enters dead state
+      if (to === "dead") {
+        console.log(`Token ${token.symbol || token.mint.slice(0, 8)} marked as dead, unsubscribing from updates`);
+        this.webSocketManager.unsubscribeFromToken(token.mint);
+      }
     });
 
     token.on("readyForPosition", async (token) => {

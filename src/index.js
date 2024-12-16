@@ -121,14 +121,24 @@ const wallet = initializeComponent(new Wallet(), 'Wallet');
 const priceManager = initializeComponent(new PriceManager(), 'PriceManager');
 const positionManager = initializeComponent(new PositionManager(wallet), 'PositionManager');
 const safetyChecker = initializeComponent(new SafetyChecker(config.SAFETY), 'SafetyChecker');
+
+// Initialize TokenTracker and WebSocketManager
 const tokenTracker = initializeComponent(
-  new TokenTracker(safetyChecker, positionManager, priceManager),
+  new TokenTracker(
+    safetyChecker,
+    positionManager,
+    priceManager
+  ),
   'TokenTracker'
 );
+
 const wsManager = initializeComponent(
   new WebSocketManager(tokenTracker, priceManager),
   'WebSocketManager'
 );
+
+// Set WebSocketManager in TokenTracker after initialization
+tokenTracker.webSocketManager = wsManager;
 
 // Create dashboard and store globally for error handler access
 global.dashboard = initializeComponent(
