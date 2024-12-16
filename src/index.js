@@ -55,7 +55,7 @@ async function start() {
 
 // Set up event listeners for token lifecycle events
 tokenTracker.on("tokenAdded", (token) => {
-  dashboard.logStatus(`Token ${token.symbol} (${token.mint}) created!`, "info");
+  dashboard.logStatus(`Token ${token.symbol} (${token.mint}) minted!`, "info");
   dashboard.logStatus(
     `Market cap: ${priceManager.solToUSD(token.marketCapSol)}`,
     "info"

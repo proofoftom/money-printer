@@ -7,6 +7,7 @@ The Token component is the core data structure that represents and manages indiv
 ## Core Features
 
 ### Token Identification
+
 - Mint address
 - Token name and symbol
 - Creation timestamp
@@ -14,6 +15,7 @@ The Token component is the core data structure that represents and manages indiv
 - Bonding curve information
 
 ### Market Data Tracking
+
 - Current market cap in SOL
 - Historical high market cap
 - Bonding curve metrics
@@ -22,6 +24,7 @@ The Token component is the core data structure that represents and manages indiv
 - Token price calculation
 
 ### Volume Analytics
+
 ```javascript
 {
   trades: [],              // Recent trade history
@@ -31,6 +34,7 @@ The Token component is the core data structure that represents and manages indiv
 ```
 
 ### Holder Management
+
 - Map of holder addresses to balances
 - Creator holdings tracking
 - Holder concentration analysis
@@ -39,37 +43,45 @@ The Token component is the core data structure that represents and manages indiv
 ## Key Methods
 
 ### Price Calculations
+
 ```javascript
-calculateTokenPrice()
+calculateTokenPrice();
 ```
+
 - Computes current token price using bonding curve values
 - Updates price tracking metrics
 - Used for volume calculations
 
 ### Volume Tracking
+
 ```javascript
-addTrade(amount, timestamp)
-getVolume(timeframe)  // '1m', '5m', '30m'
+addTrade(amount, timestamp);
+getVolume(timeframe); // '1m', '5m', '30m'
 ```
+
 - Records individual trades
 - Calculates volume over specified timeframes
 - Maintains rolling trade history
 - Automatic data cleanup
 
 ### Holder Analysis
+
 ```javascript
-updateHolder(address, amount)
-getHolderCount()
-getTopHolderConcentration(count)
+updateHolder(address, amount);
+getHolderCount();
+getTopHolderConcentration(count);
 ```
+
 - Updates holder balances
 - Calculates unique holder metrics
 - Analyzes top holder concentration
 
 ### State Management
+
 ```javascript
-setState(newState)
+setState(newState);
 ```
+
 - Manages token lifecycle states
 - Emits state change events
 - Updates related metrics (e.g., drawdown tracking)
@@ -77,6 +89,7 @@ setState(newState)
 ## Events
 
 The Token component emits the following events:
+
 - `stateChanged`: When token state transitions
 - `holderUpdated`: When holder balances change
 - `volumeUpdated`: When new trades are recorded
@@ -84,13 +97,14 @@ The Token component emits the following events:
 ## Data Structure
 
 ### Core Properties
+
 ```javascript
 {
   // Identification
   mint: String,
   name: String,
   symbol: String,
-  created: Timestamp,
+  minted: Timestamp,
   uri: String,
 
   // Market Data
@@ -111,6 +125,7 @@ The Token component emits the following events:
 ```
 
 ### Volume Data Structure
+
 ```javascript
 {
   trades: [{
@@ -125,16 +140,19 @@ The Token component emits the following events:
 ## Integration Points
 
 ### TokenTracker
+
 - Receives token updates
 - Manages token lifecycle
 - Coordinates state transitions
 
 ### Dashboard
+
 - Displays token metrics
 - Shows volume statistics
 - Presents holder information
 
 ### SafetyChecker
+
 - Analyzes holder concentration
 - Monitors creator activity
 - Validates token safety
@@ -142,11 +160,13 @@ The Token component emits the following events:
 ## Error Handling
 
 1. **Data Validation**
+
    - Validates input parameters
    - Ensures numeric values are positive
    - Handles missing or invalid data
 
 2. **State Transitions**
+
    - Validates state changes
    - Maintains state consistency
    - Logs invalid transitions
@@ -159,11 +179,13 @@ The Token component emits the following events:
 ## Best Practices
 
 1. **Data Management**
+
    - Regular cleanup of old trade data
    - Efficient holder balance updates
    - Proper event emission
 
 2. **Performance**
+
    - Optimized volume calculations
    - Efficient holder analysis
    - Cached calculations where appropriate
@@ -176,6 +198,7 @@ The Token component emits the following events:
 ## Configuration
 
 Token behavior can be configured through:
+
 ```javascript
 {
   volume: {

@@ -25,12 +25,15 @@ The Dashboard is a terminal-based user interface built with the Blessed library 
 ## Components
 
 ### Status Displays
+
 1. **Wallet Status**
+
    - Current balance
    - Position count
    - Win/loss ratio
 
 2. **Balance Chart**
+
    - Historical balance tracking
    - Real-time updates
    - Visual trend analysis
@@ -41,27 +44,33 @@ The Dashboard is a terminal-based user interface built with the Blessed library 
    - Trading notifications
 
 ### Token State Sections
+
 1. **New Tokens**
-   - Recently created tokens
+
+   - Recently minted tokens
    - Initial market metrics
    - Age tracking
 
 2. **Heating Up**
+
    - Tokens gaining momentum
    - Volume increases
    - Market cap growth
 
 3. **First Pump**
+
    - Initial price surge
    - Volume confirmation
    - Safety metrics
 
 4. **Drawdown**
+
    - Price retracement
    - Volume analysis
    - Recovery potential
 
 5. **Pumping**
+
    - Sustained price increase
    - Volume confirmation
    - Entry conditions
@@ -72,7 +81,9 @@ The Dashboard is a terminal-based user interface built with the Blessed library 
    - Safety status
 
 ### Trading Information
+
 1. **Active Positions**
+
    - Current trades
    - Entry prices
    - Profit/loss tracking
@@ -85,6 +96,7 @@ The Dashboard is a terminal-based user interface built with the Blessed library 
 ## Display Formatting
 
 ### Token Display Format
+
 ```
 SYMBOL         AGE | MC: $VALUE   | H: COUNT T: CONCENTRATION%
 VOL     1m: $VALUE | 5m: $VALUE   | 1h: $VALUE
@@ -92,6 +104,7 @@ VOL     1m: $VALUE | 5m: $VALUE   | 1h: $VALUE
 ```
 
 ### Position Display Format
+
 ```
 SYMBOL: Entry $PRICE | Current $PRICE | PNL: VALUE%
 ```
@@ -99,16 +112,19 @@ SYMBOL: Entry $PRICE | Current $PRICE | PNL: VALUE%
 ## Key Features
 
 ### Real-time Updates
+
 - Automatic refresh of all displays
 - Event-driven updates
 - Performance optimized rendering
 
 ### Interactive Elements
+
 - Scrollable sections
 - Focus management
 - Keyboard shortcuts
 
 ### Data Visualization
+
 - Balance history chart
 - Token metrics formatting
 - Color-coded status indicators
@@ -116,16 +132,19 @@ SYMBOL: Entry $PRICE | Current $PRICE | PNL: VALUE%
 ## Integration Points
 
 ### TokenTracker
+
 - Token state updates
 - Volume metrics
 - Safety status
 
 ### PositionManager
+
 - Trade execution
 - Position tracking
 - Balance updates
 
 ### WebSocketManager
+
 - Real-time data feed
 - Event processing
 - Connection status
@@ -133,6 +152,7 @@ SYMBOL: Entry $PRICE | Current $PRICE | PNL: VALUE%
 ## Event Handling
 
 ### System Events
+
 ```javascript
 // Console log redirection
 console.log = (...args) => {
@@ -146,11 +166,13 @@ console.error = (...args) => {
 ```
 
 ### Token Events
+
 - State transitions
 - Volume updates
 - Safety alerts
 
 ### Trading Events
+
 - Position opens
 - Position closes
 - Balance changes
@@ -177,11 +199,13 @@ console.error = (...args) => {
 ## Best Practices
 
 1. **Performance**
+
    - Throttle updates
    - Batch renders
    - Clean old data
 
 2. **Memory Management**
+
    - Limit history size
    - Regular cleanup
    - Efficient data structures
@@ -201,11 +225,13 @@ console.error = (...args) => {
 ## Error Handling
 
 1. **Display Errors**
+
    - Color-coded messages
    - Error categorization
    - Persistent display
 
 2. **Recovery**
+
    - Auto-refresh on error
    - Component reinitialization
    - State consistency checks

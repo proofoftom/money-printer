@@ -345,7 +345,7 @@ class Dashboard {
           try {
             // Calculate token age in seconds
             const now = Date.now();
-            const tokenAge = Math.floor((now - token.created) / 1000);
+            const tokenAge = Math.floor((now - token.minted) / 1000);
             const ageStr =
               tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
 

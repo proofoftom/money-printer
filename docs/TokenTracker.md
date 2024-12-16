@@ -180,7 +180,7 @@ The TokenTracker delegates position-related operations to the PositionManager, e
 
 ### Token State Changes
 
-- New Token: `New token created: [mint]`
+- New Token: `New token minted: [mint]`
 - Heating Up: `Token [mint] is heating up! Market cap: [marketCap] USD`
 - Pumping: `Token [mint] is pumping! Market cap: [marketCap] USD`
 - Drawdown: `Token [mint] in drawdown. Market cap: [marketCap] USD`
@@ -208,6 +208,7 @@ The Token Tracker is the central coordinator of the Money Printer system, managi
 ### Core Components
 
 #### Token Management
+
 ```javascript
 {
   tokens: Map(),             // Active tokens
@@ -221,28 +222,34 @@ The Token Tracker is the central coordinator of the Money Printer system, managi
 ### Key Features
 
 #### Token Lifecycle Management
+
 ```javascript
-handleNewToken(tokenData)
-handleTokenUpdate(tradeData)
+handleNewToken(tokenData);
+handleTokenUpdate(tradeData);
 ```
+
 - Token creation and tracking
 - State transition management
 - Event broadcasting
 - Error handling
 
 #### Trade Processing
+
 ```javascript
-processTradeUpdate(token, tradeData)
+processTradeUpdate(token, tradeData);
 ```
+
 - Volume tracking
 - Price updates
 - Market cap calculations
 - State evaluations
 
 #### State Management
+
 ```javascript
-evaluateTokenState(token)
+evaluateTokenState(token);
 ```
+
 - State transition logic
 - Condition evaluation
 - Safety validation
@@ -251,26 +258,31 @@ evaluateTokenState(token)
 ### Token States
 
 1. **New**
+
    - Initial token discovery
    - Basic validation
    - Metadata collection
 
 2. **Heating Up**
+
    - Market cap monitoring
    - Volume analysis
    - Initial safety checks
 
 3. **First Pump**
+
    - Price momentum tracking
    - Volume confirmation
    - Pattern recognition
 
 4. **Drawdown**
+
    - Price retracement tracking
    - Volume analysis
    - Recovery potential
 
 5. **Pumping**
+
    - Sustained momentum
    - Safety validation
    - Entry conditions
@@ -283,12 +295,14 @@ evaluateTokenState(token)
 ### Event System
 
 #### Emitted Events
+
 - `tokenAdded`: New token discovered
 - `tokenStateChanged`: State transitions
 - `tokenUpdated`: Trade updates
 - `error`: Processing errors
 
 #### Event Data Structure
+
 ```javascript
 {
   token: Token,          // Token instance
@@ -301,21 +315,25 @@ evaluateTokenState(token)
 ### Integration Points
 
 #### Safety Checker
+
 - Token validation
 - Risk assessment
 - Safety monitoring
 
 #### Position Manager
+
 - Trade execution
 - Position tracking
 - Exit management
 
 #### Price Manager
+
 - Price calculations
 - Market cap updates
 - Value conversions
 
 #### Error Logger
+
 - Error tracking
 - Debug information
 - Performance monitoring
@@ -344,12 +362,15 @@ evaluateTokenState(token)
 ### Error Handling
 
 #### Token Processing
+
 1. **Creation Errors**
+
    - Data validation
    - Initialization
    - Event setup
 
 2. **Update Errors**
+
    - Trade processing
    - State transitions
    - Position management
@@ -362,12 +383,15 @@ evaluateTokenState(token)
 ### Best Practices
 
 #### Token Management
+
 1. **State Transitions**
+
    - Validate conditions
    - Ensure consistency
    - Handle edge cases
 
 2. **Event Handling**
+
    - Proper event ordering
    - Error propagation
    - Resource cleanup
@@ -378,7 +402,9 @@ evaluateTokenState(token)
    - Event optimization
 
 #### Integration
+
 1. **Component Communication**
+
    - Clear interfaces
    - Error handling
    - State synchronization
@@ -391,11 +417,13 @@ evaluateTokenState(token)
 ### Future Improvements
 
 1. **State Management**
+
    - Advanced state machines
    - Transition validation
    - History tracking
 
 2. **Performance**
+
    - Batch processing
    - Event optimization
    - Memory efficiency
