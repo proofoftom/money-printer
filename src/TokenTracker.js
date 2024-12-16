@@ -54,7 +54,9 @@ class TokenTracker extends EventEmitter {
         if (marketCapUSD > token.highestMarketCap) {
           token.highestMarketCap = marketCapUSD;
         }
-        const drawdownPercentage = ((token.highestMarketCap - marketCapUSD) / token.highestMarketCap) * 100;
+        const drawdownPercentage =
+          ((token.highestMarketCap - marketCapUSD) / token.highestMarketCap) *
+          100;
         if (drawdownPercentage >= config.THRESHOLDS.PUMP_DRAWDOWN) {
           token.setState("drawdown");
           token.drawdownLow = marketCapUSD;
@@ -63,11 +65,15 @@ class TokenTracker extends EventEmitter {
 
       case "drawdown":
         if (marketCapUSD > token.drawdownLow) {
-          const recoveryPercentage = ((marketCapUSD - token.drawdownLow) / token.drawdownLow) * 100;
+          const recoveryPercentage =
+            ((marketCapUSD - token.drawdownLow) / token.drawdownLow) * 100;
           if (recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
             const isSecure = await this.safetyChecker.runSecurityChecks(token);
             if (isSecure) {
-              const success = this.positionManager.openPosition(token.mint, token.marketCapSol);
+              const success = this.positionManager.openPosition(
+                token.mint,
+                token.marketCapSol
+              );
               if (success) {
                 token.setState("inPosition");
                 this.emit("positionOpened", token);
@@ -79,20 +85,23 @@ class TokenTracker extends EventEmitter {
 
       case "inPosition":
         const result = this.positionManager.updatePosition(
-          token.mint, 
+          token.mint,
           token.marketCapSol,
           { volume: token.volume24h }
         );
         if (result) {
           if (result.portion === 1.0) {
             token.setState("closed");
-            this.emit("positionClosed", { token, reason: result.reason || "exit_strategy" });
+            this.emit("positionClosed", {
+              token,
+              reason: result.reason || "exit_strategy",
+            });
           } else {
             this.emit("partialExit", {
               token,
               percentage: result.profitPercentage,
               portion: result.portion,
-              reason: result.reason || "take_profit"
+              reason: result.reason || "take_profit",
             });
           }
         }
@@ -119,7 +128,9 @@ class TokenTracker extends EventEmitter {
   }
 
   getTokensByState(state) {
-    return Array.from(this.tokens.values()).filter((token) => token.state === state);
+    return Array.from(this.tokens.values()).filter(
+      (token) => token.state === state
+    );
   }
 }
 

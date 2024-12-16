@@ -33,14 +33,14 @@ async function start() {
 
 // Set up event listeners for token lifecycle events
 tokenTracker.on("tokenAdded", (token) => {
-  // console.log(`New token discovered: ${token.symbol} (${token.mint})`);
-  // console.log(`Creator: ${token.creator}`);
-  // console.log(`Initial market cap: ${token.marketCapSol} SOL`);
+  console.log(`New token discovered: ${token.symbol} (${token.mint})`);
+  console.log(`Creator: ${token.traderPublicKey}`);
+  console.log(`Initial market cap: ${token.marketCapSol} SOL`);
 });
 
 tokenTracker.on("tokenHeatingUp", (token) => {
-  console.log(`Token ${token.symbol} (${token.mint}) is heating up!`);
-  console.log(`Market cap: ${token.marketCapSol} SOL`);
+  // console.log(`Token ${token.symbol} (${token.mint}) is heating up!`);
+  // console.log(`Market cap: ${token.marketCapSol} SOL`);
 });
 
 tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
