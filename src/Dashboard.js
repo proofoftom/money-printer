@@ -295,6 +295,13 @@ class Dashboard {
             ? '%{green-fg}↑' + volumeTrend.toFixed(0) + '%%{/green-fg}'
             : '%{red-fg}↓' + Math.abs(volumeTrend).toFixed(0) + '%%{/red-fg}';
 
+          // Calculate profit trend
+          const profitTrend = pos.profitHistory || [];
+          const recentProfit = profitTrend.slice(-3);
+          const profitDirection = recentProfit.length > 1
+            ? recentProfit[recentProfit.length - 1] > recentProfit[0] ? "▲" : "▼"
+            : "─";
+
           // Format P/L with color and trend
           const plColor = pnl >= 0 ? 'green' : 'red';
           const plStr = `%{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(1)}%%{/${plColor}-fg}`;
