@@ -65,16 +65,38 @@ function overrideConsole() {
 // Centralized error handling
 function handleGlobalError(error, context, additionalInfo = {}) {
   try {
+    // Add position details if available
+    if (additionalInfo.position) {
+      additionalInfo = {
+        ...additionalInfo,
+        position: {
+          mint: additionalInfo.position.mint,
+          currentPrice: additionalInfo.position.currentPrice,
+          entryPrice: additionalInfo.position.entryPrice,
+          volume: additionalInfo.position.volume,
+          priceHistory: additionalInfo.position.priceHistory?.length,
+          volumeHistory: additionalInfo.position.volumeHistory?.length,
+          profitHistory: additionalInfo.position.profitHistory?.length
+        }
+      };
+    }
+
     // Log to file
     errorLogger.logError(error, context, additionalInfo);
     
     // Log to dashboard if available
     if (global.dashboard) {
-      global.dashboard.logStatus(`${context}: ${error.message}`, "error");
+      const errorMessage = additionalInfo.position
+        ? `${context} for position ${additionalInfo.position.mint?.slice(0, 8) || 'unknown'}: ${error.message}`
+        : `${context}: ${error.message}`;
+      global.dashboard.logStatus(errorMessage, "error");
     }
     
     // Log to console for debugging
     console.error(`[${context}] ${error.message}`);
+    if (additionalInfo.position) {
+      console.error('Position details:', additionalInfo.position);
+    }
     
     // Handle fatal errors
     if (context === 'UncaughtException') {
