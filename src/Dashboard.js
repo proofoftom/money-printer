@@ -299,23 +299,14 @@ class Dashboard {
           const plColor = pnl >= 0 ? 'green' : 'red';
           const plStr = `%{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(1)}%%{/${plColor}-fg}`;
 
-          // Get volume in USD, handle undefined/NaN cases
-          const volume = pos.volume || 0;
-          const volumeUSD = this.priceManager?.solToUSD?.(volume) || 0;
-          const volumeStr = volumeUSD.toFixed(0);
-
-          // Calculate profit trend
-          const profitTrend = pos.profitHistory || [];
-          const recentProfit = profitTrend.slice(-3);
-          const profitDirection = recentProfit.length > 1
-            ? recentProfit[recentProfit.length - 1] > recentProfit[0] ? "▲" : "▼"
-            : "─";
+          // Get volume in USD
+          const volumeUSD = this.priceManager.solToUSD(pos.volume);
 
           // Build the display string with dynamic data
           return [
             `${pos.mint?.slice(0, 8)}... | ${holdTimeStr} | P/L: ${plStr}`,
             `Price: ${pos.currentPrice?.toFixed(4)} SOL ${velocityIndicator}`,
-            `Vol: ${volumeStr}$ ${volumeIndicator}`,
+            `Vol: ${volumeUSD.toFixed(0)}$ ${volumeIndicator}`,
             `Entry: ${pos.entryPrice?.toFixed(4)} | High: ${pos.highPrice?.toFixed(4)}`,
             "─".repeat(50) // Separator
           ].join("\n");
