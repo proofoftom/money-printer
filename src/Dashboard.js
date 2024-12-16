@@ -1,6 +1,5 @@
 const blessed = require("blessed");
 const contrib = require("blessed-contrib");
-const ErrorLogger = require("./ErrorLogger");
 
 class Dashboard {
   constructor(
@@ -20,27 +19,8 @@ class Dashboard {
       x: [],
       y: [],
     };
-    this.errorLogger = new ErrorLogger();
 
-    try {
-      this.initializeDashboard();
-    } catch (error) {
-      this.handleError(error, "initialization");
-    }
-  }
-
-  handleError(error, context, additionalInfo = {}) {
-    this.errorLogger.logError(error, "Dashboard", {
-      context,
-      ...additionalInfo,
-    });
-
-    // Log to dashboard if available, otherwise fallback to console
-    if (this.statusBox) {
-      this.logStatus(`Error in ${context}: ${error.message}`, "error");
-    } else {
-      console.error(`Dashboard error in ${context}:`, error);
-    }
+    this.initializeDashboard();
   }
 
   initializeDashboard() {
@@ -60,14 +40,8 @@ class Dashboard {
     this.initializeComponents();
     this.setupEventHandlers();
 
-    // Set up periodic updates with error handling
-    setInterval(() => {
-      try {
-        this.updateDashboard();
-      } catch (error) {
-        this.handleError(error, "periodic update");
-      }
-    }, 1000);
+    // Set up periodic updates
+    setInterval(() => this.updateDashboard(), 1000);
 
     // Initial render
     this.screen.render();
@@ -132,12 +106,15 @@ class Dashboard {
 
     console.log = (...args) => {
       this.logStatus(args.join(" "));
-      // originalConsoleLog.apply(console, args);
+      // Keep original logging for debugging
+      originalConsoleLog.apply(console, args);
     };
 
     console.error = (...args) => {
-      this.logStatus(args.join(" "), "error");
-      // originalConsoleError.apply(console, args);
+      const errorMessage = args.join(" ");
+      this.logStatus(errorMessage, "error");
+      // Keep original error logging for debugging
+      originalConsoleError.apply(console, args);
     };
 
     // Token state boxes in second row, extending to bottom
@@ -235,13 +212,7 @@ class Dashboard {
         }%`,
       ].join("\n");
     } catch (error) {
-      this.handleError(error, "wallet status");
-      return [
-        `Balance:   N/A SOL`,
-        `P/L Today: N/A SOL`,
-        `Total P/L: N/A SOL`,
-        `Win Rate:  N/A%`,
-      ].join("\n");
+      throw error;
     }
   }
 
@@ -272,7 +243,7 @@ class Dashboard {
         this.balanceChart.setData([displayData]);
       }
     } catch (error) {
-      this.handleError(error, "balance history");
+      throw error;
     }
   }
 
@@ -304,15 +275,13 @@ class Dashboard {
             `Time:    ${holdTime}m`,
           ].join(" | ");
         } catch (err) {
-          this.handleError(err, "position formatting");
-          return "Error formatting position";
+          throw err;
         }
       });
 
       return positionStrings.join("\n");
     } catch (error) {
-      this.handleError(error, "positions");
-      return "Waiting for positions...";
+      throw error;
     }
   }
 
@@ -332,12 +301,7 @@ class Dashboard {
         this.trades.pop();
       }
     } catch (error) {
-      this.handleError(error, "logging trade", {
-        type,
-        mint,
-        profitLoss,
-        symbol,
-      });
+      throw error;
     }
   }
 
@@ -356,8 +320,7 @@ class Dashboard {
         )
         .join("\n");
     } catch (error) {
-      this.handleError(error, "trade history");
-      return "Error loading trade history";
+      throw error;
     }
   }
 
@@ -369,20 +332,18 @@ class Dashboard {
       }
       return Math.floor(vol).toString();
     } catch (error) {
-      this.handleError(error, "volume formatting", { volume: vol });
-      return "0";
+      throw error;
     }
   }
 
   logStatus(message, type = "info") {
     try {
       const timestamp = new Date().toLocaleTimeString();
-      const prefix = type === "error" ? "🔴" : type === "warning" ? "⚠️" : "ℹ️";
-      this.statusBox.log(`${timestamp} ${prefix} ${message}`);
+      const prefix = type === "error" ? "" : type === "warning" ? "" : "";
+      this.statusBox.log(`[${timestamp}] ${prefix} ${message}`);
+      this.screen.render();
     } catch (error) {
-      // Use console.error as fallback if statusBox fails
-      console.error("Error logging to status box:", error);
-      console.error("Original message:", message);
+      throw error;
     }
   }
 
@@ -400,7 +361,7 @@ class Dashboard {
       this.updateBalanceHistory();
       this.screen.render();
     } catch (error) {
-      this.handleError(error, "dashboard update");
+      throw error;
     }
   }
 
@@ -441,15 +402,16 @@ class Dashboard {
                 : Math.round(volUSD).toString();
             };
 
-            const vol1m = formatVolume(token.getVolume("1m"));
-            const vol5m = formatVolume(token.getVolume("5m"));
-            const vol1h = formatVolume(token.getVolume("30m"));
+            // Get volume from token's volume metrics
+            const vol1m = formatVolume(token.volume1m || 0);
+            const vol5m = formatVolume(token.volume5m || 0);
+            const vol30m = formatVolume(token.volume30m || 0);
 
             // Format the token info string
             const symbol = token.symbol || token.mint.slice(0, 8);
             const rows = [
               `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(5)} | 1h: $${vol1h}`,
+              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(5)} | 30m: $${vol30m}`,
             ];
 
             // Add safety failure reason for unsafe recovery state
@@ -478,16 +440,12 @@ class Dashboard {
             rows.push("─".repeat(50)); // Add horizontal rule between tokens
             return rows.join("\n");
           } catch (err) {
-            this.handleError(err, "token formatting");
-            return `Error formatting token ${
-              token.symbol || token.mint.slice(0, 8)
-            }: ${err.message}`;
+            throw err;
           }
         })
         .join("\n");
     } catch (error) {
-      this.handleError(error, `getting ${state} tokens`);
-      return "Error loading tokens";
+      throw error;
     }
   }
 }
