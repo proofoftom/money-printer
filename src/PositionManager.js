@@ -138,7 +138,22 @@ Position Opened:
       walletBalance: this.wallet.balance,
       volumeHistory: position.volumeHistory,
       candleHistory: position.candleHistory,
-      exitReason: position.exitReason || 'unknown'
+      exitReason: position.exitReason || 'unknown',
+      priceVolatility: this.calculateVolatility(position.candleHistory),
+      volumeProfile: this.analyzeVolumeProfile(position.volumeHistory),
+      optimalExitPrice: position.highestPrice * 0.95, // Assuming 5% below peak is optimal
+      missedProfit: ((position.highestPrice * 0.95) - executionPrice) / executionPrice * 100,
+      timeToMaxPrice: this.calculateTimeToMaxPrice(position),
+      averageVolume: this.calculateAverageVolume(position.volumeHistory),
+      slippageAnalysis: {
+        entry: ((position.entryPrice - marketCap) / marketCap) * 100,
+        exit: ((exitPrice - executionPrice) / exitPrice) * 100
+      },
+      marketConditions: {
+        trendDirection: this.calculateTrendDirection(position.candleHistory),
+        volumeStrength: this.calculateVolumeStrength(position.volumeHistory)
+      },
+      holderAnalytics: this.analyzeHolders(position.token)
     };
 
     if (portion === 1.0) {
@@ -256,6 +271,126 @@ Partial Position Close:
 
   getActivePositions() {
     return Array.from(this.positions.values());
+  }
+
+  calculateVolatility(candleHistory) {
+    if (!candleHistory || candleHistory.length < 2) return 0;
+    
+    const returns = [];
+    for (let i = 1; i < candleHistory.length; i++) {
+      const returnVal = (candleHistory[i].close - candleHistory[i-1].close) / candleHistory[i-1].close;
+      returns.push(returnVal);
+    }
+    
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
+    return Math.sqrt(variance);
+  }
+
+  analyzeVolumeProfile(volumeHistory) {
+    if (!volumeHistory || volumeHistory.length === 0) return null;
+    
+    const volumeData = volumeHistory.map(v => v.volume);
+    const maxVolume = Math.max(...volumeData);
+    const minVolume = Math.min(...volumeData);
+    const avgVolume = volumeData.reduce((a, b) => a + b, 0) / volumeData.length;
+    
+    return {
+      maxVolume,
+      minVolume,
+      avgVolume,
+      volumeStability: (maxVolume - minVolume) / avgVolume
+    };
+  }
+
+  calculateTimeToMaxPrice(position) {
+    if (!position.candleHistory || position.candleHistory.length === 0) return null;
+    
+    const maxPriceCandle = position.candleHistory.find(c => c.high === position.highestPrice);
+    if (!maxPriceCandle) return null;
+    
+    return Math.round((maxPriceCandle.timestamp - position.entryTime) / 1000); // in seconds
+  }
+
+  calculateAverageVolume(volumeHistory) {
+    if (!volumeHistory || volumeHistory.length === 0) return 0;
+    return volumeHistory.reduce((sum, v) => sum + v.volume, 0) / volumeHistory.length;
+  }
+
+  calculateTrendDirection(candleHistory) {
+    if (!candleHistory || candleHistory.length < 2) return 'neutral';
+    
+    const prices = candleHistory.map(c => c.close);
+    const firstHalf = prices.slice(0, Math.floor(prices.length / 2));
+    const secondHalf = prices.slice(Math.floor(prices.length / 2));
+    
+    const firstHalfAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
+    const secondHalfAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
+    
+    if (secondHalfAvg > firstHalfAvg * 1.05) return 'uptrend';
+    if (secondHalfAvg < firstHalfAvg * 0.95) return 'downtrend';
+    return 'neutral';
+  }
+
+  calculateVolumeStrength(volumeHistory) {
+    if (!volumeHistory || volumeHistory.length < 2) return 'neutral';
+    
+    const volumes = volumeHistory.map(v => v.volume);
+    const firstHalf = volumes.slice(0, Math.floor(volumes.length / 2));
+    const secondHalf = volumes.slice(Math.floor(volumes.length / 2));
+    
+    const firstHalfAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
+    const secondHalfAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
+    
+    if (secondHalfAvg > firstHalfAvg * 1.2) return 'increasing';
+    if (secondHalfAvg < firstHalfAvg * 0.8) return 'decreasing';
+    return 'stable';
+  }
+
+  analyzeHolders(token) {
+    if (!token || !token.wallets) return null;
+
+    const now = Date.now();
+    const holders = Array.from(token.wallets.entries());
+    const totalHolders = holders.length;
+    
+    // Get creator behavior
+    const creatorStats = {
+      sellPercentage: token.getCreatorSellPercentage(),
+      hasExited: token.hasCreatorSoldAll()
+    };
+
+    // Analyze top holders
+    const topHolders = token.getTopHolders(5);
+    const topHolderConcentration = token.getTopHolderConcentration(5);
+
+    // Analyze trading patterns
+    const traderStats = token.getTraderStats("5m");
+    
+    // Calculate holder turnover (percentage of holders who have traded in last 5 minutes)
+    const recentlyActiveHolders = holders.filter(([_, wallet]) => 
+      wallet.lastActive > now - 5 * 60 * 1000
+    ).length;
+    
+    const holderTurnover = (recentlyActiveHolders / totalHolders) * 100;
+
+    return {
+      totalHolders,
+      topHolderConcentration,
+      holderTurnover,
+      creatorBehavior: creatorStats,
+      tradingActivity: {
+        uniqueTraders: traderStats.uniqueTraders,
+        tradeCount: traderStats.totalTrades,
+        averageTradeSize: traderStats.averageTradeSize,
+        buyToSellRatio: traderStats.buyToSellRatio
+      },
+      topHolders: topHolders.map(holder => ({
+        balance: holder.balance,
+        percentageHeld: (holder.balance / token.getTotalTokensHeld()) * 100,
+        isCreator: holder.isCreator || false
+      }))
+    };
   }
 }
 
