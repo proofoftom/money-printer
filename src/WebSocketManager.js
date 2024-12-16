@@ -38,7 +38,7 @@ class WebSocketManager extends EventEmitter {
     }
 
     try {
-      this.ws = new WebSocket(config.WS_URL);
+      this.ws = new WebSocket(config.WEBSOCKET.URL);
 
       this.ws.on("open", () => {
         console.log("WebSocket connection established");
@@ -49,9 +49,9 @@ class WebSocketManager extends EventEmitter {
       });
 
       this.ws.on("error", (error) => {
-        this.errorLogger.logError(error, 'WebSocketManager', {
-          connectionState: this.isConnected ? 'connected' : 'disconnected',
-          subscriptionCount: this.subscriptions.size
+        this.errorLogger.logError(error, "WebSocketManager", {
+          connectionState: this.isConnected ? "connected" : "disconnected",
+          subscriptionCount: this.subscriptions.size,
         });
         console.error("WebSocket error:", error);
         this.emit("error", error);
@@ -74,17 +74,17 @@ class WebSocketManager extends EventEmitter {
           const message = JSON.parse(data.toString());
           this.handleMessage(message);
         } catch (error) {
-          this.errorLogger.logError(error, 'WebSocketManager', {
-            event: 'messageProcessing',
-            rawData: data.toString()
+          this.errorLogger.logError(error, "WebSocketManager", {
+            event: "messageProcessing",
+            rawData: data.toString(),
           });
           console.error("Error parsing message:", error);
         }
       });
     } catch (error) {
-      this.errorLogger.logError(error, 'WebSocketManager', {
-        event: 'connectionAttempt',
-        wsUrl: config.WS_URL
+      this.errorLogger.logError(error, "WebSocketManager", {
+        event: "connectionAttempt",
+        wsUrl: config.WS_URL,
       });
       console.error("Error creating WebSocket:", error);
       this.emit("error", error);
@@ -115,7 +115,13 @@ class WebSocketManager extends EventEmitter {
       // Ignore tokens that are already above our heating up threshold
       const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
       if (marketCapUSD > config.THRESHOLDS.HEATING_UP_USD) {
-        console.log(`Ignoring new token ${message.name} (${message.mint}) - Market cap too high: $${marketCapUSD.toFixed(2)} (${message.marketCapSol.toFixed(2)} SOL)`);
+        console.log(
+          `Ignoring new token ${message.name} (${
+            message.mint
+          }) - Market cap too high: $${marketCapUSD.toFixed(
+            2
+          )} (${message.marketCapSol.toFixed(2)} SOL)`
+        );
         return;
       }
 
