@@ -119,6 +119,9 @@ class Token extends EventEmitter {
         this.holders.delete(data.traderPublicKey);
       }
     }
+
+    // Update all metrics
+    this.updateMetrics();
   }
 
   calculateTokenPrice() {
@@ -400,7 +403,134 @@ class Token extends EventEmitter {
   }
 
   getCreatorHoldings() {
-    return this.holders.get(this.traderPublicKey) || 0;
+    // Get current creator balance
+    const creatorBalance = this.holders.get(this.traderPublicKey) || 0;
+    const totalSupply = this.getTotalSupply();
+    
+    // Return as percentage
+    return totalSupply > 0 ? (creatorBalance / totalSupply) * 100 : 0;
+  }
+
+  getPriceStats() {
+    const now = Date.now();
+    const fiveMinutesAgo = now - 5 * 60 * 1000;
+    const recentPrices = this.priceHistory.filter(p => p.timestamp > fiveMinutesAgo);
+
+    if (recentPrices.length < 2) {
+      return {
+        volatility: 0,
+        highestPrice: this.currentPrice,
+        lowestPrice: this.currentPrice,
+        priceChange: 0
+      };
+    }
+
+    // Calculate price changes as percentages
+    const changes = [];
+    for (let i = 1; i < recentPrices.length; i++) {
+      const change = ((recentPrices[i].price - recentPrices[i-1].price) / recentPrices[i-1].price) * 100;
+      changes.push(change);
+    }
+
+    // Calculate volatility (standard deviation of price changes)
+    const mean = changes.reduce((sum, change) => sum + change, 0) / changes.length;
+    const volatility = Math.sqrt(changes.reduce((sum, change) => sum + Math.pow(change - mean, 2), 0) / changes.length);
+
+    // Get highest and lowest prices
+    const prices = recentPrices.map(p => p.price);
+    const highestPrice = Math.max(...prices);
+    const lowestPrice = Math.min(...prices);
+
+    // Calculate total price change
+    const totalChange = ((this.currentPrice - recentPrices[0].price) / recentPrices[0].price) * 100;
+
+    return {
+      volatility,
+      highestPrice,
+      lowestPrice,
+      priceChange: totalChange
+    };
+  }
+
+  getTraderStats(interval = "5m") {
+    const now = Date.now();
+    const cutoffTime = now - (parseInt(interval) * 60 * 1000);
+    const relevantTrades = this.volumeData.trades.filter(t => t.timestamp > cutoffTime);
+
+    // Group trades by trader
+    const traderStats = new Map();
+    let totalVolume = 0;
+
+    for (const trade of relevantTrades) {
+      const trader = trade.trader;
+      const stats = traderStats.get(trader) || {
+        volumeTotal: 0,
+        tradeCount: 0,
+        buyVolume: 0,
+        sellVolume: 0
+      };
+
+      stats.volumeTotal += trade.amount;
+      stats.tradeCount++;
+      if (trade.priceChange >= 0) {
+        stats.buyVolume += trade.amount;
+      } else {
+        stats.sellVolume += trade.amount;
+      }
+
+      traderStats.set(trader, stats);
+      totalVolume += trade.amount;
+    }
+
+    // Calculate percentages and identify suspicious patterns
+    const suspiciousTraders = new Map();
+    let totalSuspiciousVolume = 0;
+
+    for (const [trader, stats] of traderStats.entries()) {
+      const volumePercentage = (stats.volumeTotal / totalVolume) * 100;
+      const buyToSellRatio = stats.buyVolume / (stats.sellVolume || 1);
+
+      // Check for suspicious patterns
+      const isSuspicious = (
+        (volumePercentage > config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE) ||
+        (stats.tradeCount > 10 && buyToSellRatio > 0.9 && buyToSellRatio < 1.1) // Balanced buy/sell ratio with high frequency
+      );
+
+      if (isSuspicious) {
+        suspiciousTraders.set(trader, {
+          volumePercentage,
+          buyToSellRatio,
+          tradeCount: stats.tradeCount
+        });
+        totalSuspiciousVolume += stats.volumeTotal;
+      }
+    }
+
+    return {
+      totalVolume,
+      uniqueTraders: traderStats.size,
+      maxWalletVolumePercentage: Math.max(...Array.from(traderStats.values()).map(s => (s.volumeTotal / totalVolume) * 100)),
+      suspectedWashTradePercentage: (totalSuspiciousVolume / totalVolume) * 100,
+      suspiciousTraders: Object.fromEntries(suspiciousTraders)
+    };
+  }
+
+  updateMetrics() {
+    // Update price stats
+    const priceStats = this.getPriceStats();
+    this.priceVolatility = priceStats.volatility;
+
+    // Update trader stats
+    const traderStats = this.getTraderStats("5m");
+    this.volumeData.maxWalletVolumePercentage = traderStats.maxWalletVolumePercentage;
+    this.volumeData.suspectedWashTradePercentage = traderStats.suspectedWashTradePercentage;
+
+    // Emit metrics update event for monitoring
+    this.emit("metricsUpdated", {
+      token: this.mint,
+      priceStats,
+      traderStats
+    });
   }
 
   hasCreatorSoldAll() {
