@@ -8,21 +8,21 @@ class PositionStateManager extends EventEmitter {
   constructor() {
     super();
     this.positions = new Map();
-    this.stateFile = path.join(process.cwd(), 'data', 'positions.json');
+    this.stateFile = path.join(process.cwd(), config.TESTING.DATA_DIR, 'positions.json');
     this.ensureDataDirectory();
     
     // Clear positions on startup if configured
-    if (config.POSITION_MANAGER.CLEAR_ON_STARTUP) {
+    if (config.TESTING.POSITION_MANAGER.CLEAR_ON_STARTUP) {
       this.clearPositions();
     }
     
     this.loadPositions();
     
     // Periodic state persistence
-    this._saveInterval = setInterval(() => this.savePositions(), config.POSITION_MANAGER.SAVE_INTERVAL);
+    this._saveInterval = setInterval(() => this.savePositions(), config.TESTING.POSITION_MANAGER.SAVE_INTERVAL);
     
     // Recovery pattern monitoring
-    this._recoveryInterval = setInterval(() => this.monitorRecoveryPatterns(), config.POSITION_MANAGER.RECOVERY_MONITOR_INTERVAL || 30000);
+    this._recoveryInterval = setInterval(() => this.monitorRecoveryPatterns(), config.TESTING.POSITION_MANAGER.RECOVERY_MONITOR_INTERVAL || 30000);
   }
 
   ensureDataDirectory() {

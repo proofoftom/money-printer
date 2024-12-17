@@ -3,7 +3,7 @@ const EventEmitter = require("events");
 const config = require("../../utils/config");
 
 class WebSocketManager extends EventEmitter {
-  constructor(tokenManager, priceManager, config) {
+  constructor(tokenManager, priceManager) {
     super();
     this.tokenManager = tokenManager;
     this.priceManager = priceManager;
@@ -12,12 +12,14 @@ class WebSocketManager extends EventEmitter {
     this.ws = null;
     this.pendingTraderSubscriptions = new Set(); // Track pending subscriptions
     this.subscribedTraders = new Set(); // Track subscribed traders
-    this.config = config.WEBSOCKET;
-    this.url = this.config.URL;
-    this.reconnectTimeout = this.config.RECONNECT_TIMEOUT;
-    this.pingInterval = this.config.PING_INTERVAL;
-    this.pongTimeout = this.config.PONG_TIMEOUT;
-    this.maxRetries = this.config.MAX_RETRIES;
+    
+    // Get WebSocket configuration
+    const wsConfig = config.WEBSOCKET;
+    this.url = wsConfig.URL;
+    this.reconnectTimeout = wsConfig.RECONNECT_TIMEOUT;
+    this.pingInterval = wsConfig.PING_INTERVAL;
+    this.pongTimeout = wsConfig.PONG_TIMEOUT;
+    this.maxRetries = wsConfig.MAX_RETRIES;
     
     this.retryCount = 0;
     this.pingTimer = null;
@@ -139,9 +141,9 @@ class WebSocketManager extends EventEmitter {
 
     // Handle token creation messages
     if (message.txType === "create") {
-      // Ignore tokens that are already above our heating up threshold
+      // Ignore tokens that are already above our max entry threshold
       const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
-      if (marketCapUSD > config.THRESHOLDS.HEATING_UP_USD) {
+      if (marketCapUSD > config.MCAP.MAX_ENTRY) {
         console.log(
           `Ignoring new token ${message.name} (${
             message.mint
@@ -152,11 +154,20 @@ class WebSocketManager extends EventEmitter {
         return;
       }
 
-      this.emit("newToken", message);
-      this.tokenManager.handleNewToken(message);
-      // Subscribe to trades for the new token
-      this.subscribeToToken(message.mint);
-      return;
+      // Track new token if it meets minimum market cap requirement
+      if (marketCapUSD >= config.MCAP.MIN) {
+        console.log(
+          `New token detected: ${message.name} (${
+            message.mint
+          }) - Market cap: $${marketCapUSD.toFixed(
+            2
+          )} (${message.marketCapSol.toFixed(2)} SOL)`
+        );
+        this.tokenManager.handleNewToken(message);
+        
+        // Subscribe to trades for the new token
+        this.subscribeToToken(message.mint);
+      }
     }
 
     // Handle trade messages

@@ -26,7 +26,7 @@ class TokenManager extends EventEmitter {
 
     // Check market cap threshold before processing
     const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-    if (marketCapUSD >= config.THRESHOLDS.MAX_MARKET_CAP_USD) {
+    if (marketCapUSD >= config.MCAP.MAX_ENTRY) {
       console.info(
         `Ignoring new token ${token.symbol || token.mint.slice(0, 8)} - Market cap too high: $${marketCapUSD.toFixed(2)} (${token.marketCapSol.toFixed(2)} SOL)`
       );

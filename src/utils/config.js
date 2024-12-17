@@ -4,6 +4,25 @@ module.exports = {
   CLEANUP_INTERVAL: 300000, // 5 minutes
   MAX_POSITIONS: 3,
   
+  // WebSocket Configuration
+  WEBSOCKET: {
+    URL: "wss://pumpportal.fun/data-api/real-time",
+    RECONNECT_TIMEOUT: 5000,  // 5 seconds
+    PING_INTERVAL: 30000,     // 30 seconds
+    PONG_TIMEOUT: 10000,      // 10 seconds
+    MAX_RETRIES: 5
+  },
+
+  // Trader Configuration
+  TRADER: {
+    SAVE_INTERVAL: 60000, // 1 minute
+    ANALYSIS_INTERVAL: 300000, // 5 minutes
+    RECOVERY_ANALYSIS_INTERVAL: 60000, // 1 minute
+    MIN_TRADES: 10,
+    MIN_SUCCESS_RATE: 0.6,
+    MAX_CONCURRENT_POSITIONS: 3
+  },
+  
   // Testing Configuration
   TESTING: {
     CLEAR_DATA_ON_START: process.env.CLEAR_DATA_ON_START === "true" || false,
@@ -21,16 +40,19 @@ module.exports = {
         MAX_MS: 200,
         CONGESTION_MULTIPLIER: 1.5
       }
+    },
+    POSITION_MANAGER: {
+      ENTRY: {
+        SIZE: 0.5,          // Position size in SOL
+        SLIPPAGE: 1,        // Maximum entry slippage percentage
+        MAX_RETRIES: 3      // Maximum entry attempts
+      },
+      EXIT: {
+        PROFIT: 25,         // Take profit percentage
+        TRAILING_STOP: 15,  // Trailing stop percentage
+        MAX_HOLD_TIME: 3600 // Maximum hold time (seconds)
+      }
     }
-  },
-
-  // WebSocket Configuration
-  WEBSOCKET: {
-    URL: "wss://pumpportal.fun/data-api/real-time",
-    RECONNECT_TIMEOUT: 5000,  // 5 seconds
-    PING_INTERVAL: 30000,     // 30 seconds
-    PONG_TIMEOUT: 10000,      // 10 seconds
-    MAX_RETRIES: 5
   },
 
   // Market Cap Thresholds (in USD)
@@ -96,20 +118,6 @@ module.exports = {
       MIN_TRADERS: 5,     // Minimum unique traders
       MAX_SPREAD: 3,      // Maximum bid-ask spread percentage
       MIN_CORRELATION: 0.6 // Minimum volume-price correlation
-    }
-  },
-
-  // Position Management
-  POSITION: {
-    ENTRY: {
-      SIZE: 0.5,          // Position size in SOL
-      SLIPPAGE: 1,        // Maximum entry slippage percentage
-      MAX_RETRIES: 3      // Maximum entry attempts
-    },
-    EXIT: {
-      PROFIT: 25,         // Take profit percentage
-      TRAILING_STOP: 15,  // Trailing stop percentage
-      MAX_HOLD_TIME: 3600 // Maximum hold time (seconds)
     }
   },
 

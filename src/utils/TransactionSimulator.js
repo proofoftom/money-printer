@@ -2,7 +2,7 @@ const config = require('./config');
 
 class TransactionSimulator {
   constructor() {
-    this.config = config.TRANSACTION.SIMULATION_MODE;
+    this.config = config.TESTING.SIMULATION_MODE;
   }
 
   /**
