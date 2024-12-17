@@ -192,34 +192,16 @@ class Dashboard {
     }
   }
 
-  updateBalanceHistory() {
-    try {
-      const currentTime = new Date().toLocaleTimeString();
-      const currentBalance = this.wallet.balance;
-
-      if (typeof currentBalance === "number" && !isNaN(currentBalance)) {
-        this.balanceHistory.x.push(currentTime);
-        this.balanceHistory.y.push(currentBalance);
-
-        // Keep last 3600 data points (1 hour of data at 1 point per second)
-        if (this.balanceHistory.x.length > 3600) {
-          this.balanceHistory.x.shift();
-          this.balanceHistory.y.shift();
-        }
-
-        // Only show every 60th point on x-axis for readability
-        const displayData = {
-          x: this.balanceHistory.x.filter((_, i) => i % 60 === 0),
-          y: this.balanceHistory.y,
-          style: {
-            line: "yellow",
-          },
-        };
-
-        this.balanceChart.setData([displayData]);
-      }
-    } catch (error) {
-      throw error;
+  updateBalanceHistory(totalValue) {
+    const now = new Date();
+    this.balanceHistory.x.push(now);
+    this.balanceHistory.y.push(totalValue);
+    
+    // Keep only last 24 hours of data points (assuming 1-second updates)
+    const oneDayAgo = now.getTime() - 24 * 60 * 60 * 1000;
+    while (this.balanceHistory.x[0] && this.balanceHistory.x[0].getTime() < oneDayAgo) {
+      this.balanceHistory.x.shift();
+      this.balanceHistory.y.shift();
     }
   }
 
@@ -389,12 +371,47 @@ class Dashboard {
   }
 
   updateDashboard() {
-    this.updateWalletStatus();
-    this.updateRecoveryMetrics();
-    this.updateMarketStructure();
-    this.updatePositionsTable();
-    this.updateTokenTable();
-    this.screen.render();
+    try {
+      // Update wallet information
+      const walletInfo = this.getWalletStatus();
+      this.walletBox.setContent(walletInfo);
+      
+      // Update other components
+      this.updateRecoveryMetrics();
+      this.updateMarketStructure();
+      this.updatePositionsTable();
+      this.updateTokenTable();
+      
+      // Render the screen
+      this.screen.render();
+    } catch (error) {
+      this.logStatus(`Error updating dashboard: ${error.message}`, "error");
+      errorLogger.logError(error, "Dashboard Update");
+    }
+  }
+
+  getWalletStatus() {
+    try {
+      const balance = this.wallet.getBalance();
+      const totalValue = this.positionManager.getTotalValue();
+      const profitLoss = this.positionManager.getTotalProfitLoss();
+      const activePositions = this.positionManager.getPositions().length;
+      
+      // Update balance history
+      this.updateBalanceHistory(balance + totalValue);
+      
+      return [
+        `Balance: ${balance.toFixed(4)} SOL`,
+        `Positions Value: ${totalValue.toFixed(4)} SOL`,
+        `Total Value: ${(balance + totalValue).toFixed(4)} SOL`,
+        `PnL: ${profitLoss > 0 ? '+' : ''}${profitLoss.toFixed(2)}%`,
+        `Active Positions: ${activePositions}`
+      ].join('\n');
+    } catch (error) {
+      this.logStatus(`Error getting wallet status: ${error.message}`, "error");
+      errorLogger.logError(error, "Wallet Status");
+      return "Error fetching wallet status";
+    }
   }
 
   updateRecoveryMetrics() {
@@ -470,31 +487,38 @@ class Dashboard {
   }
 
   updateTokenTable() {
-    const tokens = Array.from(this.tokenTracker.tokens.values())
-      .filter(token => ["drawdown", "recovery"].includes(token.state));
-
-    const data = {
-      headers: ["Symbol", "State", "Drawdown%", "Recovery%", "Strength", "Structure", "Buy Press", "Volume"],
-      data: tokens.map(token => {
-        const strength = token.getRecoveryStrength();
-        const structure = token.analyzeMarketStructure();
-        const drawdown = token.getDrawdownPercentage();
-        const recovery = token.getRecoveryPercentage();
+    try {
+      const tokens = Array.from(this.tokenTracker.tokens.values())
+        .filter(token => token.state !== "dead" && token.state !== "blacklisted");
+      
+      const data = tokens.map(token => {
+        const volume = this.formatVolume(token.volume24h || 0);
+        const marketCap = this.priceManager.solToUSD(token.marketCapSol).toFixed(2);
+        const price = token.currentPrice.toFixed(8);
+        const priceChange = token.getPriceChange24h();
+        const recoveryMetrics = token.recoveryMetrics || {};
         
         return [
           token.symbol,
+          price,
+          `${priceChange > 0 ? '+' : ''}${priceChange.toFixed(2)}%`,
+          `$${marketCap}`,
+          volume,
           token.state,
-          drawdown.toFixed(1) + "%",
-          recovery.toFixed(1) + "%",
-          strength.total.toFixed(1) + "%",
-          structure.overallHealth.toFixed(1) + "%",
-          strength.breakdown.buyPressure.buyRatio.toFixed(2),
-          (token.volume5m / token.volume30m).toFixed(2)
+          recoveryMetrics.recoveryPhase || 'N/A',
+          recoveryMetrics.recoveryStrength ? `${(recoveryMetrics.recoveryStrength * 100).toFixed(1)}%` : 'N/A',
+          recoveryMetrics.marketStructure || 'N/A'
         ];
-      }),
-    };
-
-    this.tokenTable.setData(data);
+      });
+      
+      this.tokenTable.setData({
+        headers: ['Symbol', 'Price', '24h%', 'MCap', 'Vol', 'State', 'Phase', 'Strength', 'Structure'],
+        data
+      });
+    } catch (error) {
+      this.logStatus(`Error updating token table: ${error.message}`, "error");
+      errorLogger.logError(error, "Token Table Update");
+    }
   }
 
   getPositionStatus(position, token) {
@@ -508,6 +532,84 @@ class Dashboard {
       return "UNSTABLE";
     }
     return "HEALTHY";
+  }
+
+  updateWalletStatus(wallet, positionManager) {
+    try {
+      if (!wallet || !positionManager) {
+        throw new Error('Wallet or PositionManager not provided to updateWalletStatus');
+      }
+
+      const balance = wallet.getBalance();
+      const totalValue = positionManager.getTotalValue();
+      const profitLoss = positionManager.getTotalProfitLoss();
+      const activePositions = positionManager.getActivePositions();
+      
+      // Calculate key metrics
+      const totalEquity = balance + totalValue;
+      const utilizationRate = totalValue / totalEquity * 100;
+      
+      // Get recovery-specific metrics
+      const recoveryMetrics = activePositions.reduce((metrics, position) => {
+        if (position.recoveryMetrics) {
+          metrics.totalRecoveryTrades++;
+          if (position.recoveryMetrics.isSuccessful) {
+            metrics.successfulRecoveries++;
+          }
+          metrics.avgRecoveryGain += position.recoveryMetrics.gainPercentage || 0;
+          metrics.avgHoldTime += position.recoveryMetrics.holdTime || 0;
+        }
+        return metrics;
+      }, {
+        totalRecoveryTrades: 0,
+        successfulRecoveries: 0,
+        avgRecoveryGain: 0,
+        avgHoldTime: 0
+      });
+
+      // Calculate averages
+      if (recoveryMetrics.totalRecoveryTrades > 0) {
+        recoveryMetrics.avgRecoveryGain /= recoveryMetrics.totalRecoveryTrades;
+        recoveryMetrics.avgHoldTime /= recoveryMetrics.totalRecoveryTrades;
+      }
+
+      // Update dashboard data
+      this.data.wallet = {
+        balance,
+        totalValue,
+        totalEquity,
+        utilizationRate,
+        profitLoss,
+        activePositionsCount: activePositions.length,
+        recoveryMetrics,
+        lastUpdate: new Date().toISOString()
+      };
+
+      // Emit update event
+      this.emit('walletUpdate', this.data.wallet);
+
+      // Log significant changes
+      if (Math.abs(profitLoss) > config.DASHBOARD.SIGNIFICANT_PNL_THRESHOLD) {
+        console.log(`Significant P&L change detected: ${profitLoss}`);
+      }
+
+      if (utilizationRate > config.DASHBOARD.HIGH_UTILIZATION_THRESHOLD) {
+        console.warn(`High wallet utilization: ${utilizationRate.toFixed(2)}%`);
+      }
+
+    } catch (error) {
+      errorLogger.logError(error, 'Dashboard updateWalletStatus', {
+        walletExists: !!wallet,
+        positionManagerExists: !!positionManager
+      });
+      
+      // Set error state in dashboard
+      this.data.wallet = {
+        ...this.data.wallet,
+        error: error.message,
+        lastError: new Date().toISOString()
+      };
+    }
   }
 }
 
