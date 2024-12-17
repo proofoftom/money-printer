@@ -1488,23 +1488,23 @@ class Token extends EventEmitter {
   }
 
   getBuyPressure(timeWindowSeconds) {
-    const timeWindow = timeWindowSeconds * 1000;
+    const cutoffTime = Date.now() - (timeWindowSeconds * 1000);
     const recentTrades = this.trades.filter(
-      (t) => Date.now() - t.timestamp <= timeWindow
+      (t) => t.timestamp >= cutoffTime
     );
 
     if (recentTrades.length === 0) return 0;
 
     const buyVolume = recentTrades
-      .filter((t) => t.type === "BUY")
-      .reduce((sum, t) => sum + t.price * t.size, 0);
+      .filter((t) => t.type === "buy")
+      .reduce((sum, t) => sum + (t.amount * t.price), 0);
 
     const totalVolume = recentTrades.reduce(
-      (sum, t) => sum + t.price * t.size,
+      (sum, t) => sum + (t.amount * t.price),
       0
     );
 
-    return totalVolume > 0 ? (buyVolume / totalVolume) * 100 : 0;
+    return totalVolume > 0 ? buyVolume / totalVolume : 0;
   }
 
   getPriceChange(timeWindowSeconds) {
@@ -1527,7 +1527,7 @@ class Token extends EventEmitter {
     // Calculate current window volume
     const currentWindow = this.trades
       .filter((t) => now - t.timestamp <= timeWindow)
-      .reduce((sum, t) => sum + t.price * t.size, 0);
+      .reduce((sum, t) => sum + (t.price * t.size), 0);
 
     // Calculate previous window volume
     const previousWindow = this.trades
@@ -1535,7 +1535,7 @@ class Token extends EventEmitter {
         (t) =>
           now - t.timestamp <= timeWindow * 2 && now - t.timestamp > timeWindow
       )
-      .reduce((sum, t) => sum + t.price * t.size, 0);
+      .reduce((sum, t) => sum + (t.price * t.size), 0);
 
     // Calculate percentage change, handling edge cases
     if (previousWindow <= 0) {
@@ -1546,85 +1546,143 @@ class Token extends EventEmitter {
   }
 
   recordTrade(trade) {
-    // Add trade to trades array
-    this.trades.push(trade);
+    try {
+      // Validate trade data
+      if (!this.validateTradeData(trade)) {
+        throw new Error('Invalid trade data');
+      }
 
-    // Update volume history
-    this.volumeHistory.push({
-      volume: trade.amount,
-      timestamp: trade.timestamp || Date.now()
-    });
+      const tradeData = {
+        ...trade,
+        timestamp: trade.timestamp || Date.now(),
+        price: trade.price || this.calculateTokenPrice()
+      };
 
-    // Keep only last 24 hours of volume history
-    const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-    this.volumeHistory = this.volumeHistory.filter(v => v.timestamp > oneDayAgo);
+      // Emit pre-trade event for any pre-trade validations/checks
+      this.emit('preTrade', {
+        token: this,
+        trade: tradeData
+      });
 
-    // Update rolling volume metrics
-    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
-    const thirtyMinutesAgo = Date.now() - (30 * 60 * 1000);
-    const oneMinuteAgo = Date.now() - 60000;
+      // Record the trade
+      this.trades.push(tradeData);
 
-    this.volume1m = this.trades
-      .filter(t => t.timestamp > oneMinuteAgo)
-      .reduce((sum, t) => sum + t.amount, 0);
+      // Update volume history
+      this.volumeHistory.push({
+        amount: tradeData.amount,
+        price: tradeData.price,
+        timestamp: tradeData.timestamp,
+        volume: tradeData.amount * tradeData.price // Volume in SOL
+      });
 
-    this.volume5m = this.trades
-      .filter(t => t.timestamp > fiveMinutesAgo)
-      .reduce((sum, t) => sum + t.amount, 0);
+      // Update current price and metrics
+      this.updatePriceMetrics(tradeData.price);
+      
+      // Update market cap
+      this.updateMarketCap();
 
-    this.volume30m = this.trades
-      .filter(t => t.timestamp > thirtyMinutesAgo)
-      .reduce((sum, t) => sum + t.amount, 0);
+      // Update wallet balances
+      if (tradeData.traderPublicKey) {
+        this.updateWalletActivity(tradeData.traderPublicKey, tradeData);
+      }
 
-    // Update market cap
-    this.updateMarketCap();
+      // Emit trade events
+      this.emit('trade', {
+        token: this,
+        trade: tradeData,
+        metrics: {
+          price: this.currentPrice,
+          marketCap: this.marketCapSol,
+          volume: {
+            '1m': this.volume1m,
+            '5m': this.volume5m,
+            '30m': this.volume30m
+          },
+          recovery: {
+            phase: this.recoveryMetrics.recoveryPhase,
+            strength: this.recoveryMetrics.recoveryStrength,
+            buyPressure: this.recoveryMetrics.buyPressure
+          }
+        }
+      });
 
-    // Emit trade event
-    this.emit('trade', trade);
-  }
+      // Check for state transitions based on trade
+      this.checkStateTransitions(tradeData);
 
-  updateMarketCap() {
-    const currentPrice = this.calculateTokenPrice();
-    const totalSupply = this.getTotalSupply();
-    this.marketCapSol = currentPrice * totalSupply;
-
-    // Update highest market cap if current is higher
-    if (this.marketCapSol > this.highestMarketCap) {
-      this.highestMarketCap = this.marketCapSol;
+      return true;
+    } catch (error) {
+      this.emit('tradeError', {
+        token: this,
+        error: error.message,
+        trade: trade
+      });
+      return false;
     }
   }
 
-  calculateVolumeProfile(timeWindow = 1800000) { // Default 30 minutes
-    const now = Date.now();
-    const startTime = now - timeWindow;
-    
-    // Filter trades within time window
-    const relevantTrades = this.trades.filter(trade => 
-      trade.timestamp >= startTime && trade.timestamp <= now
-    );
-
-    // Initialize volume buckets (5-minute intervals)
-    const intervalCount = Math.ceil(timeWindow / (5 * 60 * 1000));
-    const volumeBuckets = new Array(intervalCount).fill(0);
-    
-    // Aggregate volume into buckets
-    relevantTrades.forEach(trade => {
-      const bucketIndex = Math.floor((trade.timestamp - startTime) / (5 * 60 * 1000));
-      if (bucketIndex >= 0 && bucketIndex < intervalCount) {
-        volumeBuckets[bucketIndex] += trade.amount;
+  validateTradeData(trade) {
+    const requiredFields = ['amount', 'type'];
+    for (const field of requiredFields) {
+      if (!trade[field]) {
+        return false;
       }
-    });
+    }
 
-    return {
-      buckets: volumeBuckets,
-      totalVolume: volumeBuckets.reduce((sum, vol) => sum + vol, 0),
-      averageVolume: volumeBuckets.reduce((sum, vol) => sum + vol, 0) / intervalCount,
-      peakVolume: Math.max(...volumeBuckets),
-      volumeDistribution: volumeBuckets.map(vol => ({
-        volume: vol,
-        timestamp: startTime + (volumeBuckets.indexOf(vol) * 5 * 60 * 1000)
-      }))
-    };
+    if (typeof trade.amount !== 'number' || trade.amount <= 0) {
+      return false;
+    }
+
+    if (!['buy', 'sell'].includes(trade.type.toLowerCase())) {
+      return false;
+    }
+
+    return true;
+  }
+
+  checkStateTransitions(trade) {
+    const oldState = this.state;
+    let newState = oldState;
+
+    // Calculate metrics for state determination
+    const priceChange = this.getPriceChange(300); // 5-minute window
+    const volumeChange = this.getVolumeChange(300);
+    const buyPressure = this.getBuyPressure(300);
+
+    // Check for pump conditions
+    if (priceChange > this.config.TOKEN.PUMP_THRESHOLD && 
+        volumeChange > this.config.TOKEN.VOLUME_SPIKE_THRESHOLD) {
+      newState = 'pumping';
+    }
+    // Check for drawdown conditions
+    else if (this.getDrawdownPercentage() <= this.config.TOKEN.DRAWDOWN_THRESHOLD) {
+      newState = 'drawdown';
+    }
+    // Check for recovery conditions
+    else if (oldState === 'drawdown' && 
+             this.getRecoveryPercentage() >= this.config.TOKEN.RECOVERY_THRESHOLD) {
+      newState = 'recovery';
+    }
+
+    // Emit state change if needed
+    if (newState !== oldState) {
+      this.setState(newState);
+    }
+  }
+
+  getBuyPressure(timeWindowSeconds) {
+    const cutoffTime = Date.now() - (timeWindowSeconds * 1000);
+    const recentTrades = this.trades.filter(t => t.timestamp >= cutoffTime);
+    
+    if (recentTrades.length === 0) return 0;
+
+    const buyVolume = recentTrades
+      .filter(t => t.type === 'buy')
+      .reduce((sum, t) => sum + (t.amount * t.price), 0);
+
+    const totalVolume = recentTrades
+      .reduce((sum, t) => sum + (t.amount * t.price), 0);
+
+    return totalVolume > 0 ? buyVolume / totalVolume : 0;
   }
 }
 

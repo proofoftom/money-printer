@@ -1,0 +1,11 @@
+SYMBOL  MC: $1.2k | H: 123   | T10: 45%  | D: 1.23%
+AGE      V: 12.3k | 5m 12.3k | 30m 12.3k | Txs: 123
+ 
+
+
+MC = Market Cap
+H = Holders
+T10 = Top10 Concentration
+D = Developer (Creator) Holdings
+V = Volume 1m (with 5m and 30m following)
+Txs = Transactions

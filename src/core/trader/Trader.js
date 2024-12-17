@@ -77,7 +77,87 @@ class Trader extends EventEmitter {
     };
   }
 
+  // Method to subscribe to token's trade events
+  subscribeToToken(token) {
+    if (!token) return;
+
+    token.on('trade', ({ token, trade, metrics }) => {
+      if (trade.traderPublicKey === this.publicKey) {
+        this.handleTrade(trade, token, metrics);
+      }
+    });
+
+    token.on('tradeError', ({ token, error, trade }) => {
+      if (trade.traderPublicKey === this.publicKey) {
+        console.error(`Trade error for trader ${this.publicKey}:`, error);
+      }
+    });
+  }
+
+  handleTrade(trade, token, metrics) {
+    // Update last active
+    this.lastActive = trade.timestamp;
+
+    // Update token balance
+    this.updateTokenBalance(trade.mint, trade.amount, trade.type);
+
+    // Update trading history
+    this.tradeHistory.all.push(trade);
+    this.updateTimeWindowedHistory(trade);
+    this.updateTradingPatterns(trade);
+
+    // Check for wash trading
+    if (this.detectWashTrading(trade)) {
+      this.reputation.washTradingIncidents++;
+      this.reputation.score = Math.max(0, this.reputation.score - 5);
+      this.emit('washTradingDetected', { trader: this, trade });
+    }
+
+    // Update relationships
+    if (trade.otherParty) {
+      this.updateTraderRelationship(trade.otherParty);
+    }
+
+    // Analyze recovery patterns if token is in recovery state
+    if (metrics.recovery && metrics.recovery.phase !== 'none') {
+      this.analyzeRecoveryPattern(trade, token);
+      
+      // Update recovery metrics for completed trades
+      if (trade.type === 'sell') {
+        this.updateRecoveryMetrics(trade, token, trade.pnl);
+      }
+    }
+
+    // Update reputation metrics
+    this.reputation.totalTrades++;
+    if (trade.type === 'sell' && trade.pnl > 0) {
+      this.reputation.profitableTrades++;
+    }
+
+    // Emit trader update event
+    this.emit('traderUpdated', {
+      trader: this,
+      trade,
+      metrics: {
+        profitableTrades: this.reputation.profitableTrades,
+        totalTrades: this.reputation.totalTrades,
+        winRate: this.reputation.totalTrades > 0 ? 
+          (this.reputation.profitableTrades / this.reputation.totalTrades) * 100 : 0,
+        recoveryMetrics: this.recoveryMetrics
+      }
+    });
+  }
+
   recordTrade(trade, token) {
+    // Validate required trade data
+    const requiredFields = ['mint', 'amount', 'price', 'type'];
+    for (const field of requiredFields) {
+      if (!trade[field]) {
+        console.error(`Missing required trade field: ${field}`);
+        return;
+      }
+    }
+
     // Ensure token is properly initialized
     if (!token || typeof token !== 'object') {
       console.warn('Invalid token object provided to recordTrade');
@@ -102,41 +182,106 @@ class Trader extends EventEmitter {
       otherParty
     };
 
-    // Update last active
-    this.lastActive = timestamp;
+    try {
+      // Update last active
+      this.lastActive = timestamp;
 
-    // Update token balance
-    this.updateTokenBalance(mint, amount, type);
+      // Update token balance
+      this.updateTokenBalance(mint, amount, type);
 
-    // Update trading history
-    this.tradeHistory.all.push(tradeData);
-    this.updateTimeWindowedHistory(tradeData);
-    this.updateTradingPatterns(tradeData);
+      // Update trading history with validation
+      if (this.validateTradeData(tradeData)) {
+        this.tradeHistory.all.push(tradeData);
+        this.updateTimeWindowedHistory(tradeData);
+        this.updateTradingPatterns(tradeData);
+      }
 
-    // Check for wash trading
-    if (this.detectWashTrading(tradeData)) {
-      this.reputation.washTradingIncidents++;
-      this.reputation.score = Math.max(0, this.reputation.score - 5);
-      this.emit('washTradingDetected', { trader: this, trade: tradeData });
+      // Check for wash trading
+      if (this.detectWashTrading(tradeData)) {
+        this.reputation.washTradingIncidents++;
+        this.reputation.score = Math.max(0, this.reputation.score - 5);
+        this.emit('washTradingDetected', { trader: this, trade: tradeData });
+      }
+
+      // Update relationships
+      if (otherParty) {
+        this.updateTraderRelationship(otherParty);
+      }
+
+      // Analyze recovery patterns if token has a valid state and is in recovery-related state
+      if (token.state && (token.state === 'drawdown' || token.state === 'recovery')) {
+        this.analyzeRecoveryPattern(tradeData, token);
+      }
+      
+      // Update recovery metrics for completed trades
+      if (type === 'sell') {
+        const profitLoss = ((price - this.getAverageEntryPrice(mint)) / this.getAverageEntryPrice(mint)) * 100;
+        this.updateRecoveryMetrics(tradeData, token, profitLoss);
+      }
+
+      // Update reputation metrics
+      this.reputation.totalTrades++;
+      if (type === 'sell' && price > this.getAverageEntryPrice(mint)) {
+        this.reputation.profitableTrades++;
+      }
+
+      // Emit trade event with enhanced data
+      this.emit('trade', { 
+        trader: this, 
+        trade: tradeData,
+        metrics: {
+          profitableTrades: this.reputation.profitableTrades,
+          totalTrades: this.reputation.totalTrades,
+          winRate: this.reputation.totalTrades > 0 ? 
+            (this.reputation.profitableTrades / this.reputation.totalTrades) * 100 : 0
+        }
+      });
+
+    } catch (error) {
+      console.error('Error recording trade:', error);
+      this.emit('tradeError', { 
+        trader: this, 
+        trade: tradeData, 
+        error: error.message 
+      });
+    }
+  }
+
+  validateTradeData(trade) {
+    // Validate price
+    if (typeof trade.price !== 'number' || trade.price <= 0) {
+      console.warn(`Invalid trade price: ${trade.price}`);
+      return false;
     }
 
-    // Update relationships
-    if (otherParty) {
-      this.updateTraderRelationship(otherParty);
+    // Validate amount
+    if (typeof trade.amount !== 'number' || trade.amount <= 0) {
+      console.warn(`Invalid trade amount: ${trade.amount}`);
+      return false;
     }
 
-    // Analyze recovery patterns if token has a valid state and is in recovery-related state
-    if (token.state && (token.state === 'drawdown' || token.state === 'recovery')) {
-      this.analyzeRecoveryPattern(tradeData, token);
+    // Validate type
+    if (!['buy', 'sell'].includes(trade.type.toLowerCase())) {
+      console.warn(`Invalid trade type: ${trade.type}`);
+      return false;
     }
+
+    // Validate timestamp
+    if (typeof trade.timestamp !== 'number' || trade.timestamp > Date.now()) {
+      console.warn(`Invalid trade timestamp: ${trade.timestamp}`);
+      return false;
+    }
+
+    return true;
+  }
+
+  getAverageEntryPrice(mint) {
+    const trades = this.tradeHistory.all.filter(t => t.mint === mint && t.type === 'buy');
+    if (trades.length === 0) return 0;
     
-    // Update recovery metrics for completed trades
-    if (trade.type === 'SELL' || trade.type === 'PARTIAL_SELL') {
-      this.updateRecoveryMetrics(tradeData, token, trade.profitLoss);
-    }
-
-    // Emit trade event
-    this.emit('trade', { trader: this, trade: tradeData });
+    const totalValue = trades.reduce((sum, trade) => sum + (trade.price * trade.amount), 0);
+    const totalAmount = trades.reduce((sum, trade) => sum + trade.amount, 0);
+    return totalValue / totalAmount;
   }
 
   updateTokenBalance(mint, amount, type) {

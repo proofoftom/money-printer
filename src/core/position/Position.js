@@ -248,6 +248,20 @@ class Position extends EventEmitter {
       this.entryTime = Date.now();
       this.highWaterMark = this.entryPrice;
 
+      // Record trade in token
+      const success = this.token.recordTrade({
+        amount: size,
+        price: this.entryPrice,
+        type: 'buy',
+        timestamp: this.entryTime,
+        traderPublicKey: this.traderPublicKey,
+        signature: simulation.signature
+      });
+
+      if (!success) {
+        throw new Error('Failed to record trade');
+      }
+
       // Log the entry
       console.info(`Position opened: ${this.token.symbol}`, {
         size: this.size,
@@ -286,6 +300,21 @@ class Position extends EventEmitter {
 
       // Calculate PnL
       const pnl = ((this.exitPrice - this.entryPrice) / this.entryPrice) * 100;
+
+      // Record trade in token
+      const success = this.token.recordTrade({
+        amount: size,
+        price: this.exitPrice,
+        type: 'sell',
+        timestamp: this.exitTime,
+        traderPublicKey: this.traderPublicKey,
+        signature: simulation.signature,
+        pnl
+      });
+
+      if (!success) {
+        throw new Error('Failed to record trade');
+      }
 
       // Log the exit
       console.info(`Position ${this.remainingSize === 0 ? 'closed' : 'partially closed'}: ${this.token.symbol}`, {
