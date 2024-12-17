@@ -7,7 +7,8 @@ class Position extends EventEmitter {
     entryPrice,
     size,
     entryTime = Date.now(),
-    symbol = null
+    symbol = null,
+    simulationManager
   }) {
     super();
     this.mint = mint;
@@ -31,6 +32,7 @@ class Position extends EventEmitter {
     this.highPrice = entryPrice;
     this.symbol = symbol || mint.slice(0, 8);
     this.partialExits = [];
+    this.simulationManager = simulationManager;
     
     // Recovery metrics
     this.recoveryStrength = 0;
@@ -202,6 +204,83 @@ class Position extends EventEmitter {
       return true;
     } catch (error) {
       console.error('Failed to open position:', error);
+      return false;
+    }
+  }
+
+  async executeEntry(size, maxSlippage) {
+    const { simulationManager } = this;
+    
+    try {
+      // Simulate market buy
+      const simulation = await simulationManager.simulateMarketBuy(this.token, size);
+      
+      if (!simulation.success) {
+        throw new Error('Entry simulation failed');
+      }
+
+      // Check if price impact is within acceptable range
+      if (simulation.priceImpact > maxSlippage) {
+        throw new Error(`Price impact too high: ${simulation.priceImpact}% > ${maxSlippage}%`);
+      }
+
+      // Execute the trade
+      this.entryPrice = simulation.executionPrice;
+      this.size = size;
+      this.entryTime = Date.now();
+      this.highWaterMark = this.entryPrice;
+
+      // Log the entry
+      console.info(`Position opened: ${this.token.symbol}`, {
+        size: this.size,
+        entryPrice: this.entryPrice,
+        priceImpact: simulation.priceImpact,
+        delay: simulation.delay
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Entry execution failed:', error);
+      return false;
+    }
+  }
+
+  async executeExit(size, maxSlippage) {
+    const { simulationManager } = this;
+    
+    try {
+      // Simulate market sell
+      const simulation = await simulationManager.simulateMarketSell(this.token, size);
+      
+      if (!simulation.success) {
+        throw new Error('Exit simulation failed');
+      }
+
+      // Check if price impact is within acceptable range
+      if (simulation.priceImpact > maxSlippage) {
+        throw new Error(`Price impact too high: ${simulation.priceImpact}% > ${maxSlippage}%`);
+      }
+
+      // Execute the trade
+      this.exitPrice = simulation.executionPrice;
+      this.exitTime = Date.now();
+      this.remainingSize -= size;
+
+      // Calculate PnL
+      const pnl = ((this.exitPrice - this.entryPrice) / this.entryPrice) * 100;
+
+      // Log the exit
+      console.info(`Position ${this.remainingSize === 0 ? 'closed' : 'partially closed'}: ${this.token.symbol}`, {
+        size,
+        exitPrice: this.exitPrice,
+        priceImpact: simulation.priceImpact,
+        delay: simulation.delay,
+        pnl: `${pnl.toFixed(2)}%`
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Exit execution failed:', error);
       return false;
     }
   }
