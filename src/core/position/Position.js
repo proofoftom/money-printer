@@ -31,6 +31,12 @@ class Position extends EventEmitter {
     this.highPrice = entryPrice;
     this.symbol = symbol || mint.slice(0, 8);
     this.partialExits = [];
+    
+    // Recovery metrics
+    this.recoveryStrength = 0;
+    this.buyPressure = 0;
+    this.marketStructure = 'unknown';
+    this.recoveryPhase = 'none'; // none, accumulation, expansion, distribution
   }
 
   calculateVolatility() {
@@ -110,6 +116,58 @@ class Position extends EventEmitter {
     return 'stable';
   }
 
+  calculateRecoveryMetrics() {
+    if (!this.candleHistory || this.candleHistory.length < 5) return null;
+    
+    // Calculate recovery strength based on price action and volume
+    const recentCandles = this.candleHistory.slice(-5);
+    const priceChange = (this.currentPrice - this.lowestPrice) / this.lowestPrice;
+    const volumeStrength = this.calculateVolumeStrength();
+    
+    this.recoveryStrength = priceChange * (volumeStrength === 'increasing' ? 1.2 : 
+                                         volumeStrength === 'stable' ? 1.0 : 0.8);
+    
+    // Calculate buy pressure
+    const buyCandles = recentCandles.filter(c => c.close > c.open).length;
+    const totalVolume = recentCandles.reduce((sum, c) => sum + c.volume, 0);
+    const buyVolume = recentCandles.filter(c => c.close > c.open)
+                                 .reduce((sum, c) => sum + c.volume, 0);
+    
+    this.buyPressure = (buyCandles / recentCandles.length) * (buyVolume / totalVolume);
+    
+    // Analyze market structure
+    const highs = recentCandles.map(c => c.high);
+    const lows = recentCandles.map(c => c.low);
+    const higherHighs = highs.slice(1).filter((h, i) => h > highs[i]).length;
+    const higherLows = lows.slice(1).filter((l, i) => l > lows[i]).length;
+    
+    if (higherHighs >= 3 && higherLows >= 2) {
+      this.marketStructure = 'bullish';
+    } else if (higherHighs <= 1 && higherLows <= 1) {
+      this.marketStructure = 'bearish';
+    } else {
+      this.marketStructure = 'neutral';
+    }
+    
+    // Determine recovery phase
+    if (this.recoveryStrength < 0.1) {
+      this.recoveryPhase = 'none';
+    } else if (this.recoveryStrength < 0.3 && this.buyPressure > 0.6) {
+      this.recoveryPhase = 'accumulation';
+    } else if (this.recoveryStrength >= 0.3 && this.marketStructure === 'bullish') {
+      this.recoveryPhase = 'expansion';
+    } else if (this.recoveryStrength >= 0.5 && this.buyPressure < 0.4) {
+      this.recoveryPhase = 'distribution';
+    }
+    
+    return {
+      recoveryStrength: this.recoveryStrength,
+      buyPressure: this.buyPressure,
+      marketStructure: this.marketStructure,
+      recoveryPhase: this.recoveryPhase
+    };
+  }
+
   update(currentPrice, volumeData = null, candleData = null) {
     // Validate price
     if (typeof currentPrice !== 'number' || currentPrice <= 0) {
@@ -176,6 +234,11 @@ class Position extends EventEmitter {
         throw new Error('Invalid candle data: Missing required OHLC values');
       }
       this.candleHistory.push(candleData);
+    }
+
+    // Update recovery metrics
+    if (candleData) {
+      this.calculateRecoveryMetrics();
     }
 
     // Emit update event with current state

@@ -23,6 +23,11 @@ class PositionManager extends EventEmitter {
     this.stateManager.on('positionUpdated', this.handlePositionUpdated.bind(this));
     this.stateManager.on('positionClosed', this.handlePositionClosed.bind(this));
     this.stateManager.on('partialExit', this.handlePartialExit.bind(this));
+    
+    // Recovery strategy event handlers
+    this.stateManager.on('recoveryAccumulation', this.handleRecoveryAccumulation.bind(this));
+    this.stateManager.on('recoveryExpansion', this.handleRecoveryExpansion.bind(this));
+    this.stateManager.on('recoveryDistribution', this.handleRecoveryDistribution.bind(this));
 
     // Periodic position validation
     this._validateInterval = setInterval(() => this.validatePositions(), 60000); // Every minute
@@ -65,6 +70,41 @@ Partial Exit:
 - Remaining Size: ${(position.remainingSize * 100).toFixed(2)}%
 - Partial Exits: ${position.partialExits.length}
     `);
+  }
+
+  handleRecoveryAccumulation({ mint, metrics }) {
+    const position = this.getPosition(mint);
+    if (!position) return;
+
+    // Increase position size during strong accumulation
+    if (metrics.buyPressure > 0.7 && metrics.marketStructure === 'bullish') {
+      const additionalSize = this.calculatePositionSize(position.size * metrics.recoveryStrength);
+      this.increasePosition(mint, additionalSize);
+    }
+  }
+
+  handleRecoveryExpansion({ mint, metrics }) {
+    const position = this.getPosition(mint);
+    if (!position) return;
+
+    // Adjust trailing stop based on recovery strength
+    if (metrics.recoveryStrength > 0.4) {
+      const trailPercent = Math.min(
+        config.EXIT_STRATEGIES.MAX_TRAIL_PERCENT,
+        metrics.recoveryStrength * config.EXIT_STRATEGIES.BASE_TRAIL_PERCENT
+      );
+      this.exitStrategies.updateTrailingStop(position, trailPercent);
+    }
+  }
+
+  handleRecoveryDistribution({ mint, metrics }) {
+    const position = this.getPosition(mint);
+    if (!position) return;
+
+    // Exit position if distribution phase shows weakness
+    if (metrics.buyPressure < 0.3 || metrics.marketStructure === 'bearish') {
+      this.closePosition(mint, position.currentPrice);
+    }
   }
 
   async openPosition(mint, marketCap, volatility = 0) {
@@ -176,6 +216,40 @@ Partial Exit:
 
       return true;
     }
+  }
+
+  async increasePosition(mint, additionalSize) {
+    const position = this.getPosition(mint);
+    if (!position || this.wallet.balance < additionalSize) return false;
+
+    // Simulate transaction for position increase
+    const delay = await this.transactionSimulator.simulateTransactionDelay();
+    const executionPrice = this.transactionSimulator.calculatePriceImpact(
+      additionalSize,
+      position.currentPrice * (position.size + additionalSize),
+      position.volume
+    );
+
+    // Update position size and cost basis
+    const newTotalSize = position.size + additionalSize;
+    const newCostBasis = ((position.size * position.entryPrice) + (additionalSize * executionPrice)) / newTotalSize;
+    
+    position.size = newTotalSize;
+    position.entryPrice = newCostBasis;
+    this.wallet.updateBalance(-additionalSize);
+
+    // Emit trade event for position increase
+    this.emit('trade', {
+      type: 'INCREASE',
+      mint,
+      profitLoss: position.getProfitLoss(),
+      symbol: position.symbol,
+      size: additionalSize,
+      price: executionPrice,
+      timestamp: Date.now()
+    });
+
+    return true;
   }
 
   updatePosition(mint, currentPrice, volumeData = null, candleData = null) {

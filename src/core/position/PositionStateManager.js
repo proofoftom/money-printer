@@ -20,6 +20,9 @@ class PositionStateManager extends EventEmitter {
     
     // Periodic state persistence
     this._saveInterval = setInterval(() => this.savePositions(), config.POSITION_MANAGER.SAVE_INTERVAL);
+    
+    // Recovery pattern monitoring
+    this._recoveryInterval = setInterval(() => this.monitorRecoveryPatterns(), config.POSITION_MANAGER.RECOVERY_MONITOR_INTERVAL || 30000);
   }
 
   ensureDataDirectory() {
@@ -159,6 +162,61 @@ class PositionStateManager extends EventEmitter {
   clearPositions() {
     this.positions.clear();
     this.savePositions();
+  }
+
+  monitorRecoveryPatterns() {
+    for (const [mint, position] of this.positions) {
+      const metrics = position.calculateRecoveryMetrics();
+      if (!metrics) continue;
+      
+      // Detect strong recovery patterns
+      if (metrics.recoveryPhase === 'accumulation' && metrics.buyPressure > 0.7) {
+        this.emit('recoveryAccumulation', { mint, metrics });
+      }
+      
+      if (metrics.recoveryPhase === 'expansion' && metrics.recoveryStrength > 0.4) {
+        this.emit('recoveryExpansion', { mint, metrics });
+      }
+      
+      if (metrics.recoveryPhase === 'distribution') {
+        this.emit('recoveryDistribution', { mint, metrics });
+      }
+      
+      // Update position state based on recovery metrics
+      this.updatePositionState(position, metrics);
+    }
+  }
+  
+  updatePositionState(position, metrics) {
+    // Adjust position based on recovery phase
+    switch (metrics.recoveryPhase) {
+      case 'accumulation':
+        if (metrics.buyPressure > 0.7 && metrics.marketStructure === 'bullish') {
+          position.emit('increasePosition', {
+            reason: 'strongAccumulation',
+            metrics
+          });
+        }
+        break;
+        
+      case 'expansion':
+        if (metrics.recoveryStrength > 0.5 && metrics.marketStructure === 'bullish') {
+          position.emit('trailStop', {
+            reason: 'strongExpansion',
+            metrics
+          });
+        }
+        break;
+        
+      case 'distribution':
+        if (metrics.buyPressure < 0.3 || metrics.marketStructure === 'bearish') {
+          position.emit('exitPosition', {
+            reason: 'distributionPhase',
+            metrics
+          });
+        }
+        break;
+    }
   }
 
   cleanup() {
