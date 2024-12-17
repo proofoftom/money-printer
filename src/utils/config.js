@@ -4,6 +4,26 @@ module.exports = {
   CLEANUP_INTERVAL: 300000, // 5 minutes
   MAX_POSITIONS: 3,
   
+  // Testing Configuration
+  TESTING: {
+    CLEAR_DATA_ON_START: process.env.CLEAR_DATA_ON_START === "true" || false,
+    DATA_DIR: "data",
+    SIMULATION_MODE: {
+      ENABLED: true,
+      AVG_BLOCK_TIME: 0.4,
+      PRICE_IMPACT: {
+        ENABLED: true,
+        SLIPPAGE_BASE: 1,
+        VOLUME_MULTIPLIER: 1.2
+      },
+      NETWORK_DELAY: {
+        MIN_MS: 50,
+        MAX_MS: 200,
+        CONGESTION_MULTIPLIER: 1.5
+      }
+    }
+  },
+
   // WebSocket Configuration
   WEBSOCKET: {
     URL: "wss://pumpportal.fun/data-api/real-time",
