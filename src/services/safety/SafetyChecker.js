@@ -184,6 +184,8 @@ class SafetyChecker {
 
         return true;
       }
+      this.setFailureReason("No significant volume spike", Math.max(volumeRatio1m, volumeRatio5m));
+      return false;
     }
     
     // Check gain rate with volatility context
@@ -198,8 +200,11 @@ class SafetyChecker {
         }
         return true;
       }
+      this.setFailureReason("High price volatility", priceStats.volatility);
+      return false;
     }
     
+    this.setFailureReason("No clear pump pattern", pumpMetrics.highestGainRate);
     return false;
   }
 

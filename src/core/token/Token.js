@@ -491,13 +491,15 @@ class Token extends EventEmitter {
           // Emit readyForPosition event to signal that we can open a position
           this.emit("readyForPosition", this);
         } else {
+          // Get the specific failure reason before changing state
+          const failureReason = safetyChecker.getFailureReason();
           this.setState("unsafeRecovery");
-          this.unsafeReason = safetyChecker.getFailureReason();
+          this.unsafeReason = failureReason;
           this.emit("unsafeRecovery", { 
             token: this, 
             marketCap: this.marketCapSol, 
-            reason: this.unsafeReason?.reason || 'Unknown',
-            value: this.unsafeReason?.value 
+            reason: failureReason.reason,
+            value: failureReason.value 
           });
         }
         return;
@@ -511,6 +513,8 @@ class Token extends EventEmitter {
         if (isSecure) {
           // Only enter position if gain is less than threshold
           if (gainPercentage <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
+            // Clear unsafe reason before emitting readyForPosition
+            this.unsafeReason = null;
             // Emit readyForPosition event to signal that we can open a position
             this.emit("readyForPosition", this);
           } else {
@@ -525,12 +529,14 @@ class Token extends EventEmitter {
         } else {
           // Update unsafe reason if it changed
           const newReason = safetyChecker.getFailureReason();
-          if (JSON.stringify(newReason) !== JSON.stringify(this.unsafeReason)) {
+          if (!this.unsafeReason || 
+              this.unsafeReason.reason !== newReason.reason || 
+              this.unsafeReason.value !== newReason.value) {
             this.unsafeReason = newReason;
             this.emit("unsafeRecoveryUpdate", {
               token: this,
-              reason: this.unsafeReason?.reason || 'Unknown',
-              value: this.unsafeReason?.value
+              reason: newReason.reason,
+              value: newReason.value
             });
           }
         }
