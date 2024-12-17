@@ -221,6 +221,54 @@ class MissedOpportunityLogger {
     return analysis;
   }
 
+  checkAndLog(token) {
+    if (!token || !token.mint) return;
+    
+    // Check if token meets criteria for logging
+    const shouldLog = this.shouldLogToken(token);
+    if (!shouldLog) return;
+    
+    // Track the token with its failed checks
+    this.trackToken(token, shouldLog.failedChecks);
+    
+    // Update metrics
+    this.updateMetrics(token, shouldLog.failedChecks);
+    
+    // Log to file
+    this.logToFile(token, shouldLog.failedChecks);
+  }
+
+  shouldLogToken(token) {
+    // Check if token has potential for profit but failed safety checks
+    const failedChecks = [];
+    
+    // Check liquidity
+    const liquidity = token.vSolInBondingCurve;
+    if (liquidity < config.SAFETY.MIN_LIQUIDITY_SOL) {
+      failedChecks.push('Insufficient liquidity');
+    }
+    
+    // Check volume
+    const volume24h = token.getRecentVolume(24 * 60 * 60 * 1000); // 24 hours in ms
+    if (volume24h < config.SAFETY.MIN_VOLUME_24H) {
+      failedChecks.push('Insufficient volume');
+    }
+    
+    // Check holder count
+    const holderCount = token.getHolderCount();
+    if (holderCount < config.SAFETY.MIN_HOLDERS) {
+      failedChecks.push('Insufficient holders');
+    }
+    
+    // Check wallet concentration
+    const maxConcentration = token.getTopHolderConcentration();
+    if (maxConcentration > config.SAFETY.MAX_WALLET_CONCENTRATION) {
+      failedChecks.push('High wallet concentration');
+    }
+    
+    return failedChecks.length > 0 ? { failedChecks } : false;
+  }
+
   logMissedOpportunity(data) {
     const date = new Date().toISOString().split('T')[0];
     const logFile = path.join(this.logDir, `missed_opportunities_${date}.json`);
@@ -277,6 +325,48 @@ class MissedOpportunityLogger {
         this.metrics.recoveryMetrics.byRecoveryStrength[strengthCategory]++;
       }
     }
+  }
+
+  updateMetrics(token, failedChecks) {
+    // Update total missed opportunities
+    this.metrics.totalMissed++;
+
+    // Update missed by reason
+    failedChecks.forEach(reason => {
+      this.metrics.missedByReason[reason] = (this.metrics.missedByReason[reason] || 0) + 1;
+    });
+
+    // Update missed by volume category
+    const volume24h = token.getRecentVolume(24 * 60 * 60 * 1000);
+    if (volume24h < 1000) {
+      this.metrics.missedByVolume.low++;
+    } else if (volume24h < 10000) {
+      this.metrics.missedByVolume.medium++;
+    } else {
+      this.metrics.missedByVolume.high++;
+    }
+
+    // Update recovery metrics if applicable
+    const marketStructure = token.getMarketStructure();
+    if (marketStructure) {
+      this.metrics.recoveryMetrics.byMarketStructure[marketStructure]++;
+    }
+  }
+
+  logToFile(token, failedChecks) {
+    const data = {
+      timestamp: new Date().toISOString(),
+      mint: token.mint,
+      failedChecks,
+      tokenMetrics: {
+        liquidity: token.vSolInBondingCurve,
+        volume24h: token.getRecentVolume(24 * 60 * 60 * 1000),
+        holderCount: token.getHolderCount(),
+        maxWalletConcentration: token.getTopHolderConcentration()
+      }
+    };
+
+    this.logMissedOpportunity(data);
   }
 }
 

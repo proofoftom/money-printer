@@ -109,68 +109,80 @@ class TokenManager extends EventEmitter {
 
     switch (token.state) {
       case "new":
-        if (marketCapUSD >= config.THRESHOLDS.HEATING_UP_USD) {
-          token.setState("heatingUp");
-          this.emit("tokenHeatingUp", token);
+        // Check for pump conditions
+        if (token.isPumping()) {
+          token.setState("pumping");
+          this.emit("tokenPumping", token);
         }
         break;
 
-      case "heatingUp":
-        if (marketCapUSD >= config.THRESHOLDS.FIRST_PUMP_USD) {
-          token.setState("firstPump");
-        }
-        break;
-
-      case "firstPump":
-        if (!token.highestMarketCap) token.highestMarketCap = marketCapUSD;
-        if (marketCapUSD > token.highestMarketCap) {
-          token.highestMarketCap = marketCapUSD;
-        }
-        const drawdownPercentage =
-          ((token.highestMarketCap - marketCapUSD) / token.highestMarketCap) *
-          100;
-        if (drawdownPercentage >= config.THRESHOLDS.PUMP_DRAWDOWN) {
-          token.setState("drawdown");
-          token.drawdownLow = marketCapUSD;
+      case "pumping":
+        // Check for drawdown
+        if (token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MIN) {
+          if (token.isSafe()) {
+            // If token is safe, enter smaller position due to volatility
+            token.setState("open");
+            this.emit("tokenSafeForEntry", { token, positionSize: "small" });
+          } else {
+            // If unsafe, move to drawdown state
+            token.setState("drawdown");
+            this.emit("tokenInDrawdown", token);
+          }
         }
         break;
 
       case "drawdown":
-        await token.evaluateRecovery(this.safetyChecker);
-        break;
-
-      case "unsafeRecovery":
-        await token.evaluateRecovery(this.safetyChecker);
-        break;
-
-      case "inPosition":
-        const result = this.positionManager.updatePosition(
-          token.mint,
-          token.marketCapSol,
-          { 
-            volume: token.volume5m || 0,
-            volume1m: token.volume1m || 0,
-            volume30m: token.volume30m || 0
-          }
-        );
-        if (result) {
-          if (result.portion === 1.0) {
-            token.setState("closed");
-            this.emit("positionClosed", {
-              token,
-              reason: result.reason || "exit_strategy",
-            });
+        // Check for recovery or new drawdown cycle
+        const gainFromBottom = token.getGainPercentage();
+        if (gainFromBottom >= config.RECOVERY.GAIN.MIN) {
+          if (token.isSafe()) {
+            if (gainFromBottom <= config.RECOVERY.GAIN.MAX_ENTRY) {
+              // Safe and within entry threshold - open full position
+              token.setState("open");
+              this.emit("tokenSafeForEntry", { token, positionSize: "full" });
+            } else {
+              // Gained too much - back to drawdown
+              token.setState("drawdown");
+            }
           } else {
-            this.emit("partialExit", {
-              token,
-              percentage: result.profitPercentage,
-              portion: result.portion,
-              reason: result.reason || "take_profit",
-            });
+            // Unsafe but recovering - move to recovery state
+            token.setState("recovery");
+            this.emit("tokenRecovering", token);
           }
+        } else if (token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MAX) {
+          // Too much drawdown - mark as dead
+          token.setState("dead");
+          this.emit("tokenDead", token);
+        }
+        break;
+
+      case "recovery":
+        // Monitor recovery progress
+        const currentGain = token.getGainPercentage();
+        if (token.isSafe()) {
+          if (currentGain <= config.RECOVERY.GAIN.MAX_ENTRY) {
+            // Safe and within entry threshold - open medium position
+            token.setState("open");
+            this.emit("tokenSafeForEntry", { token, positionSize: "medium" });
+          }
+        } else if (token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MIN) {
+          // New drawdown cycle - reset to drawdown state
+          token.setState("drawdown");
+          this.emit("tokenInDrawdown", token);
+        }
+        break;
+
+      case "open":
+        // Monitor position
+        if (position && position.isStopLossHit()) {
+          token.setState("closed");
+          this.emit("tokenPositionClosed", token);
         }
         break;
     }
+
+    // Update safety checker
+    this.safetyChecker.updateTrackedTokens(token);
 
     // Check for token death in any state
     if (marketCapUSD <= config.THRESHOLDS.DEAD_USD) {

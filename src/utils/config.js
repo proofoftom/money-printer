@@ -55,12 +55,32 @@ module.exports = {
     }
   },
 
+  // Position Size Configuration
+  POSITION: {
+    SIZES: {
+      SMALL: 0.25,  // 25% of max position size for volatile entries
+      MEDIUM: 0.5,  // 50% of max position size for recovery entries
+      FULL: 1.0     // 100% of max position size for optimal entries
+    },
+    MAX_SOL: 0.5,   // Maximum position size in SOL
+    SLIPPAGE: 1,    // Maximum slippage percentage
+    MAX_RETRIES: 3  // Maximum entry attempts
+  },
+
   // Market Cap Thresholds (in USD)
   MCAP: {
     MIN: 5000,     // Minimum to consider tracking
     PUMP: 12000,   // Required for pump detection
     MAX_ENTRY: 75000, // Maximum for position entry
     DEAD: 5000     // Consider token dead below this
+  },
+
+  // Token State Thresholds (in USD)
+  THRESHOLDS: {
+    HEATING_UP_USD: 7500,    // Market cap threshold for heating up state
+    FIRST_PUMP_USD: 12000,   // Market cap threshold for first pump state
+    DEAD_USD: 5000,         // Market cap threshold for dead state
+    RECOVERY_USD: 8000      // Market cap threshold for recovery state
   },
 
   // Pump Detection

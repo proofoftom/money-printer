@@ -1180,86 +1180,50 @@ class Token extends EventEmitter {
   }
 
   isPumping() {
-    const { PUMP, MCAP } = config;
+    // Check price increases
+    const price1mChange = this.getPriceChange(60); // 1 minute
+    const price5mChange = this.getPriceChange(300); // 5 minutes
     
-    // Check market cap requirement
-    if (this.marketCap < MCAP.PUMP) return false;
-
-    // Price change checks
-    const priceChange1m = this.getPriceChange(60);
-    const priceChange5m = this.getPriceChange(300);
-    if (priceChange1m < PUMP.PRICE.CHANGE_1M || 
-        priceChange5m < PUMP.PRICE.CHANGE_5M || 
-        priceChange1m > PUMP.PRICE.MAX_VOLATILITY) {
-      return false;
-    }
-
-    // Volume checks
-    const volumeSpike = this.getVolumeSpike();
-    if (volumeSpike < PUMP.VOLUME.SPIKE || 
-        this.volumeSOL < PUMP.VOLUME.MIN_SOL || 
-        this.washTradingPercent > PUMP.VOLUME.MAX_WASH) {
-      return false;
-    }
-
-    // Market checks
-    const { buyPressure, tradeCount, uniqueTraders } = this.getMarketMetrics();
-    return buyPressure >= PUMP.MARKET.MIN_BUYS && 
-           tradeCount >= PUMP.MARKET.MIN_TRADES &&
-           uniqueTraders >= PUMP.MARKET.MIN_TRADERS;
-  }
-
-  isRecovering() {
-    const { RECOVERY, SAFETY } = config;
+    // Check volume spike
+    const volumeSpike = this.getVolumeChange(300); // 5 minutes
     
-    // Check drawdown requirements
-    const drawdown = this.getDrawdown();
-    if (drawdown < RECOVERY.DRAWDOWN.MIN || 
-        drawdown > RECOVERY.DRAWDOWN.MAX || 
-        this.getDrawdownTime() > RECOVERY.DRAWDOWN.WINDOW) {
-      return false;
-    }
-
-    // Check recovery gain
-    const gain = this.getGainFromBottom();
-    if (gain < RECOVERY.GAIN.MIN || gain > RECOVERY.GAIN.MAX_ENTRY) {
-      return false;
-    }
-
-    // Check volume requirements
-    if (this.volumeSOL < RECOVERY.VOLUME.MIN_RECOVERY || 
-        this.supplyDilution > RECOVERY.VOLUME.MAX_DILUTION) {
-      return false;
-    }
-
-    // Safety checks
-    return this.isSafe();
+    // Check buy pressure
+    const buyPressure = this.getBuyPressure(300); // 5 minutes
+    
+    // Get market metrics
+    const { uniqueBuyers, totalTrades } = this.getTraderStats("5m");
+    
+    return (
+      price1mChange >= config.PUMP.PRICE.CHANGE_1M &&
+      price5mChange >= config.PUMP.PRICE.CHANGE_5M &&
+      volumeSpike >= config.PUMP.VOLUME.SPIKE &&
+      buyPressure >= config.PUMP.MARKET.MIN_BUYS &&
+      uniqueBuyers >= config.PUMP.MARKET.MIN_TRADERS &&
+      totalTrades >= config.PUMP.MARKET.MIN_TRADES
+    );
   }
 
   isSafe() {
-    const { SAFETY } = config;
-    
-    // Token checks
-    if (this.age < SAFETY.TOKEN.MIN_AGE ||
-        this.holders < SAFETY.TOKEN.MIN_HOLDERS ||
-        this.creatorHoldings > SAFETY.TOKEN.MAX_CREATOR ||
-        this.maxWalletConcentration > SAFETY.TOKEN.MAX_WALLET) {
+    // Check liquidity
+    if (this.vSolInBondingCurve < config.SAFETY.MIN_LIQUIDITY_SOL) {
       return false;
     }
 
-    // Liquidity checks
-    if (this.liquiditySOL < SAFETY.LIQUIDITY.MIN_SOL ||
-        this.priceImpact > SAFETY.LIQUIDITY.MAX_IMPACT ||
-        this.liquidityDepth < SAFETY.LIQUIDITY.MIN_DEPTH) {
+    // Check volume
+    const volume24h = this.getRecentVolume(24 * 60 * 60 * 1000);
+    if (volume24h < config.SAFETY.MIN_VOLUME_24H) {
       return false;
     }
 
-    // Market checks
-    const { tradeCount, uniqueTraders, spread, volumePriceCorrelation } = this.getMarketMetrics();
-    return tradeCount >= SAFETY.MARKET.MIN_TRADES &&
-           uniqueTraders >= SAFETY.MARKET.MIN_TRADERS &&
-           spread <= SAFETY.MARKET.MAX_SPREAD &&
-           volumePriceCorrelation >= SAFETY.MARKET.MIN_CORRELATION;
+    // Check holder count and concentration
+    const holderCount = this.getHolderCount();
+    const maxConcentration = this.getTopHolderConcentration();
+    if (holderCount < config.SAFETY.MIN_HOLDERS ||
+        maxConcentration > config.SAFETY.MAX_WALLET_CONCENTRATION) {
+      return false;
+    }
+
+    return true;
   }
 
   async updateState() {
