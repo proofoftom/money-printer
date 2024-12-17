@@ -19,7 +19,7 @@ class PositionStateManager extends EventEmitter {
     this.loadPositions();
     
     // Periodic state persistence
-    setInterval(() => this.savePositions(), config.POSITION_MANAGER.SAVE_INTERVAL);
+    this._saveInterval = setInterval(() => this.savePositions(), config.POSITION_MANAGER.SAVE_INTERVAL);
   }
 
   ensureDataDirectory() {
@@ -159,6 +159,24 @@ class PositionStateManager extends EventEmitter {
   clearPositions() {
     this.positions.clear();
     this.savePositions();
+  }
+
+  cleanup() {
+    // Clear save interval
+    if (this._saveInterval) {
+      clearInterval(this._saveInterval);
+    }
+
+    // Remove all event listeners
+    this.removeAllListeners();
+    
+    // Clear all positions
+    this.positions.clear();
+    
+    // Save empty state
+    if (process.env.NODE_ENV !== 'test') {
+      this.savePositions();
+    }
   }
 }
 

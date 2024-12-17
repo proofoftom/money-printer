@@ -47,24 +47,84 @@ class SafetyLogger {
     fs.appendFileSync(this.currentLogFile, JSON.stringify(logEntry) + '\n');
   }
 
+  logSafetyCheck(token, approved, failedChecks = []) {
+    const checkData = {
+      mint: token.mint,
+      approved,
+      marketCap: token.marketCap,
+      volume: token.volume,
+      price: token.currentPrice,
+      state: token.state,
+      failedChecks: failedChecks.map(check => ({
+        name: check.name,
+        reason: check.reason,
+        actual: check.actual,
+        configPath: check.configPath
+      }))
+    };
+
+    this.logCheck(checkData);
+  }
+
+  rotateLogFileIfNeeded() {
+    const stats = fs.statSync(this.currentLogFile);
+    const fileSizeInMB = stats.size / (1024 * 1024);
+    
+    if (fileSizeInMB >= config.LOGGING.MAX_LOG_FILE_SIZE_MB) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const rotatedFile = this.currentLogFile.replace('.json', `_${timestamp}.json`);
+      fs.renameSync(this.currentLogFile, rotatedFile);
+      fs.writeFileSync(this.currentLogFile, '[]');
+    }
+  }
+
+  cleanupOldLogs() {
+    const files = fs.readdirSync(this.logDir)
+      .filter(file => file.startsWith('safety_checks_'))
+      .map(file => ({
+        name: file,
+        path: path.join(this.logDir, file),
+        stats: fs.statSync(path.join(this.logDir, file))
+      }))
+      .sort((a, b) => b.stats.mtime.getTime() - a.stats.mtime.getTime());
+
+    let totalSize = 0;
+    for (const file of files) {
+      totalSize += file.stats.size;
+      if (totalSize > config.LOGGING.MAX_TOTAL_LOG_SIZE_MB * 1024 * 1024) {
+        fs.unlinkSync(file.path);
+      }
+    }
+  }
+
   updateMetrics(checkData) {
     this.metrics.totalChecks++;
     
-    if (checkData.passed) {
+    if (checkData.approved) {
       this.metrics.approvedChecks++;
     } else {
       this.metrics.failedChecks++;
-      
-      // Update failure reasons
-      if (checkData.reason) {
-        this.metrics.failureReasons[checkData.reason] = 
-          (this.metrics.failureReasons[checkData.reason] || 0) + 1;
-      }
+      checkData.failedChecks.forEach(check => {
+        const reason = check.name;
+        this.metrics.failureReasons[reason] = (this.metrics.failureReasons[reason] || 0) + 1;
+      });
     }
   }
 
   getMetrics() {
     return { ...this.metrics };
+  }
+
+  getFormattedMetrics() {
+    return {
+      ...this.metrics,
+      approvalRate: (this.metrics.approvedChecks / this.metrics.totalChecks * 100).toFixed(2) + '%',
+      failureRate: (this.metrics.failedChecks / this.metrics.totalChecks * 100).toFixed(2) + '%',
+      topFailureReasons: Object.entries(this.metrics.failureReasons)
+        .sort(([,a], [,b]) => b - a)
+        .slice(0, 5)
+        .reduce((obj, [key, value]) => ({ ...obj, [key]: value }), {})
+    };
   }
 
   clearMetrics() {

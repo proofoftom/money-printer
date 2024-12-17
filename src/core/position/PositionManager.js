@@ -25,7 +25,7 @@ class PositionManager extends EventEmitter {
     this.stateManager.on('partialExit', this.handlePartialExit.bind(this));
 
     // Periodic position validation
-    setInterval(() => this.validatePositions(), 60000); // Every minute
+    this._validateInterval = setInterval(() => this.validatePositions(), 60000); // Every minute
   }
 
   handlePositionAdded(position) {
@@ -82,7 +82,8 @@ Partial Exit:
       const position = new Position({
         mint,
         entryPrice: executionPrice,
-        size: positionSize
+        size: positionSize,
+        simulatedDelay: delay
       });
 
       this.stateManager.addPosition(position);
@@ -99,11 +100,14 @@ Partial Exit:
         mint,
         profitLoss: 0,
         symbol: position.symbol,
+        size: positionSize,
+        price: executionPrice,
         timestamp: Date.now()
       });
 
       return true;
     }
+
     return false;
   }
 
@@ -112,7 +116,7 @@ Partial Exit:
     if (!position) {
       const error = new Error(`Cannot close position: Position not found for ${mint}`);
       errorLogger.logError(error, 'PositionManager.closePosition');
-      return null;
+      return false;
     }
 
     // Use current price from position if no exit price provided
@@ -140,12 +144,37 @@ Partial Exit:
       if (!closedPosition) {
         const error = new Error(`Failed to close position for ${mint}`);
         errorLogger.logError(error, 'PositionManager.closePosition');
-        return null;
+        return false;
       }
-      return closedPosition;
+
+      // Emit trade event for closing position
+      this.emit('trade', {
+        type: 'SELL',
+        mint,
+        profitLoss: position.getProfitLoss(),
+        symbol: position.symbol,
+        size: sizeToClose,
+        price: executionPrice,
+        timestamp: Date.now()
+      });
+
+      return true;
     } else {
       position.recordPartialExit(portion, executionPrice);
-      return position;
+      
+      // Emit trade event for partial exit
+      this.emit('trade', {
+        type: 'PARTIAL_SELL',
+        mint,
+        profitLoss: position.getProfitLoss(),
+        symbol: position.symbol,
+        size: sizeToClose,
+        price: executionPrice,
+        portion,
+        timestamp: Date.now()
+      });
+
+      return true;
     }
   }
 
@@ -209,6 +238,25 @@ Partial Exit:
         }
       }
     }
+  }
+
+  cleanup() {
+    // Clear all intervals
+    if (this._validateInterval) {
+      clearInterval(this._validateInterval);
+    }
+
+    // Remove all event listeners
+    this.removeAllListeners();
+    
+    // Clear state manager
+    if (this.stateManager) {
+      this.stateManager.cleanup();
+    }
+    
+    // Reset metrics
+    this.wins = 0;
+    this.losses = 0;
   }
 }
 

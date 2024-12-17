@@ -426,20 +426,17 @@ class Token extends EventEmitter {
   }
 
   getRecoveryPercentage() {
-    if (!this.drawdownLow || !this.marketCapSol) return 0;
+    if (!this.drawdownLow || this.marketCapSol === 0) return 0;
     return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
   }
 
   getDrawdownPercentage() {
-    if (!this.highestMarketCap || !this.marketCapSol) return 0;
-    return (
-      ((this.highestMarketCap - this.marketCapSol) / this.highestMarketCap) *
-      100
-    );
+    if (!this.highestMarketCap || this.marketCapSol === 0) return 0;
+    return ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) * 100;
   }
 
   getGainPercentage() {
-    if (!this.drawdownLow || !this.marketCapSol) return 0;
+    if (!this.drawdownLow || this.marketCapSol === 0) return 0;
     return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
   }
 
@@ -652,6 +649,374 @@ class Token extends EventEmitter {
     
     // Remove all event listeners
     this.removeAllListeners();
+  }
+
+  getDrawdownPercentage() {
+    if (!this.highestMarketCap || this.marketCapSol === 0) return 0;
+    return ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) * 100;
+  }
+
+  getRecoveryPercentage() {
+    if (!this.drawdownLow || this.marketCapSol === 0) return 0;
+    return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
+  }
+
+  getPriceMomentum() {
+    if (this.priceHistory.length < 2) return 0;
+    
+    const recentPrices = this.priceHistory.slice(-5); // Last 5 price points
+    if (recentPrices.length < 2) return 0;
+    
+    // Calculate price changes
+    const changes = [];
+    for (let i = 1; i < recentPrices.length; i++) {
+      const change = (recentPrices[i].price - recentPrices[i-1].price) / recentPrices[i-1].price;
+      changes.push(change);
+    }
+    
+    // Return average of recent changes
+    return changes.reduce((sum, change) => sum + change, 0) / changes.length;
+  }
+
+  getRecentVolume(timeWindow) {
+    const now = Date.now();
+    return this.traderManager.getTotalVolumeInTimeWindow(this.mint, now - timeWindow, now);
+  }
+
+  getAverageVolume(timeWindow) {
+    const now = Date.now();
+    const totalVolume = this.traderManager.getTotalVolumeInTimeWindow(this.mint, now - timeWindow, now);
+    return totalVolume / (timeWindow / 60000); // Convert to per minute average
+  }
+
+  getMarketCap() {
+    return this.marketCapSol;
+  }
+
+  getBuyPressureMetrics(timeWindow = 300000) { // 5 minutes default
+    const now = Date.now();
+    const trades = this.traderManager.getTradesInTimeWindow(this.mint, now - timeWindow, now);
+    
+    if (!trades || trades.length === 0) return {
+      buyRatio: 0,
+      avgBuySize: 0,
+      uniqueBuyers: 0,
+      buySizeIncreasing: false
+    };
+
+    const buys = trades.filter(t => t.type === 'buy');
+    const uniqueBuyerSet = new Set(buys.map(t => t.trader));
+    
+    // Calculate average buy size trend
+    const buySizes = buys.map(t => t.amount);
+    const recentBuys = buySizes.slice(-3); // Look at last 3 buys
+    const buySizeIncreasing = recentBuys.length >= 2 && 
+      recentBuys.every((size, i) => i === 0 || size >= recentBuys[i-1]);
+
+    return {
+      buyRatio: buys.length / trades.length,
+      avgBuySize: buys.length > 0 ? buySizes.reduce((a,b) => a + b, 0) / buys.length : 0,
+      uniqueBuyers: uniqueBuyerSet.size,
+      buySizeIncreasing
+    };
+  }
+
+  getRecoveryStrength() {
+    const recoveryPercentage = this.getRecoveryPercentage();
+    const buyPressure = this.getBuyPressureMetrics();
+    const momentum = this.getPriceMomentum();
+    
+    // Weight different factors
+    const recoveryScore = recoveryPercentage * 0.4; // 40% weight
+    const buyPressureScore = (
+      (buyPressure.buyRatio * 30) + // Up to 30 points for buy ratio
+      (buyPressure.buySizeIncreasing ? 15 : 0) + // 15 points for increasing buy sizes
+      (Math.min(buyPressure.uniqueBuyers * 2, 15)) // Up to 15 points for unique buyers
+    ) * 0.4; // 40% weight
+    const momentumScore = (momentum * 100) * 0.2; // 20% weight
+
+    return {
+      total: recoveryScore + buyPressureScore + momentumScore,
+      breakdown: {
+        recoveryPercentage,
+        buyPressure,
+        momentum
+      }
+    };
+  }
+
+  isRecoveryHealthy() {
+    const strength = this.getRecoveryStrength();
+    const buyPressure = strength.breakdown.buyPressure;
+    
+    return (
+      strength.total >= 60 && // Overall strong recovery
+      buyPressure.buyRatio >= 0.6 && // More buys than sells
+      buyPressure.uniqueBuyers >= 3 && // Multiple unique buyers
+      strength.breakdown.momentum > 0 // Positive momentum
+    );
+  }
+
+  detectPricePattern(timeWindow = 1800000) { // 30 minutes default
+    const prices = this.priceHistory
+      .filter(p => p.timestamp > Date.now() - timeWindow)
+      .map(p => p.price);
+    
+    if (prices.length < 10) return null;
+
+    // Normalize prices to 0-1 range for pattern matching
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const priceRange = maxPrice - minPrice;
+    const levelSize = priceRange / 10;
+
+    // Initialize volume profile
+    const profile = Array(10).fill(0).map((_, i) => ({
+      priceLevel: minPrice + (i * levelSize),
+      buyVolume: 0,
+      sellVolume: 0,
+      totalVolume: 0,
+      trades: 0
+    }));
+
+    // Aggregate volumes by price level
+    const trades = this.traderManager.getTradesInTimeWindow(this.mint, Date.now() - timeWindow, Date.now());
+    trades.forEach(trade => {
+      const level = Math.min(9, Math.floor((trade.price - minPrice) / levelSize));
+      profile[level].trades++;
+      profile[level].totalVolume += trade.amount;
+      if (trade.type === 'buy') {
+        profile[level].buyVolume += trade.amount;
+      } else {
+        profile[level].sellVolume += trade.amount;
+      }
+    });
+
+    // Calculate point of control (price level with highest volume)
+    const poc = profile.reduce((max, level, i) => 
+      level.totalVolume > profile[max].totalVolume ? i : max, 0
+    );
+
+    // Calculate value area (70% of volume)
+    const totalVolume = profile.reduce((sum, level) => sum + level.totalVolume, 0);
+    const valueAreaTarget = totalVolume * 0.7;
+    let valueAreaVolume = 0;
+    const valueArea = profile
+      .map((level, i) => ({...level, index: i}))
+      .sort((a, b) => b.totalVolume - a.totalVolume)
+      .filter(level => {
+        if (valueAreaVolume < valueAreaTarget) {
+          valueAreaVolume += level.totalVolume;
+          return true;
+        }
+        return false;
+      })
+      .map(level => level.index);
+
+    // Pattern definitions
+    const patterns = {
+      vShape: {
+        name: 'V-Shape Recovery',
+        confidence: 0,
+        ideal: [1, 0.8, 0.6, 0.4, 0.2, 0, 0.2, 0.4, 0.6, 0.8]
+      },
+      doubleBottom: {
+        name: 'Double Bottom',
+        confidence: 0,
+        ideal: [1, 0.5, 0.2, 0.5, 0.2, 0.5, 0.8]
+      },
+      roundedBottom: {
+        name: 'Rounded Bottom',
+        confidence: 0,
+        ideal: [1, 0.7, 0.4, 0.2, 0.1, 0.1, 0.2, 0.4, 0.7]
+      }
+    };
+
+    // Calculate pattern match confidence
+    Object.keys(patterns).forEach(patternName => {
+      const pattern = patterns[patternName];
+      const idealLength = pattern.ideal.length;
+      const stride = Math.floor(profile.length / idealLength);
+      
+      // Sample prices at regular intervals
+      const sampledPrices = Array(idealLength).fill(0).map((_, i) => 
+        profile[Math.min(i * stride, profile.length - 1)]
+      );
+
+      // Calculate pattern similarity
+      let similarity = 0;
+      for (let i = 0; i < idealLength; i++) {
+        similarity += 1 - Math.abs(pattern.ideal[i] - sampledPrices[i].totalVolume / totalVolume);
+      }
+      pattern.confidence = (similarity / idealLength) * 100;
+    });
+
+    // Find best matching pattern
+    const bestPattern = Object.entries(patterns)
+      .reduce((best, [name, pattern]) => 
+        pattern.confidence > best.confidence ? {name, confidence: pattern.confidence} : best,
+        {name: 'Unknown', confidence: 0}
+      );
+
+    return {
+      pattern: bestPattern.name,
+      confidence: bestPattern.confidence,
+      details: patterns
+    };
+  }
+
+  getVolumeProfile(timeWindow = 1800000) { // 30 minutes default
+    const trades = this.traderManager.getTradesInTimeWindow(
+      this.mint,
+      Date.now() - timeWindow,
+      Date.now()
+    );
+
+    if (!trades || trades.length === 0) return null;
+
+    // Divide price range into 10 levels
+    const prices = trades.map(t => t.price);
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const priceRange = maxPrice - minPrice;
+    const levelSize = priceRange / 10;
+
+    // Initialize volume profile
+    const profile = Array(10).fill(0).map((_, i) => ({
+      priceLevel: minPrice + (i * levelSize),
+      buyVolume: 0,
+      sellVolume: 0,
+      totalVolume: 0,
+      trades: 0
+    }));
+
+    // Aggregate volumes by price level
+    trades.forEach(trade => {
+      const level = Math.min(9, Math.floor((trade.price - minPrice) / levelSize));
+      profile[level].trades++;
+      profile[level].totalVolume += trade.amount;
+      if (trade.type === 'buy') {
+        profile[level].buyVolume += trade.amount;
+      } else {
+        profile[level].sellVolume += trade.amount;
+      }
+    });
+
+    // Calculate point of control (price level with highest volume)
+    const poc = profile.reduce((max, level, i) => 
+      level.totalVolume > profile[max].totalVolume ? i : max, 0
+    );
+
+    // Calculate value area (70% of volume)
+    const totalVolume = profile.reduce((sum, level) => sum + level.totalVolume, 0);
+    const valueAreaTarget = totalVolume * 0.7;
+    let valueAreaVolume = 0;
+    const valueArea = profile
+      .map((level, i) => ({...level, index: i}))
+      .sort((a, b) => b.totalVolume - a.totalVolume)
+      .filter(level => {
+        if (valueAreaVolume < valueAreaTarget) {
+          valueAreaVolume += level.totalVolume;
+          return true;
+        }
+        return false;
+      })
+      .map(level => level.index);
+
+    return {
+      profile,
+      pointOfControl: poc,
+      valueArea,
+      volumeDistribution: {
+        buyVolume: profile.reduce((sum, level) => sum + level.buyVolume, 0),
+        sellVolume: profile.reduce((sum, level) => sum + level.sellVolume, 0)
+      }
+    };
+  }
+
+  analyzeMarketStructure() {
+    const pattern = this.detectPricePattern();
+    const volumeProfile = this.getVolumeProfile();
+    const buyPressure = this.getBuyPressureMetrics();
+    const strength = this.getRecoveryStrength();
+
+    // Identify key price levels
+    const prices = this.priceHistory.map(p => p.price);
+    const currentPrice = prices[prices.length - 1];
+    const recentLow = Math.min(...prices.slice(-20));
+    const recentHigh = Math.max(...prices.slice(-20));
+
+    // Calculate market structure score
+    const structureScore = {
+      patternQuality: pattern ? pattern.confidence : 0,
+      volumeSupport: volumeProfile ? 
+        (volumeProfile.profile[volumeProfile.pointOfControl].buyVolume / 
+         volumeProfile.profile[volumeProfile.pointOfControl].totalVolume) * 100 : 0,
+      buyPressureScore: (
+        (buyPressure.buyRatio * 40) +
+        (buyPressure.buySizeIncreasing ? 30 : 0) +
+        (Math.min(buyPressure.uniqueBuyers * 3, 30))
+      ),
+      recoveryQuality: strength.total
+    };
+
+    // Calculate overall market structure health
+    const overallHealth = (
+      structureScore.patternQuality * 0.3 +
+      structureScore.volumeSupport * 0.2 +
+      structureScore.buyPressureScore * 0.3 +
+      structureScore.recoveryQuality * 0.2
+    );
+
+    return {
+      pattern,
+      volumeProfile,
+      keyLevels: {
+        current: currentPrice,
+        recentLow,
+        recentHigh,
+        valueArea: volumeProfile ? {
+          low: volumeProfile.profile[Math.min(...volumeProfile.valueArea)].priceLevel,
+          high: volumeProfile.profile[Math.max(...volumeProfile.valueArea)].priceLevel
+        } : null
+      },
+      structureScore,
+      overallHealth,
+      recommendation: this.getTradeRecommendation(overallHealth, pattern, volumeProfile)
+    };
+  }
+
+  getTradeRecommendation(health, pattern, volumeProfile) {
+    if (!pattern || !volumeProfile) return { action: 'WAIT', confidence: 0 };
+
+    const confidence = health * (pattern.confidence / 100);
+    let action = 'WAIT';
+    let reason = '';
+
+    if (confidence >= 80) {
+      action = 'STRONG_BUY';
+      reason = 'High confidence recovery pattern with strong market structure';
+    } else if (confidence >= 60) {
+      action = 'BUY';
+      reason = 'Moderate confidence in recovery with supporting volume';
+    } else if (confidence >= 40) {
+      action = 'LIGHT_BUY';
+      reason = 'Early signs of recovery, consider small position';
+    } else if (confidence <= 20) {
+      action = 'AVOID';
+      reason = 'Weak market structure, high risk';
+    }
+
+    return {
+      action,
+      confidence,
+      reason,
+      suggestedEntry: volumeProfile.profile[volumeProfile.pointOfControl].priceLevel,
+      stopLoss: Math.min(...volumeProfile.profile
+        .filter(level => level.buyVolume > level.sellVolume)
+        .map(level => level.priceLevel)
+      )
+    };
   }
 }
 

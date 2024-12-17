@@ -247,6 +247,7 @@ class Position extends EventEmitter {
   }
 
   getProfitLoss() {
+    if (!this.currentPrice || !this.entryPrice) return 0;
     return ((this.currentPrice - this.entryPrice) / this.entryPrice) * 100;
   }
 
