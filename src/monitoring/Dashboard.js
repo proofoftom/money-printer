@@ -59,7 +59,7 @@ class Dashboard {
     // Create grid
     this.grid = new contrib.grid({
       rows: 12,
-      cols: 15,
+      cols: 12,
       screen: this.screen,
     });
 
@@ -74,7 +74,7 @@ class Dashboard {
   }
 
   initializeComponents() {
-    // Create wallet status box (1 col)
+    // Create wallet status box (top row)
     this.walletBox = this.grid.set(0, 0, 3, 3, blessed.box, {
       label: " Wallet Status ",
       content: "Initializing...",
@@ -86,7 +86,7 @@ class Dashboard {
       },
     });
 
-    // Create balance history (1 col)
+    // Create balance history (top row)
     this.balanceChart = this.grid.set(0, 3, 3, 3, contrib.line, {
       style: {
         line: "yellow",
@@ -100,7 +100,7 @@ class Dashboard {
       wholeNumbersOnly: false,
     });
 
-    // Create trade history box (1 col)
+    // Create trade history box (top row)
     this.tradeBox = this.grid.set(0, 6, 3, 3, blessed.box, {
       label: " Trade History ",
       content: "Waiting for trades...",
@@ -113,8 +113,8 @@ class Dashboard {
       },
     });
 
-    // Create status log
-    this.statusBox = this.grid.set(0, 9, 3, 6, blessed.log, {
+    // Create status log (top row)
+    this.statusBox = this.grid.set(0, 9, 3, 3, blessed.log, {
       label: " System Status ",
       scrollable: true,
       alwaysScroll: true,
@@ -127,8 +127,9 @@ class Dashboard {
     });
 
     // Token state boxes in second row, extending to bottom
-    this.heatingUpBox = this.grid.set(3, 0, 9, 3, blessed.box, {
-      label: " Heating Up ",
+    // Each state gets equal width (12/5 = ~2.4 columns each)
+    this.newTokensBox = this.grid.set(3, 0, 9, 2, blessed.box, {
+      label: " New Tokens ",
       content: "Waiting...",
       border: "line",
       tags: false,
@@ -139,8 +140,8 @@ class Dashboard {
       },
     });
 
-    this.firstPumpBox = this.grid.set(3, 3, 9, 3, blessed.box, {
-      label: " First Pump ",
+    this.pumpingBox = this.grid.set(3, 2, 9, 2, blessed.box, {
+      label: " Pumping ",
       content: "Waiting...",
       border: "line",
       tags: false,
@@ -151,7 +152,7 @@ class Dashboard {
       },
     });
 
-    this.drawdownBox = this.grid.set(3, 6, 9, 3, blessed.box, {
+    this.drawdownBox = this.grid.set(3, 4, 9, 2, blessed.box, {
       label: " Drawdown ",
       content: "Waiting...",
       border: "line",
@@ -163,7 +164,7 @@ class Dashboard {
       },
     });
 
-    this.supplyRecoveryBox = this.grid.set(3, 9, 9, 3, blessed.box, {
+    this.recoveryBox = this.grid.set(3, 6, 9, 2, blessed.box, {
       label: " Recovery ",
       content: "Waiting...",
       border: "line",
@@ -175,7 +176,7 @@ class Dashboard {
       },
     });
 
-    this.activePositionsBox = this.grid.set(3, 12, 9, 3, blessed.box, {
+    this.activePositionsBox = this.grid.set(3, 8, 9, 4, blessed.box, {
       label: " Active Positions ",
       content: "Waiting...",
       border: "line",
@@ -451,10 +452,10 @@ class Dashboard {
   updateDashboard() {
     try {
       this.walletBox.setContent(this.getWalletStatus());
-      this.heatingUpBox.setContent(this.getTokensByState("heatingUp"));
-      this.firstPumpBox.setContent(this.getTokensByState("firstPump"));
+      this.newTokensBox.setContent(this.getTokensByState("new"));
+      this.pumpingBox.setContent(this.getTokensByState("pumping"));
       this.drawdownBox.setContent(this.getTokensByState("drawdown"));
-      this.supplyRecoveryBox.setContent(this.getTokensByState("recovery"));
+      this.recoveryBox.setContent(this.getTokensByState("recovery"));
       this.activePositionsBox.setContent(this.getActivePositions());
       this.tradeBox.setContent(this.getTradeHistory());
       this.updateBalanceHistory();
@@ -497,62 +498,48 @@ class Dashboard {
               0
             )}%`;
 
-            // Get volume data in USD with k format for ≥1000, whole numbers for <1000
-            const formatVolume = (vol) => {
-              const volUSD = this.priceManager.solToUSD(vol);
-              return volUSD >= 1000
-                ? `${(volUSD / 1000).toFixed(1)}k`
-                : Math.round(volUSD).toString();
-            };
-
-            // Get volume from token's volume metrics
-            const vol1m = formatVolume(token.volume1m || 0);
-            const vol5m = formatVolume(token.volume5m || 0);
-            const vol30m = formatVolume(token.volume30m || 0);
-
             // Format the token info string
             const symbol = token.symbol || token.mint.slice(0, 8);
             const rows = [
-              `${symbol.padEnd(12)} ${ageStr.padEnd(
-                3
-              )} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(
-                5
-              )} | 30m: $${vol30m}`,
+              `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
             ];
 
-            // Add safety failure reason for recovery state
-            if (state === "recovery" && token.unsafeReason) {
-              const { reason, value } = token.unsafeReason;
-              let valueStr = value;
-              switch (reason) {
-                case "High holder concentration":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "Token too young":
-                  valueStr = `${Math.floor(value)}s`;
-                  break;
-                case "Creator holdings too high":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "volatilityTooHigh":
-                  valueStr = `${value.toFixed(2)}`;
-                  break;
-                default:
-                  valueStr = value ? value.toString() : "N/A";
-              }
-              rows.push(`UNSAFE: ${reason} (${valueStr})`);
+            // Add state-specific metrics
+            switch (state) {
+              case "pumping":
+                const priceChange1m = token.getPriceChange(60);
+                const priceChange5m = token.getPriceChange(300);
+                const buyPressure = token.getBuyPressure(300);
+                rows.push(
+                  `1m: ${priceChange1m.toFixed(1)}% | 5m: ${priceChange5m.toFixed(1)}% | Buy: ${buyPressure.toFixed(0)}%`
+                );
+                break;
+
+              case "drawdown":
+                const drawdown = ((token.marketCapSol - token.highestMarketCap) / token.highestMarketCap) * 100;
+                rows.push(
+                  `DD: ${Math.abs(drawdown).toFixed(1)}% | Peak: ${this.priceManager.solToUSD(token.highestMarketCap).toFixed(1)}$`
+                );
+                break;
+
+              case "recovery":
+                const gainFromBottom = token.drawdownLow ? 
+                  ((token.currentPrice - token.drawdownLow) / token.drawdownLow) * 100 : 0;
+                rows.push(
+                  `Gain: ${gainFromBottom.toFixed(1)}% | ${token.unsafeReason?.reason || 'Unknown'}`
+                );
+                break;
             }
 
             rows.push("─".repeat(50)); // Add horizontal rule between tokens
             return rows.join("\n");
           } catch (err) {
-            throw err;
+            return `Error displaying token: ${err.message}`;
           }
         })
         .join("\n");
     } catch (error) {
-      throw error;
+      return `Error: ${error.message}`;
     }
   }
 }

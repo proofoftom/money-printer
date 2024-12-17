@@ -7,21 +7,21 @@ class TokenStateManager extends EventEmitter {
     super();
     this.validStates = [
       "new",
-      "heatingUp",
-      "firstPump",
+      "pumping",
       "drawdown",
       "recovery",
+      "open",
       "closed",
       "dead"
     ];
 
     // Define valid state transitions
     this.stateTransitions = {
-      new: ["heatingUp", "firstPump", "dead"],
-      heatingUp: ["firstPump", "dead"],
-      firstPump: ["drawdown", "dead"],
-      drawdown: ["recovery", "dead"],
-      recovery: ["drawdown", "closed", "dead"],
+      new: ["pumping", "dead"],
+      pumping: ["drawdown", "dead"],
+      drawdown: ["recovery", "open", "dead"],
+      recovery: ["drawdown", "open", "dead"],
+      open: ["closed", "dead"],
       closed: ["dead"],
       dead: []
     };
@@ -36,39 +36,26 @@ class TokenStateManager extends EventEmitter {
 
   setState(token, newState) {
     if (!this.validStates.includes(newState)) {
-      const error = new Error(`Invalid state: ${newState}`);
-      errorLogger.logError(error, 'TokenStateManager.setState', { 
-        token: token.mint,
-        currentState: token.state,
-        attemptedState: newState 
-      });
-      throw error;
+      throw new Error(`Invalid state: ${newState}`);
     }
 
     const currentState = token.state;
-    if (!this.stateTransitions[currentState].includes(newState)) {
-      const error = new Error(`Invalid state transition from ${currentState} to ${newState}`);
-      errorLogger.logError(error, 'TokenStateManager.setState', {
-        token: token.mint,
-        currentState,
-        attemptedState: newState
-      });
-      throw error;
+    if (currentState === newState) return;
+
+    // Check if transition is valid
+    if (currentState && !this.stateTransitions[currentState].includes(newState)) {
+      throw new Error(`Invalid state transition from ${currentState} to ${newState}`);
     }
 
+    // Update token state
     const oldState = token.state;
     token.state = newState;
 
-    // Handle state-specific logic
-    if (newState === "drawdown") {
-      token.drawdownLow = token.marketCapSol;
-    }
-
     // Emit state change event
-    this.emit("stateChanged", {
+    this.emit("stateChanged", { 
       token,
-      from: oldState,
-      to: newState
+      from: oldState, 
+      to: newState 
     });
 
     return true;
@@ -84,7 +71,7 @@ class TokenStateManager extends EventEmitter {
   }
 
   isFirstPump(token) {
-    if (!["new", "heatingUp"].includes(token.state)) return false;
+    if (!["new", "pumping"].includes(token.state)) return false;
     
     const priceChange = token.getPriceMomentum();
     const volumeSpike = token.getRecentVolume(300000) > token.getAverageVolume(1800000) * 2;
@@ -100,7 +87,7 @@ class TokenStateManager extends EventEmitter {
   }
 
   isInDrawdown(token) {
-    if (!["firstPump", "recovery"].includes(token.state)) return false;
+    if (!["pumping", "recovery"].includes(token.state)) return false;
     
     const drawdown = token.getDrawdownPercentage();
     const marketStructure = token.analyzeMarketStructure();
@@ -191,7 +178,7 @@ class TokenStateManager extends EventEmitter {
       } = token.recoveryMetrics;
 
       switch (currentState) {
-        case 'firstPump':
+        case 'pumping':
           // Transition to drawdown if significant price drop
           if (drawdownDepth > config.DRAWDOWN_THRESHOLD) {
             this.setState(token, 'drawdown');

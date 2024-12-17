@@ -45,6 +45,22 @@ module.exports = {
     // Volume Pattern Thresholds
     MIN_VOLUME_PRICE_CORRELATION: 0.6, // Higher correlation requirement
     MAX_WASH_TRADE_PERCENTAGE: 20, // Stricter wash trading limit
+
+    // Recovery pattern detection
+    RECOVERY_DETECTION: {
+      MIN_DRAWDOWN: 25, // Minimum drawdown to consider for recovery
+    },
+
+    PUMP: {
+      PRICE_CHANGE_1M: 10,    // 10% price increase in 1 minute
+      PRICE_CHANGE_5M: 25,    // 25% price increase in 5 minutes
+      VOLUME_CHANGE: 200,     // 200% volume increase
+      BUY_PRESSURE: 65,       // 65% of volume is buys
+    },
+
+    DRAWDOWN: -25,           // 25% drawdown from peak
+    RECOVERY: 10,            // 10% recovery from bottom
+    SAFE_RECOVERY_GAIN: 15,  // Maximum 15% gain from bottom for position entry
   },
 
   // Safety configuration

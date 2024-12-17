@@ -67,10 +67,10 @@ class Token extends EventEmitter {
 
     // Initialize managers
     this.traderManager = new TraderManager();
-    this.stateManager = new TokenStateManager();
+    this.stateManager = null; // Initialize state manager to null
     
     // Forward state change events
-    this.stateManager.on("stateChanged", ({ from, to }) => {
+    this.on("stateChanged", ({ from, to }) => {
       this.emit("stateChanged", { token: this, from, to });
     });
 
@@ -568,7 +568,19 @@ class Token extends EventEmitter {
   }
 
   setState(newState) {
-    return this.stateManager.setState(this, newState);
+    if (this.stateManager) {
+      this.stateManager.setState(this, newState);
+    } else {
+      throw new Error('StateManager not initialized for token');
+    }
+  }
+
+  setStateManager(stateManager) {
+    this.stateManager = stateManager;
+    // Initialize state if not already set
+    if (!this.state) {
+      this.setState("new");
+    }
   }
 
   isHeatingUp(threshold) {
@@ -1165,6 +1177,193 @@ class Token extends EventEmitter {
     } else if (recoveryStrength >= 0.5 && buyPressure < 0.4) {
       this.recoveryMetrics.recoveryPhase = 'distribution';
     }
+  }
+
+  async updateState() {
+    try {
+      // Skip if token is in a terminal state
+      if (["closed", "dead"].includes(this.state)) {
+        return;
+      }
+
+      const currentPrice = this.calculateTokenPrice();
+      if (!currentPrice) return;
+
+      // Update highest market cap if current is higher
+      if (this.marketCapSol > this.highestMarketCap) {
+        this.highestMarketCap = this.marketCapSol;
+      }
+
+      // Calculate key metrics
+      const priceChange1m = this.getPriceChange(60); // 1 minute
+      const priceChange5m = this.getPriceChange(300); // 5 minutes
+      const volumeChange5m = this.getVolumeChange(300);
+      const buyPressure = this.getBuyPressure(300);
+
+      // Detect pumping state
+      if (this.state === "new") {
+        const isPumping = 
+          // Significant price increase
+          priceChange1m >= config.THRESHOLDS.PUMP.PRICE_CHANGE_1M &&
+          priceChange5m >= config.THRESHOLDS.PUMP.PRICE_CHANGE_5M &&
+          // Volume spike
+          volumeChange5m >= config.THRESHOLDS.PUMP.VOLUME_CHANGE &&
+          // Strong buy pressure
+          buyPressure >= config.THRESHOLDS.PUMP.BUY_PRESSURE;
+
+        if (isPumping) {
+          this.setState("pumping");
+          this.emit("pumpDetected", {
+            token: this,
+            metrics: {
+              priceChange1m,
+              priceChange5m,
+              volumeChange5m,
+              buyPressure
+            }
+          });
+        }
+      }
+
+      // Calculate drawdown from peak
+      const drawdownPercentage = this.highestMarketCap ? 
+        ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) * 100 : 0;
+
+      // Detect drawdown state
+      if (this.state === "pumping" && drawdownPercentage <= -config.THRESHOLDS.DRAWDOWN) {
+        this.setState("drawdown");
+        this.drawdownLow = currentPrice;
+        this.emit("drawdownStarted", {
+          token: this,
+          drawdownPercentage,
+          fromPrice: this.highestMarketCap,
+          currentPrice
+        });
+      }
+
+      // Handle recovery
+      const recoveryPercentage = this.drawdownLow ? 
+        ((currentPrice - this.drawdownLow) / this.drawdownLow) * 100 : 0;
+
+      if (this.state === "drawdown" && recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
+        const isSecure = await safetyChecker.runSecurityChecks(this);
+        if (isSecure) {
+          // If safe, immediately emit readyForPosition
+          this.setState("open");
+          this.emit("readyForPosition", this);
+        } else {
+          // If unsafe, get failure reason and enter recovery state
+          const failureReason = safetyChecker.getFailureReason();
+          this.setState("recovery");
+          this.unsafeReason = failureReason;
+          this.emit("recoveryStarted", { 
+            token: this, 
+            marketCap: this.marketCapSol, 
+            reason: failureReason.reason,
+            value: failureReason.value 
+          });
+        }
+        return;
+      }
+
+      // Handle recovery state
+      if (this.state === "recovery") {
+        const isSecure = await safetyChecker.runSecurityChecks(this);
+        const currentPrice = this.calculateTokenPrice();
+        const gainFromBottom = this.drawdownLow ? ((currentPrice - this.drawdownLow) / this.drawdownLow) * 100 : 0;
+        
+        if (isSecure) {
+          // If gain from bottom is acceptable, enter position
+          if (gainFromBottom <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
+            this.unsafeReason = null;
+            this.setState("open");
+            this.emit("readyForPosition", this);
+          } else {
+            // If gain too high, go back to drawdown to wait for better entry
+            this.setState("drawdown");
+            this.unsafeReason = null;
+            this.emit("recoveryGainTooHigh", {
+              token: this,
+              gainFromBottom,
+              marketCap: this.marketCapSol
+            });
+          }
+        } else {
+          // If still unsafe, check if we're in a new drawdown from recovery high
+          const drawdownFromRecoveryHigh = this.highestMarketCap ? 
+            ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) * 100 : 0;
+            
+          if (drawdownFromRecoveryHigh <= -config.THRESHOLDS.DRAWDOWN) {
+            // We've hit a significant drawdown from recovery high, go back to drawdown state
+            this.setState("drawdown");
+            this.drawdownLow = currentPrice; // Reset drawdown low for new cycle
+            this.emit("newDrawdownCycle", {
+              token: this,
+              drawdownFromHigh: drawdownFromRecoveryHigh,
+              newDrawdownLow: currentPrice
+            });
+          } else {
+            // Still in recovery but unsafe, update reason if changed
+            const newReason = safetyChecker.getFailureReason();
+            if (!this.unsafeReason || 
+                this.unsafeReason.reason !== newReason.reason || 
+                this.unsafeReason.value !== newReason.value) {
+              this.unsafeReason = newReason;
+              this.emit("recoveryUpdate", {
+                token: this,
+                reason: newReason.reason,
+                value: newReason.value
+              });
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.emit("error", error);
+    }
+  }
+
+  getBuyPressure(timeWindowSeconds) {
+    const timeWindow = timeWindowSeconds * 1000;
+    const recentTrades = this.trades.filter(t => 
+      Date.now() - t.timestamp <= timeWindow
+    );
+
+    if (recentTrades.length === 0) return 0;
+
+    const buyVolume = recentTrades
+      .filter(t => t.type === 'BUY')
+      .reduce((sum, t) => sum + (t.price * t.size), 0);
+
+    const totalVolume = recentTrades
+      .reduce((sum, t) => sum + (t.price * t.size), 0);
+
+    return totalVolume > 0 ? (buyVolume / totalVolume) * 100 : 0;
+  }
+
+  getPriceChange(timeWindowSeconds) {
+    const timeWindow = timeWindowSeconds * 1000;
+    const oldPrice = this.getPriceAtTime(Date.now() - timeWindow);
+    if (!oldPrice) return 0;
+    
+    return ((this.currentPrice - oldPrice) / oldPrice) * 100;
+  }
+
+  getVolumeChange(timeWindowSeconds) {
+    const timeWindow = timeWindowSeconds * 1000;
+    const currentWindow = this.trades
+      .filter(t => Date.now() - t.timestamp <= timeWindow)
+      .reduce((sum, t) => sum + (t.price * t.size), 0);
+
+    const previousWindow = this.trades
+      .filter(t => 
+        Date.now() - t.timestamp <= timeWindow * 2 && 
+        Date.now() - t.timestamp > timeWindow
+      )
+      .reduce((sum, t) => sum + (t.price * t.size), 0);
+
+    return previousWindow > 0 ? 
+      ((currentWindow - previousWindow) / previousWindow) * 100 : 0;
   }
 }
 
