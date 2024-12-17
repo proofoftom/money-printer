@@ -131,6 +131,14 @@ class WebSocketManager extends EventEmitter {
       return;
     }
 
+    // Handle subscription confirmation messages
+    if (message.message && (
+      message.message === "Successfully subscribed to token creation events." ||
+      message.message === "Successfully subscribed to keys."
+    )) {
+      return; // These are expected subscription confirmations
+    }
+
     // Handle create messages
     if (message.txType === "create") {
       const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
