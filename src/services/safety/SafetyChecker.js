@@ -144,15 +144,19 @@ class SafetyChecker {
     
     // Check price acceleration and trading activity
     if (pumpMetrics.priceAcceleration > pumpConfig.MIN_PRICE_ACCELERATION) {
-      const volumeSpikes = pumpMetrics.volumeSpikes;
-      if (volumeSpikes.length > 0) {
-        const recentSpike = volumeSpikes[volumeSpikes.length - 1];
-        
-        // Get unique traders during spike
-        const traderCount = token.traderManager.getUniqueTraderCount(
-          recentSpike.startTime,
-          recentSpike.endTime
-        );
+      // Get recent volume metrics
+      const volume1m = token.volume1m;
+      const volume5m = token.volume5m;
+      const volume30m = token.volume30m;
+
+      // Calculate volume ratios
+      const volumeRatio1m = volume1m > 0 ? (volume5m / 5) / volume1m : 0;
+      const volumeRatio5m = volume5m > 0 ? (volume30m / 6) / volume5m : 0;
+
+      // Check for abnormal volume spikes
+      if (volumeRatio1m > pumpConfig.MIN_VOLUME_SPIKE || volumeRatio5m > pumpConfig.MIN_VOLUME_SPIKE) {
+        // Get unique traders during recent period
+        const traderCount = token.traderManager.getUniqueTraderCount(token);
         
         // Check if enough unique traders participated
         if (traderCount < pumpConfig.MIN_TRADER_PARTICIPATION) {
@@ -160,24 +164,25 @@ class SafetyChecker {
           return false;
         }
         
-        // Analyze volume spike pattern with trader context
-        const volumeIncrease = recentSpike.volume / token.getRecentVolume(pumpConfig.PUMP_WINDOW_MS) * 100;
-        if (volumeIncrease > pumpConfig.MIN_VOLUME_SPIKE) {
-          const priceChange = recentSpike.priceChange;
-          if (priceChange > 0 && priceChange/volumeIncrease > pumpConfig.MIN_PRICE_VOLUME_CORRELATION) {
-            // Check for suspicious trading relationships
-            const tradingGroupRisk = token.traderManager.analyzeTradingRelationships(
-              recentSpike.startTime,
-              recentSpike.endTime
-            );
-            
-            if (tradingGroupRisk > pumpConfig.MAX_GROUP_RISK) {
-              this.setFailureReason("Suspicious trading group activity", tradingGroupRisk);
-              return false;
-            }
-            return true;
-          }
+        // Analyze trading relationships during high volume period
+        const tradingGroupRisk = token.traderManager.analyzeTradingRelationships(
+          Date.now() - (5 * 60 * 1000),  // Last 5 minutes
+          Date.now()
+        );
+        
+        if (tradingGroupRisk > pumpConfig.MAX_GROUP_RISK) {
+          this.setFailureReason("Suspicious trading group activity", tradingGroupRisk);
+          return false;
         }
+
+        // Check volume concentration
+        const volumeStats = this.analyzeVolumeConcentration(token);
+        if (volumeStats.topWalletVolume > pumpConfig.MAX_WALLET_VOLUME_PERCENTAGE) {
+          this.setFailureReason("High volume concentration", volumeStats.topWalletVolume);
+          return false;
+        }
+
+        return true;
       }
     }
     
@@ -185,54 +190,49 @@ class SafetyChecker {
     if (pumpMetrics.highestGainRate > pumpConfig.MIN_GAIN_RATE) {
       const priceStats = token.getPriceStats();
       if (priceStats.volatility < config.SAFETY.MAX_PRICE_VOLATILITY) {
-        // Analyze trader behavior during gain period
-        const riskMetrics = token.traderManager.analyzeTraderBehavior(
-          pumpMetrics.gainStartTime,
-          Date.now()
-        );
-        
-        if (riskMetrics.washTradingScore > config.SAFETY.WASH_TRADE_THRESHOLD) {
-          this.setFailureReason("Potential wash trading detected", riskMetrics.washTradingScore);
+        // Analyze volume patterns during gain period
+        const volumePattern = this.analyzeVolumePattern(token);
+        if (volumePattern.isSuspicious) {
+          this.setFailureReason("Suspicious volume pattern", volumePattern.reason);
           return false;
         }
         return true;
       }
     }
     
-    // Check market cap momentum with trader analysis
-    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-    if (marketCapUSD > pumpConfig.LARGE_TOKEN_MC_USD) {
-      const mcGainRate = pumpMetrics.marketCapGainRate || 0;
-      if (mcGainRate > pumpConfig.MIN_MC_GAIN_RATE) {
-        // Analyze top trader concentration
-        const topTraderConcentration = token.traderManager.getTopTraderConcentration(5);
-        if (topTraderConcentration > config.SAFETY.MAX_TOP_TRADER_CONCENTRATION) {
-          this.setFailureReason("High top trader concentration", topTraderConcentration);
-          return false;
-        }
-        return true;
-      }
-    }
-    
-    // Check pump frequency with trader participation
-    if (pumpMetrics.pumpCount >= pumpConfig.MIN_PUMP_COUNT) {
-      const timeSinceLastPump = Date.now() - pumpMetrics.lastPumpTime;
-      if (timeSinceLastPump < pumpConfig.PUMP_WINDOW_MS) {
-        // Check for repeat pump participants
-        const repeatParticipants = token.traderManager.getRepeatPumpParticipants(
-          pumpMetrics.pumpTimes
-        );
-        
-        if (repeatParticipants.length > pumpConfig.MAX_REPEAT_PARTICIPANTS) {
-          this.setFailureReason("High number of repeat pump participants", repeatParticipants.length);
-          return false;
-        }
-        return true;
-      }
-    }
-    
-    this.setFailureReason("No clear pump pattern detected");
     return false;
+  }
+
+  analyzeVolumeConcentration(token) {
+    const traders = Array.from(token.traderManager.traders.values());
+    const volumes = traders.map(trader => {
+      const recentTrades = trader.tradeHistory['5m'].filter(t => t.mint === token.mint);
+      return recentTrades.reduce((sum, trade) => sum + Math.abs(trade.amount * trade.price), 0);
+    });
+
+    const totalVolume = volumes.reduce((a, b) => a + b, 0);
+    const topWalletVolume = Math.max(...volumes);
+
+    return {
+      topWalletVolume: totalVolume > 0 ? (topWalletVolume / totalVolume) * 100 : 0,
+      totalVolume
+    };
+  }
+
+  analyzeVolumePattern(token) {
+    const volume1m = token.volume1m;
+    const volume5m = token.volume5m;
+    const volume30m = token.volume30m;
+
+    // Check for abnormal volume distribution
+    const shortTermRatio = volume1m > 0 ? (volume5m / 5) / volume1m : 0;
+    const longTermRatio = volume5m > 0 ? (volume30m / 6) / volume5m : 0;
+
+    return {
+      isSuspicious: shortTermRatio > 3 || longTermRatio > 3,
+      reason: shortTermRatio > 3 ? "Abnormal short-term volume spike" : 
+              longTermRatio > 3 ? "Abnormal long-term volume pattern" : null
+    };
   }
 
   updateTrackedTokens(token) {

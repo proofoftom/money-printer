@@ -50,7 +50,8 @@ class Position extends EventEmitter {
   analyzeVolumeProfile() {
     if (!this.volumeHistory || this.volumeHistory.length === 0) return null;
     
-    const volumeData = this.volumeHistory.map(v => v.volume);
+    // Use volume1m for more accurate short-term volume analysis
+    const volumeData = this.volumeHistory.map(v => v.volume1m);
     const maxVolume = Math.max(...volumeData);
     const minVolume = Math.min(...volumeData);
     const avgVolume = volumeData.reduce((a, b) => a + b, 0) / volumeData.length;
@@ -59,7 +60,8 @@ class Position extends EventEmitter {
       maxVolume,
       minVolume,
       avgVolume,
-      volumeStability: (maxVolume - minVolume) / avgVolume
+      volumeStability: (maxVolume - minVolume) / avgVolume,
+      recentTrend: this.calculateVolumeStrength()
     };
   }
 
@@ -95,7 +97,8 @@ class Position extends EventEmitter {
   calculateVolumeStrength() {
     if (!this.volumeHistory || this.volumeHistory.length < 2) return 'neutral';
     
-    const volumes = this.volumeHistory.map(v => v.volume);
+    // Use volume1m for more accurate short-term volume strength
+    const volumes = this.volumeHistory.map(v => v.volume1m);
     const firstHalf = volumes.slice(0, Math.floor(volumes.length / 2));
     const secondHalf = volumes.slice(Math.floor(volumes.length / 2));
     
@@ -135,16 +138,23 @@ class Position extends EventEmitter {
         }
       });
 
+      // Store volume data (in SOL)
+      this.volume = volumeData.volume || 0;
+      this.volume1m = volumeData.volume1m || 0;
+      this.volume5m = volumeData.volume5m || 0;
+      this.volume30m = volumeData.volume30m || 0;
+
       this.volumeHistory.push({
         timestamp: Date.now(),
-        volume: volumeData.volume || 0,
-        volume1m: volumeData.volume1m || 0,
-        volume5m: volumeData.volume5m || 0,
-        volume30m: volumeData.volume30m || 0
+        volume: this.volume,
+        volume1m: this.volume1m,
+        volume5m: this.volume5m,
+        volume30m: this.volume30m
       });
-      if (this.volumeHistory.length > 30) { // 30 data points = 5 minutes
-        this.volumeHistory.shift();
-      }
+
+      // Keep last 5 minutes of volume history
+      const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+      this.volumeHistory = this.volumeHistory.filter(v => v.timestamp > fiveMinutesAgo);
     }
 
     // Update profit history
@@ -159,12 +169,7 @@ class Position extends EventEmitter {
     
     // Update current state
     this.currentPrice = currentPrice;
-    if (volumeData) {
-      this.volume = volumeData.volume || this.volume;
-      this.volume1m = volumeData.volume1m || this.volume1m;
-      this.volume5m = volumeData.volume5m || this.volume5m;
-      this.volume30m = volumeData.volume30m || this.volume30m;
-    }
+
     if (candleData) {
       // Validate candle data
       if (!candleData.high || !candleData.low || !candleData.open || !candleData.close) {
@@ -173,8 +178,17 @@ class Position extends EventEmitter {
       this.candleHistory.push(candleData);
     }
 
-    // Emit update event
-    this.emit('updated', this);
+    // Emit update event with current state
+    this.emit('updated', {
+      position: this,
+      price: currentPrice,
+      volumes: {
+        volume: this.volume,
+        volume1m: this.volume1m,
+        volume5m: this.volume5m,
+        volume30m: this.volume30m
+      }
+    });
   }
 
   recordPartialExit(portion, exitPrice) {
