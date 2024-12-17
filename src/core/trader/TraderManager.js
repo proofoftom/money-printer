@@ -413,6 +413,20 @@ class TraderManager extends EventEmitter {
       .length;
   }
 
+  getTotalVolumeInTimeWindow(mint, startTime, endTime) {
+    let totalVolume = 0;
+    
+    // Iterate through all traders
+    for (const trader of this.traders.values()) {
+      const trades = trader.getTradesInTimeWindow(mint, { startTime, endTime });
+      trades.forEach(trade => {
+        totalVolume += trade.amount;
+      });
+    }
+    
+    return totalVolume;
+  }
+
   cleanup() {
     if (this.saveInterval) {
       clearInterval(this.saveInterval);

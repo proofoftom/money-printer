@@ -78,6 +78,12 @@ class Trader extends EventEmitter {
   }
 
   recordTrade(trade, token) {
+    // Ensure token is properly initialized
+    if (!token || typeof token !== 'object') {
+      console.warn('Invalid token object provided to recordTrade');
+      return;
+    }
+
     const {
       mint,
       amount,
@@ -87,20 +93,24 @@ class Trader extends EventEmitter {
       otherParty // public key of counter-party
     } = trade;
 
+    const tradeData = {
+      mint,
+      amount,
+      price,
+      type,
+      timestamp,
+      otherParty
+    };
+
     // Update last active
     this.lastActive = timestamp;
 
     // Update token balance
     this.updateTokenBalance(mint, amount, type);
 
-    // Record trade in history
-    const tradeData = { mint, amount, price, type, timestamp, otherParty };
+    // Update trading history
     this.tradeHistory.all.push(tradeData);
-    
-    // Update time-windowed histories
     this.updateTimeWindowedHistory(tradeData);
-
-    // Update trading patterns
     this.updateTradingPatterns(tradeData);
 
     // Check for wash trading
@@ -115,8 +125,8 @@ class Trader extends EventEmitter {
       this.updateTraderRelationship(otherParty);
     }
 
-    // Analyze recovery patterns if token is in recovery-related state
-    if (token.state === 'drawdown' || token.state === 'recovery') {
+    // Analyze recovery patterns if token has a valid state and is in recovery-related state
+    if (token.state && (token.state === 'drawdown' || token.state === 'recovery')) {
       this.analyzeRecoveryPattern(tradeData, token);
     }
     
