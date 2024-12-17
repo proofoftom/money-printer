@@ -465,7 +465,7 @@ class Token extends EventEmitter {
         return;
       }
 
-      if (this.state !== "drawdown" && this.state !== "unsafeRecovery") {
+      if (this.state !== "drawdown" && this.state !== "recovery") {
         return;
       }
 
@@ -492,12 +492,12 @@ class Token extends EventEmitter {
       if (this.state === "drawdown" && recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
         const isSecure = await safetyChecker.runSecurityChecks(this);
         if (isSecure) {
-          // Emit readyForPosition event to signal that we can open a position
+          // If safe, immediately emit readyForPosition
           this.emit("readyForPosition", this);
         } else {
-          // Get the specific failure reason before changing state
+          // If unsafe, get failure reason and enter recovery state
           const failureReason = safetyChecker.getFailureReason();
-          this.setState("unsafeRecovery");
+          this.setState("recovery");
           this.unsafeReason = failureReason;
           this.emit("unsafeRecovery", { 
             token: this, 
@@ -509,40 +509,54 @@ class Token extends EventEmitter {
         return;
       }
 
-      // If we're in unsafeRecovery
-      if (this.state === "unsafeRecovery") {
-        // Check if token has become safe
+      // If we're in recovery state
+      if (this.state === "recovery") {
         const isSecure = await safetyChecker.runSecurityChecks(this);
+        const currentPrice = this.calculateTokenPrice();
+        const gainFromBottom = this.drawdownLow ? ((currentPrice - this.drawdownLow) / this.drawdownLow) * 100 : 0;
         
         if (isSecure) {
-          // Only enter position if gain is less than threshold
-          if (gainPercentage <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
-            // Clear unsafe reason before emitting readyForPosition
+          // If gain from bottom is acceptable, enter position
+          if (gainFromBottom <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
             this.unsafeReason = null;
-            // Emit readyForPosition event to signal that we can open a position
             this.emit("readyForPosition", this);
           } else {
-            // If gain is too high, go back to drawdown to wait for better entry
+            // If gain too high, go back to drawdown to wait for better entry
             this.setState("drawdown");
-            this.unsafeReason = null; // Clear unsafe reason when going back to drawdown
+            this.unsafeReason = null;
             this.emit("recoveryGainTooHigh", {
               token: this,
-              gainPercentage,
+              gainFromBottom,
               marketCap: this.marketCapSol
             });
           }
         } else {
-          // Update unsafe reason if it changed
-          const newReason = safetyChecker.getFailureReason();
-          if (!this.unsafeReason || 
-              this.unsafeReason.reason !== newReason.reason || 
-              this.unsafeReason.value !== newReason.value) {
-            this.unsafeReason = newReason;
-            this.emit("unsafeRecoveryUpdate", {
+          // If still unsafe, check if we're in a new drawdown from recovery high
+          const drawdownFromRecoveryHigh = this.highestMarketCap ? 
+            ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) * 100 : 0;
+            
+          if (drawdownFromRecoveryHigh <= -config.THRESHOLDS.DRAWDOWN) {
+            // We've hit a significant drawdown from recovery high, go back to drawdown state
+            this.setState("drawdown");
+            this.drawdownLow = currentPrice; // Reset drawdown low for new cycle
+            this.emit("newDrawdownCycle", {
               token: this,
-              reason: newReason.reason,
-              value: newReason.value
+              drawdownFromHigh: drawdownFromRecoveryHigh,
+              newDrawdownLow: currentPrice
             });
+          } else {
+            // Still in recovery but unsafe, update reason if changed
+            const newReason = safetyChecker.getFailureReason();
+            if (!this.unsafeReason || 
+                this.unsafeReason.reason !== newReason.reason || 
+                this.unsafeReason.value !== newReason.value) {
+              this.unsafeReason = newReason;
+              this.emit("recoveryUpdate", {
+                token: this,
+                reason: newReason.reason,
+                value: newReason.value
+              });
+            }
           }
         }
       }
