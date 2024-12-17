@@ -108,6 +108,7 @@ class Token extends EventEmitter {
     this.volume1m = 0;
     this.volume5m = 0;
     this.volume30m = 0;
+    this.volumeHistory = []; // Initialize volume history array
     this.trades = []; // Initialize trades array
   }
 
@@ -1545,23 +1546,41 @@ class Token extends EventEmitter {
   }
 
   recordTrade(trade) {
-    // Record trade in trader manager
-    this.traderManager.recordTrade({
-      ...trade,
-      mint: this.mint
-    });
+    // Add trade to trades array
+    this.trades.push(trade);
 
-    // Update price history
-    this.priceHistory.push({
-      price: trade.price,
+    // Update volume history
+    this.volumeHistory.push({
+      volume: trade.amount,
       timestamp: trade.timestamp || Date.now()
     });
+
+    // Keep only last 24 hours of volume history
+    const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+    this.volumeHistory = this.volumeHistory.filter(v => v.timestamp > oneDayAgo);
+
+    // Update rolling volume metrics
+    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+    const thirtyMinutesAgo = Date.now() - (30 * 60 * 1000);
+    const oneMinuteAgo = Date.now() - 60000;
+
+    this.volume1m = this.trades
+      .filter(t => t.timestamp > oneMinuteAgo)
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    this.volume5m = this.trades
+      .filter(t => t.timestamp > fiveMinutesAgo)
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    this.volume30m = this.trades
+      .filter(t => t.timestamp > thirtyMinutesAgo)
+      .reduce((sum, t) => sum + t.amount, 0);
 
     // Update market cap
     this.updateMarketCap();
 
     // Emit trade event
-    this.emit('trade', { token: this, trade });
+    this.emit('trade', trade);
   }
 
   updateMarketCap() {
@@ -1573,6 +1592,39 @@ class Token extends EventEmitter {
     if (this.marketCapSol > this.highestMarketCap) {
       this.highestMarketCap = this.marketCapSol;
     }
+  }
+
+  calculateVolumeProfile(timeWindow = 1800000) { // Default 30 minutes
+    const now = Date.now();
+    const startTime = now - timeWindow;
+    
+    // Filter trades within time window
+    const relevantTrades = this.trades.filter(trade => 
+      trade.timestamp >= startTime && trade.timestamp <= now
+    );
+
+    // Initialize volume buckets (5-minute intervals)
+    const intervalCount = Math.ceil(timeWindow / (5 * 60 * 1000));
+    const volumeBuckets = new Array(intervalCount).fill(0);
+    
+    // Aggregate volume into buckets
+    relevantTrades.forEach(trade => {
+      const bucketIndex = Math.floor((trade.timestamp - startTime) / (5 * 60 * 1000));
+      if (bucketIndex >= 0 && bucketIndex < intervalCount) {
+        volumeBuckets[bucketIndex] += trade.amount;
+      }
+    });
+
+    return {
+      buckets: volumeBuckets,
+      totalVolume: volumeBuckets.reduce((sum, vol) => sum + vol, 0),
+      averageVolume: volumeBuckets.reduce((sum, vol) => sum + vol, 0) / intervalCount,
+      peakVolume: Math.max(...volumeBuckets),
+      volumeDistribution: volumeBuckets.map(vol => ({
+        volume: vol,
+        timestamp: startTime + (volumeBuckets.indexOf(vol) * 5 * 60 * 1000)
+      }))
+    };
   }
 }
 

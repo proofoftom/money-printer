@@ -602,6 +602,24 @@ class TraderManager extends EventEmitter {
     this.emit('trade', { trader, trade });
   }
 
+  getTopHoldersForToken(tokenMint, limit = 10) {
+    const holders = [];
+    for (const [publicKey, trader] of this.traders) {
+      const tokenBalance = trader.getTokenBalance(tokenMint);
+      if (tokenBalance > 0) {
+        holders.push({
+          publicKey,
+          balance: tokenBalance
+        });
+      }
+    }
+
+    // Sort by balance in descending order and take top N
+    return holders
+      .sort((a, b) => b.balance - a.balance)
+      .slice(0, limit);
+  }
+
 }
 
 module.exports = TraderManager;

@@ -354,8 +354,8 @@ class Trader extends EventEmitter {
   }
 
   getTokenBalance(mint) {
-    const balance = this.tokenBalances.get(mint);
-    return balance ? balance.balance : 0;
+    const balanceInfo = this.tokenBalances.get(mint);
+    return balanceInfo ? balanceInfo.balance : 0;
   }
 
   getInitialTokenBalance(mint) {
