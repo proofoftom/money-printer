@@ -1,5 +1,7 @@
 const blessed = require("blessed");
 const contrib = require("blessed-contrib");
+const TokenCard = require('./TokenCard');
+const TokenDetailModal = require('./TokenDetailModal');
 
 class Dashboard {
   constructor(
@@ -52,6 +54,10 @@ class Dashboard {
     this.positionManager.on("trade", (tradeData) => {
       this.logTrade(tradeData);
     });
+
+    this.tokenCards = new Map();
+    this.selectedTokenIndex = 0;
+    this.sortMetric = 'marketCap'; // Default sort
 
     this.initializeDashboard();
   }
@@ -110,7 +116,7 @@ class Dashboard {
       screen: this.screen,
     });
 
-    this.initializeComponents();
+    this.createLayout();
     this.setupEventHandlers();
 
     // Set up periodic updates
@@ -120,7 +126,7 @@ class Dashboard {
     this.screen.render();
   }
 
-  initializeComponents() {
+  createLayout() {
     // Create wallet status box (top row)
     this.walletBox = this.grid.set(0, 0, 3, 3, blessed.box, {
       label: " Wallet Status ",
@@ -269,9 +275,25 @@ class Dashboard {
         label: { bold: true },
       },
     });
+
+    // Create token grid
+    this.tokenGrid = blessed.box({
+      parent: this.screen,
+      top: '30%',
+      left: 0,
+      width: '100%',
+      height: '70%',
+      scrollable: true,
+      mouse: true,
+      keys: true,
+      vi: true
+    });
+
+    // Setup keyboard handlers
+    this.setupKeyboardHandlers();
   }
 
-  setupEventHandlers() {
+  setupKeyboardHandlers() {
     // Basic event handler for quitting
     this.screen.key(["escape", "q", "C-c"], () => {
       // Restore original console methods before exiting
@@ -290,6 +312,90 @@ class Dashboard {
     //     "error"
     //   );
     // });
+
+    this.screen.key(['up', 'down'], (ch, key) => {
+      const tokens = Array.from(this.tokenCards.values());
+      tokens[this.selectedTokenIndex]?.blur();
+      
+      if (key.name === 'up') {
+        this.selectedTokenIndex = Math.max(0, this.selectedTokenIndex - 1);
+      } else {
+        this.selectedTokenIndex = Math.min(tokens.length - 1, this.selectedTokenIndex + 1);
+      }
+      
+      tokens[this.selectedTokenIndex]?.focus();
+      this.screen.render();
+    });
+
+    this.screen.key('enter', () => {
+      const tokens = Array.from(this.tokenCards.values());
+      const selectedToken = tokens[this.selectedTokenIndex];
+      if (selectedToken) {
+        const modal = new TokenDetailModal(this.screen, selectedToken.token, this.traderManager);
+        modal.show();
+      }
+    });
+
+    // Sorting shortcuts
+    this.screen.key('m', () => this.sortTokens('marketCap'));
+    this.screen.key('v', () => this.sortTokens('volume'));
+    this.screen.key('h', () => this.sortTokens('holders'));
+    this.screen.key('t', () => this.sortTokens('transactions'));
+    this.screen.key('c', () => this.sortTokens('concentration'));
+  }
+
+  sortTokens(metric) {
+    this.sortMetric = metric;
+    this.refreshTokenGrid();
+  }
+
+  refreshTokenGrid() {
+    // Clear existing cards
+    this.tokenCards.forEach(card => card.destroy());
+    this.tokenCards.clear();
+
+    // Get sorted tokens
+    const tokens = Array.from(this.tokenManager.tokens.values())
+      .sort((a, b) => {
+        switch(this.sortMetric) {
+          case 'marketCap':
+            return b.marketCap - a.marketCap;
+          case 'volume':
+            return b.volume['5m'] - a.volume['5m'];
+          case 'holders':
+            return b.holders - a.holders;
+          case 'transactions':
+            return b.transactions - a.transactions;
+          case 'concentration':
+            return b.top10Concentration - a.top10Concentration;
+          default:
+            return 0;
+        }
+      });
+
+    // Create new cards
+    tokens.forEach((token, index) => {
+      const card = new TokenCard(this.tokenGrid, token, this.traderManager);
+      const row = Math.floor(index / 2);
+      const col = index % 2;
+      
+      card.setPosition(
+        row * 3,
+        col * '50%',
+        '50%',
+        3
+      );
+
+      this.tokenCards.set(token.mint, card);
+    });
+
+    // Focus selected token
+    const tokenArray = Array.from(this.tokenCards.values());
+    if (tokenArray[this.selectedTokenIndex]) {
+      tokenArray[this.selectedTokenIndex].focus();
+    }
+
+    this.screen.render();
   }
 
   getWalletStatus() {

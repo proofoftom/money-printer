@@ -148,103 +148,132 @@ class Trader extends EventEmitter {
     });
   }
 
-  recordTrade(trade, token) {
-    // Validate required trade data
-    const requiredFields = ['mint', 'amount', 'price', 'type'];
-    for (const field of requiredFields) {
-      if (!trade[field]) {
-        console.error(`Missing required trade field: ${field}`);
-        return;
-      }
-    }
-
-    // Ensure token is properly initialized
-    if (!token || typeof token !== 'object') {
-      console.warn('Invalid token object provided to recordTrade');
-      return;
-    }
-
-    const {
-      mint,
-      amount,
-      price,
-      type, // 'buy' or 'sell'
-      timestamp = Date.now(),
-      otherParty // public key of counter-party
-    } = trade;
-
-    const tradeData = {
-      mint,
-      amount,
-      price,
-      type,
-      timestamp,
-      otherParty
-    };
-
+  recordTrade({ mint, type, amount, price, timestamp, newBalance }) {
     try {
-      // Update last active
-      this.lastActive = timestamp;
+      // Update last active time
+      this.lastActive = timestamp || Date.now();
+
+      // Create trade record
+      const trade = {
+        mint,
+        type: type.toUpperCase(),
+        amount,
+        price,
+        timestamp: this.lastActive,
+        balance: newBalance
+      };
+
+      // Add trade to history
+      this.tradeHistory.all.push(trade);
+
+      // Update time-windowed trade histories
+      const now = Date.now();
+      const oneMinute = 60 * 1000;
+      const fiveMinutes = 5 * oneMinute;
+      const thirtyMinutes = 30 * oneMinute;
+
+      // Clean up and update time-windowed histories
+      this.tradeHistory['1m'] = [
+        ...this.tradeHistory['1m'].filter(t => now - t.timestamp <= oneMinute),
+        trade
+      ];
+      this.tradeHistory['5m'] = [
+        ...this.tradeHistory['5m'].filter(t => now - t.timestamp <= fiveMinutes),
+        trade
+      ];
+      this.tradeHistory['30m'] = [
+        ...this.tradeHistory['30m'].filter(t => now - t.timestamp <= thirtyMinutes),
+        trade
+      ];
 
       // Update token balance
-      this.updateTokenBalance(mint, amount, type);
+      this.updateTokenBalance(mint, newBalance, timestamp);
 
-      // Update trading history with validation
-      if (this.validateTradeData(tradeData)) {
-        this.tradeHistory.all.push(tradeData);
-        this.updateTimeWindowedHistory(tradeData);
-        this.updateTradingPatterns(tradeData);
-      }
+      // Update trading behavior metrics
+      this.updateTradingBehavior(trade);
 
-      // Check for wash trading
-      if (this.detectWashTrading(tradeData)) {
-        this.reputation.washTradingIncidents++;
-        this.reputation.score = Math.max(0, this.reputation.score - 5);
-        this.emit('washTradingDetected', { trader: this, trade: tradeData });
-      }
+      // Emit trade event
+      this.emit('trade', { trader: this, trade });
 
-      // Update relationships
-      if (otherParty) {
-        this.updateTraderRelationship(otherParty);
-      }
-
-      // Analyze recovery patterns if token has a valid state and is in recovery-related state
-      if (token.state && (token.state === 'drawdown' || token.state === 'recovery')) {
-        this.analyzeRecoveryPattern(tradeData, token);
-      }
-      
-      // Update recovery metrics for completed trades
-      if (type === 'sell') {
-        const profitLoss = ((price - this.getAverageEntryPrice(mint)) / this.getAverageEntryPrice(mint)) * 100;
-        this.updateRecoveryMetrics(tradeData, token, profitLoss);
-      }
-
-      // Update reputation metrics
-      this.reputation.totalTrades++;
-      if (type === 'sell' && price > this.getAverageEntryPrice(mint)) {
-        this.reputation.profitableTrades++;
-      }
-
-      // Emit trade event with enhanced data
-      this.emit('trade', { 
-        trader: this, 
-        trade: tradeData,
-        metrics: {
-          profitableTrades: this.reputation.profitableTrades,
-          totalTrades: this.reputation.totalTrades,
-          winRate: this.reputation.totalTrades > 0 ? 
-            (this.reputation.profitableTrades / this.reputation.totalTrades) * 100 : 0
-        }
-      });
-
+      return true;
     } catch (error) {
       console.error('Error recording trade:', error);
-      this.emit('tradeError', { 
-        trader: this, 
-        trade: tradeData, 
-        error: error.message 
+      return false;
+    }
+  }
+
+  updateTokenBalance(mint, newBalance, timestamp = Date.now()) {
+    const existingBalance = this.tokenBalances.get(mint);
+    
+    if (!existingBalance) {
+      this.tokenBalances.set(mint, {
+        balance: newBalance,
+        initialBalance: newBalance,
+        firstSeen: timestamp,
+        lastUpdated: timestamp
+      });
+    } else {
+      this.tokenBalances.set(mint, {
+        ...existingBalance,
+        balance: newBalance,
+        lastUpdated: timestamp
       });
     }
+  }
+
+  updateTradingBehavior(trade) {
+    const { type, amount, price } = trade;
+    const behavior = this.patterns.tradingBehavior;
+
+    // Update buy/sell ratio
+    if (type === 'BUY') {
+      behavior.buyCount = (behavior.buyCount || 0) + 1;
+    } else if (type === 'SELL') {
+      behavior.sellCount = (behavior.sellCount || 0) + 1;
+    }
+    behavior.buyToSellRatio = behavior.buyCount / (behavior.sellCount || 1);
+
+    // Update average trade size
+    behavior.totalTradeSize = (behavior.totalTradeSize || 0) + amount;
+    behavior.totalTrades = (behavior.totalTrades || 0) + 1;
+    behavior.averageTradeSize = behavior.totalTradeSize / behavior.totalTrades;
+
+    // Update trade frequency
+    const now = Date.now();
+    behavior.lastTradeTime = behavior.currentTradeTime || now;
+    behavior.currentTradeTime = now;
+    
+    if (behavior.lastTradeTime) {
+      const timeDiff = behavior.currentTradeTime - behavior.lastTradeTime;
+      behavior.tradeFrequency = behavior.totalTrades / (timeDiff / (60 * 1000)); // trades per minute
+    }
+
+    // Update reputation
+    this.updateReputation(trade);
+  }
+
+  updateReputation(trade) {
+    const rep = this.reputation;
+    rep.totalTrades++;
+
+    // Update average hold time if this is a sell
+    if (trade.type === 'SELL') {
+      const tokenHistory = this.tradeHistory.all
+        .filter(t => t.mint === trade.mint)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      if (tokenHistory.length > 1) {
+        const buyTime = tokenHistory[0].timestamp;
+        const holdTime = trade.timestamp - buyTime;
+        rep.averageHoldTime = ((rep.averageHoldTime * (rep.totalTrades - 1)) + holdTime) / rep.totalTrades;
+      }
+    }
+
+    // Emit reputation update
+    this.emit('reputationUpdated', {
+      trader: this,
+      reputation: rep
+    });
   }
 
   validateTradeData(trade) {
@@ -282,21 +311,6 @@ class Trader extends EventEmitter {
     const totalValue = trades.reduce((sum, trade) => sum + (trade.price * trade.amount), 0);
     const totalAmount = trades.reduce((sum, trade) => sum + trade.amount, 0);
     return totalValue / totalAmount;
-  }
-
-  updateTokenBalance(mint, amount, type) {
-    let balance = this.tokenBalances.get(mint) || { balance: 0, initialBalance: 0 };
-    
-    if (type === 'buy') {
-      balance.balance += amount;
-      if (!this.tokenBalances.has(mint)) {
-        balance.initialBalance = amount;
-      }
-    } else if (type === 'sell') {
-      balance.balance -= amount;
-    }
-
-    this.tokenBalances.set(mint, balance);
   }
 
   updateTimeWindowedHistory(trade) {

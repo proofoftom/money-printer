@@ -578,28 +578,171 @@ class TraderManager extends EventEmitter {
   }
 
   recordTrade(trade) {
-    const { mint, amount, price, type, timestamp = Date.now(), traderPublicKey, otherParty } = trade;
-    
-    // Get or create trader
-    const trader = this.getOrCreateTrader(traderPublicKey);
-    
-    // Record the trade
-    trader.recordTrade(trade);
-    
-    // Update other party's trade history if available
-    if (otherParty) {
-      const otherTrader = this.getOrCreateTrader(otherParty);
-      const reverseTrade = {
-        ...trade,
-        type: type === 'buy' ? 'sell' : 'buy',
-        traderPublicKey: otherParty,
-        otherParty: traderPublicKey
-      };
-      otherTrader.recordTrade(reverseTrade);
+    try {
+      const { mint, type, amount, price, timestamp = Date.now(), trader: publicKey, newBalance } = trade;
+
+      // Get or create trader
+      let trader = this.getOrCreateTrader(publicKey);
+
+      // Record the trade
+      const success = trader.recordTrade({
+        mint,
+        type,
+        amount,
+        price,
+        timestamp,
+        newBalance
+      });
+
+      if (success) {
+        // Update trader groups
+        this.updateTraderGroups(trader, trade);
+
+        // Analyze patterns
+        this.analyzeTraderPatterns(trader, trade);
+
+        // Emit trade event
+        this.emit('tradeRecorded', { trader, trade });
+      }
+
+      return success;
+    } catch (error) {
+      console.error('Error in TraderManager.recordTrade:', error);
+      return false;
+    }
+  }
+
+  updateTraderGroups(trader, trade) {
+    const { mint, type, amount } = trade;
+
+    // Get or create group for this token
+    let group = this.traderGroups.get(mint) || {
+      traders: new Set(),
+      totalVolume: 0,
+      lastTrade: null,
+      tradeCount: 0
+    };
+
+    // Update group metrics
+    group.traders.add(trader.publicKey);
+    group.totalVolume += amount;
+    group.lastTrade = Date.now();
+    group.tradeCount++;
+
+    // Calculate group velocity (trades per minute)
+    const timeWindow = 5 * 60 * 1000; // 5 minutes
+    const recentTrades = Array.from(group.traders)
+      .map(pk => this.traders.get(pk))
+      .flatMap(t => t.tradeHistory['5m'])
+      .filter(t => t.mint === mint);
+
+    group.velocity = recentTrades.length / (timeWindow / (60 * 1000));
+
+    this.traderGroups.set(mint, group);
+  }
+
+  analyzeTraderPatterns(trader, trade) {
+    const { mint, type, amount, price } = trade;
+    const group = this.traderGroups.get(mint);
+
+    if (!group) return;
+
+    // Analyze group concentration
+    const concentration = amount / group.totalVolume;
+    if (concentration > 0.1) { // If trader controls more than 10% of volume
+      this.emit('highConcentration', {
+        trader,
+        mint,
+        concentration
+      });
     }
 
-    // Emit trade event
-    this.emit('trade', { trader, trade });
+    // Analyze trading velocity
+    if (group.velocity > 10) { // More than 10 trades per minute
+      this.emit('highVelocity', {
+        mint,
+        velocity: group.velocity
+      });
+    }
+
+    // Update top traders lists
+    this.updateTopTraders(trader);
+  }
+
+  updateTopTraders(trader) {
+    const rep = trader.reputation;
+    const winRate = rep.totalTrades > 0 ? (rep.profitableTrades / rep.totalTrades) * 100 : 0;
+
+    // Update by win rate
+    this.updateTopTradersList('byWinRate', trader, winRate);
+
+    // Update by volume
+    const totalVolume = Array.from(trader.tokenBalances.values())
+      .reduce((sum, { balance }) => sum + balance, 0);
+    this.updateTopTradersList('byVolume', trader, totalVolume);
+
+    // Emit top traders update
+    this.emit('topTradersUpdated', {
+      byWinRate: this.topRecoveryTraders.byWinRate,
+      byVolume: this.topRecoveryTraders.byVolume
+    });
+  }
+
+  updateTopTradersList(category, trader, value) {
+    const list = this.topRecoveryTraders[category];
+    const existingIndex = list.findIndex(t => t.trader.publicKey === trader.publicKey);
+
+    if (existingIndex !== -1) {
+      list[existingIndex] = { trader, value };
+    } else {
+      list.push({ trader, value });
+    }
+
+    // Sort and limit to top 10
+    list.sort((a, b) => b.value - a.value);
+    this.topRecoveryTraders[category] = list.slice(0, 10);
+  }
+
+  handleTrade({ mint, traderPublicKey, type, amount, newBalance, price, timestamp }) {
+    try {
+      // Get or create trader
+      const trader = this.getOrCreateTrader(traderPublicKey);
+
+      // Update trader's token balance
+      trader.updateTokenBalance(mint, newBalance, timestamp);
+
+      // Record trade in trader's history
+      trader.recordTrade({
+        mint,
+        type,
+        amount,
+        price,
+        timestamp,
+        newBalance
+      });
+
+      // Update trader metrics
+      trader.updateMetrics();
+
+      // Emit trader update event
+      this.emit('traderUpdated', {
+        trader,
+        mint,
+        type,
+        amount,
+        newBalance
+      });
+
+    } catch (error) {
+      console.error('Error handling trade in TraderManager:', error);
+      errorLogger.logError(error, 'TraderManager.handleTrade', {
+        mint,
+        traderPublicKey,
+        type,
+        amount,
+        newBalance
+      });
+    }
   }
 
   getTopHoldersForToken(tokenMint, limit = 10) {
