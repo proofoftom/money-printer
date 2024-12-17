@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const sinon = require("sinon");
-const Token = require("../src/Token");
+const Token = require("../src/core/token/Token");
 
 describe("Token", () => {
   let token;

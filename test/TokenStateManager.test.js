@@ -1,7 +1,7 @@
 const { expect } = require("chai");
 const sinon = require("sinon");
-const TokenStateManager = require("../src/TokenStateManager");
-const Token = require("../src/Token");
+const TokenStateManager = require("../src/core/token/TokenStateManager");
+const Token = require("../src/core/token/Token");
 
 describe("TokenStateManager", () => {
   let stateManager;

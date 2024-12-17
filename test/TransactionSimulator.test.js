@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
-const TransactionSimulator = require('../src/TransactionSimulator');
+const TransactionSimulator = require('../src/utils/TransactionSimulator');
 
 describe('TransactionSimulator', () => {
   let simulator;

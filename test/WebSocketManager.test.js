@@ -1,8 +1,8 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const WebSocket = require('ws');
-const WebSocketManager = require('../src/WebSocketManager');
-const TokenManager = require('../src/TokenManager');
+const WebSocketManager = require('../src/services/websocket/WebSocketManager');
+const TokenManager = require('../src/core/token/TokenManager');
 const MockPriceManager = require('./mocks/mockPriceManager');
 const EventEmitter = require('events');
 

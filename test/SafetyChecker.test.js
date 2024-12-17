@@ -1,6 +1,6 @@
 const assert = require("assert");
-const SafetyChecker = require("../src/SafetyChecker");
-const config = require("../src/config");
+const SafetyChecker = require("../src/services/safety/SafetyChecker");
+const config = require("../src/utils/config");
 
 describe("SafetyChecker", () => {
   let safetyChecker;

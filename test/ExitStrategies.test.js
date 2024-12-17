@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const ExitStrategies = require('../src/ExitStrategies');
+const ExitStrategies = require('../src/core/position/ExitStrategies');
 
 describe('ExitStrategies', () => {
   let config;

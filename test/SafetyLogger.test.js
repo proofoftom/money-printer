@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { expect } = require('chai');
 const sinon = require('sinon');
-const SafetyLogger = require('../src/SafetyLogger');
+const SafetyLogger = require('../src/monitoring/SafetyLogger');
 
 describe('SafetyLogger', () => {
   let safetyLogger;

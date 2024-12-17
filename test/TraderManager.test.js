@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
-const TraderManager = require('../src/TraderManager');
+const TraderManager = require('../src/core/trader/TraderManager');
 
 describe('TraderManager', () => {
   let traderManager;

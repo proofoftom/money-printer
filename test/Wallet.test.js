@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const Wallet = require('../src/Wallet');
+const Wallet = require('../src/utils/Wallet');
 
 describe('Wallet', () => {
   let wallet;

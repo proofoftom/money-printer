@@ -1,9 +1,9 @@
 const { expect } = require("chai");
 const sinon = require("sinon");
-const PositionManager = require("../src/PositionManager");
-const Wallet = require("../src/Wallet");
-const TransactionSimulator = require("../src/TransactionSimulator");
-const config = require("../src/config");
+const PositionManager = require("../src/core/position/PositionManager");
+const Wallet = require("../src/utils/Wallet");
+const TransactionSimulator = require("../src/utils/TransactionSimulator");
+const config = require("../src/utils/config");
 
 describe("PositionManager", () => {
   let positionManager;

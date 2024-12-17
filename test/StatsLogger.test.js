@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { expect } = require('chai');
 const sinon = require('sinon');
-const StatsLogger = require('../src/StatsLogger');
+const StatsLogger = require('../src/monitoring/StatsLogger');
 
 describe('StatsLogger', () => {
   let statsLogger;

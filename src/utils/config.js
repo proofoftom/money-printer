@@ -54,7 +54,7 @@ module.exports = {
 
   // Safety configuration
   SAFETY: {
-    MIN_TOKEN_AGE_SECONDS: 60,
+    MIN_TOKEN_AGE_SECONDS: 20,
     MIN_LIQUIDITY_SOL: 0.1,
     MAX_PRICE_VOLATILITY: 1.5,
     MAX_TOP_HOLDER_CONCENTRATION: 40,
@@ -77,8 +77,8 @@ module.exports = {
 
   // Testing and Data Management
   TESTING: {
-    CLEAR_DATA_ON_START: process.env.CLEAR_DATA_ON_START === 'true' || false,
-    DATA_DIR: 'data'
+    CLEAR_DATA_ON_START: process.env.CLEAR_DATA_ON_START === "true" || false,
+    DATA_DIR: "data",
   },
 
   // Position sizing
