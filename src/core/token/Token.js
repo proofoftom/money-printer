@@ -180,44 +180,31 @@ class Token extends EventEmitter {
     this.priceBuffer.head = (this.priceBuffer.head + 1) % this.priceBuffer.size;
     this.priceBuffer.count = Math.min(this.priceBuffer.count + 1, this.priceBuffer.size);
     
-    // Calculate price acceleration
-    const timeWindow = 60 * 1000; // 1 minute window for acceleration
-    const oldPrice = this.getPriceAtTime(now - timeWindow);
-    const acceleration = oldPrice ? ((newPrice - oldPrice) / oldPrice) * 100 / (timeWindow / 1000) : 0;
-    
-    // Emit price update with current volumes
-    this.emit('priceUpdate', {
-      price: newPrice,
-      acceleration,
-      pumpMetrics: this.pumpMetrics,
-      volume1m: this.volume1m,
-      volume5m: this.volume5m,
-      volume30m: this.volume30m
+    // Calculate price acceleration over multiple time windows
+    const timeWindows = [15000, 30000, 60000]; // 15s, 30s, 1m windows
+    const accelerations = timeWindows.map(window => {
+      const oldPrice = this.getPriceAtTime(now - window);
+      if (!oldPrice) return 0;
+      const changeInWindow = ((newPrice - oldPrice) / oldPrice) * 100;
+      return changeInWindow / (window / 1000); // %/second
     });
     
+    // Use the highest acceleration from any window
+    const acceleration = Math.max(...accelerations);
+    this.pumpMetrics.priceAcceleration = acceleration;
+    
     // Check for pump conditions
-    if (priceChange >= config.PUMP_THRESHOLD && 
-        (!this.pumpMetrics.lastPumpTime || (now - this.pumpMetrics.lastPumpTime) > config.MIN_PUMP_INTERVAL)) {
-      this.pumpMetrics.pumpCount++;
-      this.pumpMetrics.lastPumpTime = now;
-      this.pumpMetrics.pumpTimes.push(now);  // Record pump timestamp
-      
-      const gainRate = priceChange / (timeWindow / 1000); // %/second
-      this.pumpMetrics.highestGainRate = Math.max(this.pumpMetrics.highestGainRate, gainRate);
-      
-      // Track volume spike
-      const recentVolume = this.getRecentVolume(timeWindow);
-      this.pumpMetrics.volumeSpikes.push({
-        timestamp: now,
-        volume: recentVolume,
-        priceChange
-      });
-      
-      // Cleanup old volume spikes
-      const cutoff = now - (5 * 60 * 1000); // Keep last 5 minutes
-      this.pumpMetrics.volumeSpikes = this.pumpMetrics.volumeSpikes.filter(spike => 
-        spike.timestamp > cutoff
-      );
+    const pumpConfig = config.SAFETY.PUMP_DETECTION;
+    if (acceleration >= pumpConfig.MIN_PRICE_ACCELERATION) {
+      const timeSinceLastPump = !this.pumpMetrics.lastPumpTime ? Infinity : now - this.pumpMetrics.lastPumpTime;
+      if (timeSinceLastPump >= pumpConfig.PUMP_WINDOW_MS) {
+        this.pumpMetrics.pumpCount++;
+        this.pumpMetrics.lastPumpTime = now;
+        this.pumpMetrics.pumpTimes.push(now);
+        
+        const gainRate = acceleration;
+        this.pumpMetrics.highestGainRate = Math.max(this.pumpMetrics.highestGainRate, gainRate);
+      }
     }
     
     this.currentPrice = newPrice;
