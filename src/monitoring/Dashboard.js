@@ -4,7 +4,7 @@ const contrib = require("blessed-contrib");
 class Dashboard {
   constructor(
     wallet,
-    tokenTracker,
+    tokenManager,
     positionManager,
     safetyChecker,
     priceManager,
@@ -12,7 +12,7 @@ class Dashboard {
     config
   ) {
     this.wallet = wallet;
-    this.tokenTracker = tokenTracker;
+    this.tokenManager = tokenManager;
     this.positionManager = positionManager;
     this.safetyChecker = safetyChecker;
     this.priceManager = priceManager;
@@ -45,12 +45,55 @@ class Dashboard {
       this.logStatus(args.join(" "), "error");
     };
 
+    // Subscribe to token events
+    this.subscribeToTokenEvents();
+
     // Listen for trade events from PositionManager
     this.positionManager.on("trade", (tradeData) => {
       this.logTrade(tradeData);
     });
 
     this.initializeDashboard();
+  }
+
+  subscribeToTokenEvents() {
+    // Listen for trade events from all tracked tokens
+    Array.from(this.tokenManager.tokens.values()).forEach(token => {
+      token.on('trade', ({ token, trade, metrics }) => {
+        // Handle trade event based on WebSocket message structure
+        const tradeInfo = {
+          type: trade.txType === 'buy' ? 'BUY' : 'SELL',
+          mint: trade.mint,
+          symbol: token.symbol,
+          tokenAmount: trade.tokenAmount,
+          newTokenBalance: trade.newTokenBalance,
+          traderPublicKey: trade.traderPublicKey,
+          marketCapSol: trade.marketCapSol,
+          price: metrics.price,
+          metrics: {
+            volume: metrics.volume,
+            recovery: metrics.recovery
+          }
+        };
+
+        this.logTrade(tradeInfo);
+        this.updateMetricsBoxes(metrics);
+      });
+
+      token.on('stateChanged', () => {
+        this.updateTokenStateBoxes();
+      });
+
+      token.on('tradeError', (error) => {
+        this.logStatus(`Trade error for ${token.symbol}: ${error.message}`, 'error');
+      });
+    });
+
+    // Listen for new token additions
+    this.tokenManager.on('tokenAdded', (token) => {
+      this.subscribeToTokenEvents(token);
+      this.updateTokenStateBoxes();
+    });
   }
 
   initializeDashboard() {
@@ -626,28 +669,13 @@ class Dashboard {
 
   getTokensByState(state) {
     try {
-      const tokens = Array.from(this.tokenTracker.tokens.values()).filter(
+      const tokens = Array.from(this.tokenManager.tokens.values()).filter(
         (token) => token.state === state
       );
-
-      if (tokens.length === 0) {
-        return "No tokens in this state";
-      }
-
-      return tokens
-        .map((token) => {
-          try {
-            const metrics = this.renderTokenMetrics(token);
-            const rows = Object.keys(metrics).map(key => `${key.padEnd(20)} ${metrics[key]}`);
-            rows.push("─".repeat(50)); // Add horizontal rule between tokens
-            return rows.join("\n");
-          } catch (err) {
-            return `Error displaying token: ${err.message}`;
-          }
-        })
-        .join("\n");
+      return tokens;
     } catch (error) {
-      return `Error: ${error.message}`;
+      console.error('Error getting tokens by state:', error);
+      return [];
     }
   }
 
@@ -656,6 +684,117 @@ class Dashboard {
     const minutes = Math.floor((time % 3600) / 60);
     const seconds = time % 60;
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  logTrade({ type, mint, symbol, tokenAmount, newTokenBalance, traderPublicKey, marketCapSol, price, metrics }) {
+    try {
+      const timestamp = new Date().toLocaleTimeString();
+      const trade = {
+        timestamp,
+        type,
+        mint,
+        symbol,
+        tokenAmount,
+        newTokenBalance,
+        traderPublicKey: traderPublicKey ? traderPublicKey.slice(0, 8) + '...' : 'unknown',
+        marketCapSol: marketCapSol ? marketCapSol.toFixed(4) : 'N/A',
+        price: price ? price.toFixed(8) : 'N/A',
+        metrics
+      };
+
+      this.trades.unshift(trade);
+      if (this.trades.length > 100) {
+        this.trades.pop();
+      }
+
+      // Format trade for display
+      const color = type === 'BUY' ? '{green-fg}' : '{red-fg}';
+      const displayStr = [
+        `${timestamp} | ${color}${type}{/${type === 'BUY' ? 'green' : 'red'}-fg}`,
+        `${symbol} | ${trade.marketCapSol} SOL`,
+        `Amount: ${(tokenAmount || 0).toLocaleString()} | Price: ${trade.price}`,
+        `Trader: ${trade.traderPublicKey}`,
+        '─'.repeat(50)
+      ].join('\n');
+
+      if (this.tradeBox) {
+        let content = this.tradeBox.getContent();
+        content = displayStr + '\n' + content;
+        this.tradeBox.setContent(content);
+        this.screen.render();
+      }
+
+    } catch (error) {
+      this.logStatus(`Error logging trade: ${error.message}`, 'error');
+    }
+  }
+
+  updateMetricsBoxes(metrics) {
+    // Update trader metrics
+    if (this.traderMetricsBox) {
+      const traderContent = [
+        'Volume (24h):',
+        `1m: ${this.formatVolume(metrics.volume['1m'])}`,
+        `5m: ${this.formatVolume(metrics.volume['5m'])}`,
+        `30m: ${this.formatVolume(metrics.volume['30m'])}`,
+        '',
+        `Price: ${metrics.price.toFixed(4)} SOL`,
+        `Market Cap: ${metrics.marketCap.toFixed(2)} SOL`
+      ].join('\n');
+      this.traderMetricsBox.setContent(traderContent);
+    }
+
+    // Update recovery metrics in trading patterns box
+    if (this.tradingPatternsBox && metrics.recovery) {
+      const patternsContent = [
+        `Recovery Phase: ${metrics.recovery.phase}`,
+        `Recovery Strength: ${(metrics.recovery.strength * 100).toFixed(1)}%`,
+        `Buy Pressure: ${(metrics.recovery.buyPressure * 100).toFixed(1)}%`
+      ].join('\n');
+      this.tradingPatternsBox.setContent(patternsContent);
+    }
+  }
+
+  updateTokenStateBoxes() {
+    const tokens = {
+      new: this.getTokensByState('new'),
+      pumping: this.getTokensByState('pumping'),
+      drawdown: this.getTokensByState('drawdown'),
+      recovery: this.getTokensByState('recovery')
+    };
+
+    // Update each state box
+    if (this.newTokensBox) {
+      this.newTokensBox.setContent(this.formatTokenList(tokens.new));
+    }
+    if (this.pumpingBox) {
+      this.pumpingBox.setContent(this.formatTokenList(tokens.pumping));
+    }
+    if (this.drawdownBox) {
+      this.drawdownBox.setContent(this.formatTokenList(tokens.drawdown));
+    }
+    if (this.recoveryBox) {
+      this.recoveryBox.setContent(this.formatTokenList(tokens.recovery));
+    }
+
+    this.screen.render();
+  }
+
+  formatTokenList(tokens) {
+    if (!tokens.length) return 'No tokens';
+    
+    return tokens.map(token => {
+      const price = token.currentPrice.toFixed(4);
+      const change = token.getPriceChange(300).toFixed(1); // 5-minute change
+      const volume = this.formatVolume(token.volume5m);
+      
+      return [
+        token.symbol,
+        `${price} SOL`,
+        `${change}%`,
+        `Vol: ${volume}`
+      ].join(' | ');
+    }).join('\n');
   }
 }
 

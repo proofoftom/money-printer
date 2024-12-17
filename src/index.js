@@ -215,94 +215,106 @@ async function start() {
   }
 }
 
-// Set up event listeners for token lifecycle events
+// Set up event listeners for token lifecycle events AFTER dashboard is initialized
 tokenManager.on("tokenAdded", (token) => {
-  global.dashboard.logStatus(
-    `Token ${token.symbol} (${token.mint}) minted!`,
-    "info"
-  );
-  global.dashboard.logStatus(
-    `Market cap: ${priceManager.solToUSD(token.marketCapSol)}`,
-    "info"
-  );
-});
-
-tokenManager.on("tokenStateChanged", ({ token, from, to }) => {
-  global.dashboard.logStatus(
-    `Token ${token.symbol} state changed: ${from} -> ${to}`,
-    "info"
-  );
-  global.dashboard.logStatus(
-    `Market cap: ${priceManager
-      .solToUSD(token.marketCapSol)
-      .toFixed(2)} USD / ${token.marketCapSol} SOL`,
-    "info"
-  );
-  if (to === "drawdown") {
+  if (global.dashboard) {
     global.dashboard.logStatus(
-      `Drawdown from peak: ${token.getDrawdownPercentage().toFixed(2)}%`,
+      `Token ${token.symbol} (${token.mint}) minted!`,
       "info"
     );
-  } else if (to === "inPosition") {
-    const position = positionManager.getPosition(token.mint);
     global.dashboard.logStatus(
-      `Position opened at: ${position.entryPrice} SOL`,
+      `Market cap: ${priceManager.solToUSD(token.marketCapSol)}`,
       "info"
     );
   }
 });
 
+tokenManager.on("tokenStateChanged", ({ token, from, to }) => {
+  if (global.dashboard) {
+    global.dashboard.logStatus(
+      `Token ${token.symbol} state changed: ${from} -> ${to}`,
+      "info"
+    );
+    global.dashboard.logStatus(
+      `Market cap: ${priceManager
+        .solToUSD(token.marketCapSol)
+        .toFixed(2)} USD / ${token.marketCapSol} SOL`,
+      "info"
+    );
+    if (to === "drawdown") {
+      global.dashboard.logStatus(
+        `Drawdown from peak: ${token.getDrawdownPercentage().toFixed(2)}%`,
+        "info"
+      );
+    } else if (to === "inPosition") {
+      const position = positionManager.getPosition(token.mint);
+      global.dashboard.logStatus(
+        `Position opened at: ${position.entryPrice} SOL`,
+        "info"
+      );
+    }
+  }
+});
+
 tokenManager.on("positionOpened", (token) => {
-  const position = positionManager.getPosition(token.mint);
-  global.dashboard.logStatus(`Opened position for ${token.symbol}`, "info");
-  global.dashboard.logStatus(`Entry price: ${position.entryPrice} SOL`, "info");
-  global.dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
-  global.dashboard.logTrade({
-    type: "BUY",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: 0,
-  });
+  if (global.dashboard) {
+    const position = positionManager.getPosition(token.mint);
+    global.dashboard.logStatus(`Opened position for ${token.symbol}`, "info");
+    global.dashboard.logStatus(`Entry price: ${position.entryPrice} SOL`, "info");
+    global.dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
+    global.dashboard.logTrade({
+      type: "BUY",
+      mint: token.mint,
+      symbol: token.symbol,
+      profitLoss: 0,
+    });
+  }
 });
 
 tokenManager.on("takeProfitExecuted", ({ token, percentage, portion }) => {
-  global.dashboard.logStatus(`Take profit hit for ${token.symbol}`, "info");
-  global.dashboard.logStatus(
-    `Sold ${(portion * 100).toFixed(0)}% at ${percentage}% profit`,
-    "info"
-  );
-  global.dashboard.logStatus(
-    `Current market cap: ${token.marketCapSol} SOL`,
-    "info"
-  );
-  global.dashboard.logTrade({
-    type: "SELL",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: percentage,
-  });
+  if (global.dashboard) {
+    global.dashboard.logStatus(`Take profit hit for ${token.symbol}`, "info");
+    global.dashboard.logStatus(
+      `Sold ${(portion * 100).toFixed(0)}% at ${percentage}% profit`,
+      "info"
+    );
+    global.dashboard.logStatus(
+      `Current market cap: ${token.marketCapSol} SOL`,
+      "info"
+    );
+    global.dashboard.logTrade({
+      type: "SELL",
+      mint: token.mint,
+      symbol: token.symbol,
+      profitLoss: percentage,
+    });
+  }
 });
 
 tokenManager.on("positionClosed", ({ token, reason }) => {
-  global.dashboard.logStatus(`Position closed for ${token.symbol}`, "info");
-  global.dashboard.logStatus(`Reason: ${reason}`, "info");
-  global.dashboard.logStatus(
-    `Final market cap: ${token.marketCapSol} SOL`,
-    "info"
-  );
-  global.dashboard.logTrade({
-    type: "CLOSE",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: token.profitLoss,
-  });
+  if (global.dashboard) {
+    global.dashboard.logStatus(`Position closed for ${token.symbol}`, "info");
+    global.dashboard.logStatus(`Reason: ${reason}`, "info");
+    global.dashboard.logStatus(
+      `Final market cap: ${token.marketCapSol} SOL`,
+      "info"
+    );
+    global.dashboard.logTrade({
+      type: "CLOSE",
+      mint: token.mint,
+      symbol: token.symbol,
+      profitLoss: token.profitLoss,
+    });
+  }
 });
 
 tokenManager.on("error", ({ token, error }) => {
-  global.dashboard.logStatus(
-    `Error with token ${token.symbol}: ${error.message}`,
-    "error"
-  );
+  if (global.dashboard) {
+    global.dashboard.logStatus(
+      `Error with token ${token.symbol}: ${error.message}`,
+      "error"
+    );
+  }
 });
 
 // Handle process events for graceful shutdown
