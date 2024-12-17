@@ -150,6 +150,28 @@ AGE      V: ${formatNumber(this.metrics.volume['1m'])} | 5m ${formatNumber(this.
   destroy() {
     this.box.destroy();
   }
+
+  cleanup() {
+    try {
+      // Remove all event listeners
+      this.token.removeListener('trade', this.handleTrade);
+      this.token.removeListener('metricsUpdated', this.handleMetricsUpdate);
+      
+      // Remove the box from its parent
+      if (this.box && this.box.parent) {
+        this.box.parent.remove(this.box);
+      }
+      
+      // Clear references
+      this.box = null;
+      this.metricsBox = null;
+      this.token = null;
+      this.traderManager = null;
+      this.metrics = null;
+    } catch (error) {
+      console.error('Error cleaning up TokenCard:', error);
+    }
+  }
 }
 
 module.exports = TokenCard;

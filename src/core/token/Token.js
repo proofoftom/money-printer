@@ -6,6 +6,10 @@ const errorLogger = require("../../monitoring/errorLoggerInstance");
 class Token extends EventEmitter {
   constructor(tokenData, traderManager) {
     super();
+    
+    // Store traderManager reference first
+    this.traderManager = traderManager;
+    
     this.mint = tokenData.mint;
     this.name = tokenData.name;
     this.symbol = tokenData.symbol;
@@ -23,55 +27,18 @@ class Token extends EventEmitter {
     this.highestMarketCap = this.marketCapSol;
     this.drawdownLow = null;
     this.unsafeReason = null;
+    
+    // Increase max listeners to prevent warnings
+    this.setMaxListeners(20);
+
+    // Keep track of registered listeners
+    this.registeredListeners = new Set();
 
     // Store config reference
     this.config = config;
 
-    // Optimized price tracking with circular buffer
-    this.priceBuffer = {
-      data: new Array(30).fill(null),
-      head: 0,
-      size: 30,
-      count: 0,
-    };
-
-    // Enhanced metrics for pump detection
-    this.pumpMetrics = {
-      lastPumpTime: null,
-      pumpCount: 0,
-      highestGainRate: 0,
-      volumeSpikes: [],
-      priceAcceleration: 0,
-      pumpTimes: [], // Array to track pump event timestamps
-    };
-
-    // Recovery metrics
-    this.recoveryMetrics = {
-      drawdownDepth: 0, // Maximum drawdown from peak
-      recoveryStrength: 0, // Current recovery strength
-      recoveryVolume: 0, // Volume during recovery
-      accumulationScore: 0, // Score based on accumulation patterns
-      buyPressure: 0, // Buy side pressure during recovery
-      marketStructure: "unknown", // Current market structure
-      recoveryPhase: "none", // Current recovery phase
-      lastDrawdownTime: null, // Timestamp of last significant drawdown
-      recoveryAttempts: [], // History of recovery attempts
-    };
-
-    // Price tracking
-    this.currentPrice = this.calculateTokenPrice();
-    this.initialPrice = this.currentPrice;
-    this.priceHistory = [
-      {
-        price: this.currentPrice,
-        timestamp: Date.now(),
-      },
-    ];
-    this.priceVolatility = 0;
-
-    // Use provided TraderManager instance
-    this.traderManager = traderManager;
-    this.stateManager = null; // Initialize state manager to null
+    // Initialize metrics
+    this.initializeMetrics();
 
     // Forward state change events
     this.on("stateChanged", ({ from, to }) => {
@@ -93,23 +60,49 @@ class Token extends EventEmitter {
         },
       });
     }
+  }
 
-    // Initialize metrics
-    this.metrics = {
-      volumeData: {
-        lastCleanup: Date.now(),
-        cleanupInterval: 5 * 60 * 1000, // 5 minutes
-        maxWalletVolumePercentage: 0,
-        suspectedWashTradePercentage: 0,
-      },
+  initializeMetrics() {
+    // Optimized price tracking with circular buffer
+    this.priceBuffer = {
+      data: new Array(30).fill(null),
+      head: 0,
+      size: 30,
+      count: 0,
     };
 
-    // Initialize volume tracking
-    this.volume1m = 0;
-    this.volume5m = 0;
-    this.volume30m = 0;
-    this.volumeHistory = []; // Initialize volume history array
-    this.trades = []; // Initialize trades array
+    // Enhanced metrics for pump detection
+    this.pumpMetrics = {
+      lastPumpTime: null,
+      pumpCount: 0,
+      highestGainRate: 0,
+      volumeSpikes: [],
+      priceAcceleration: 0,
+      pumpTimes: [], // Array to track pump event timestamps
+    };
+
+    // Recovery metrics
+    this.recoveryMetrics = {
+      drawdownDepth: 0,
+      recoveryStrength: 0,
+      recoveryPhase: 'none',
+      accumulationScore: 0,
+      marketStructure: 'neutral'
+    };
+
+    // Price tracking
+    this.currentPrice = this.calculateTokenPrice();
+    this.initialPrice = this.currentPrice;
+    this.priceHistory = [
+      {
+        price: this.currentPrice,
+        timestamp: Date.now(),
+      },
+    ];
+    this.priceVolatility = 0;
+
+    // Use provided TraderManager instance
+    this.stateManager = null; // Initialize state manager to null
   }
 
   update(data) {
@@ -1545,144 +1538,83 @@ class Token extends EventEmitter {
     return ((currentWindow - previousWindow) / previousWindow) * 100;
   }
 
-  recordTrade(trade) {
+  async recordTrade(trade) {
     try {
-      // Validate trade data
-      if (!this.validateTradeData(trade)) {
-        throw new Error('Invalid trade data');
-      }
-
-      const tradeData = {
-        ...trade,
-        timestamp: trade.timestamp || Date.now(),
-        price: trade.price || this.calculateTokenPrice()
+      // Update metrics based on trade data
+      this.metrics = {
+        ...this.metrics,
+        marketCap: trade.marketCapSol,
+        lastTradeTime: Date.now(),
+        tradeCount: (this.metrics.tradeCount || 0) + 1,
+        volume: trade.tokenAmount ? (this.metrics.volume || 0) + trade.tokenAmount : this.metrics.volume
       };
 
-      // Emit pre-trade event for any pre-trade validations/checks
-      this.emit('preTrade', {
-        token: this,
-        trade: tradeData
+      // Add trade to history
+      this.trades.push({
+        ...trade,
+        timestamp: Date.now()
       });
 
-      // Record the trade
-      this.trades.push(tradeData);
-
-      // Update volume history
-      this.volumeHistory.push({
-        amount: tradeData.amount,
-        price: tradeData.price,
-        timestamp: tradeData.timestamp,
-        volume: tradeData.amount * tradeData.price // Volume in SOL
-      });
-
-      // Update current price and metrics
-      this.updatePriceMetrics(tradeData.price);
-      
-      // Update market cap
-      this.updateMarketCap();
-
-      // Update wallet balances
-      if (tradeData.traderPublicKey) {
-        this.updateWalletActivity(tradeData.traderPublicKey, tradeData);
-      }
-
-      // Emit trade events
+      // Emit trade event
       this.emit('trade', {
         token: this,
-        trade: tradeData,
-        metrics: {
-          price: this.currentPrice,
-          marketCap: this.marketCapSol,
-          volume: {
-            '1m': this.volume1m,
-            '5m': this.volume5m,
-            '30m': this.volume30m
-          },
-          recovery: {
-            phase: this.recoveryMetrics.recoveryPhase,
-            strength: this.recoveryMetrics.recoveryStrength,
-            buyPressure: this.recoveryMetrics.buyPressure
-          }
-        }
+        trade: trade,
+        metrics: this.metrics
       });
 
-      // Check for state transitions based on trade
-      this.checkStateTransitions(tradeData);
+      // Emit metrics update
+      this.emit('metricsUpdated', this);
 
       return true;
     } catch (error) {
-      this.emit('tradeError', {
-        token: this,
-        error: error.message,
-        trade: trade
-      });
+      console.error(`Failed to record trade for token ${this.symbol}:`, error.message);
       return false;
     }
   }
 
-  validateTradeData(trade) {
-    const requiredFields = ['amount', 'type'];
-    for (const field of requiredFields) {
-      if (!trade[field]) {
-        return false;
+  updateMetrics(trade) {
+    try {
+      // Update basic metrics
+      this.metrics.lastPrice = trade.price;
+      this.metrics.volume = (this.metrics.volume || 0) + trade.tokenAmount;
+      this.metrics.tradeCount = (this.metrics.tradeCount || 0) + 1;
+
+      // Update market cap if available
+      if (trade.marketCapSol) {
+        this.metrics.marketCap = trade.marketCapSol;
       }
-    }
 
-    if (typeof trade.amount !== 'number' || trade.amount <= 0) {
+      // Calculate price change
+      if (this.trades.length > 0) {
+        const previousPrice = this.trades[this.trades.length - 1].price;
+        this.metrics.priceChange = ((trade.price - previousPrice) / previousPrice) * 100;
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`Failed to update metrics for token ${this.symbol}:`, error.message);
       return false;
-    }
-
-    if (!['buy', 'sell'].includes(trade.type.toLowerCase())) {
-      return false;
-    }
-
-    return true;
-  }
-
-  checkStateTransitions(trade) {
-    const oldState = this.state;
-    let newState = oldState;
-
-    // Calculate metrics for state determination
-    const priceChange = this.getPriceChange(300); // 5-minute window
-    const volumeChange = this.getVolumeChange(300);
-    const buyPressure = this.getBuyPressure(300);
-
-    // Check for pump conditions
-    if (priceChange > this.config.TOKEN.PUMP_THRESHOLD && 
-        volumeChange > this.config.TOKEN.VOLUME_SPIKE_THRESHOLD) {
-      newState = 'pumping';
-    }
-    // Check for drawdown conditions
-    else if (this.getDrawdownPercentage() <= this.config.TOKEN.DRAWDOWN_THRESHOLD) {
-      newState = 'drawdown';
-    }
-    // Check for recovery conditions
-    else if (oldState === 'drawdown' && 
-             this.getRecoveryPercentage() >= this.config.TOKEN.RECOVERY_THRESHOLD) {
-      newState = 'recovery';
-    }
-
-    // Emit state change if needed
-    if (newState !== oldState) {
-      this.setState(newState);
     }
   }
 
-  getBuyPressure(timeWindowSeconds) {
-    const cutoffTime = Date.now() - (timeWindowSeconds * 1000);
-    const recentTrades = this.trades.filter(t => t.timestamp >= cutoffTime);
-    
-    if (recentTrades.length === 0) return 0;
+  // Override the standard emit to track active listeners
+  emit(event, ...args) {
+    if (this.listenerCount(event) === 0) {
+      console.warn(`No listeners for event '${event}' on token ${this.mint}`);
+    }
+    return super.emit(event, ...args);
+  }
 
-    const buyVolume = recentTrades
-      .filter(t => t.type === 'buy')
-      .reduce((sum, t) => sum + (t.amount * t.price), 0);
+  // Override addListener to track registered listeners
+  addListener(event, listener) {
+    this.registeredListeners.add({ event, listener });
+    return super.addListener(event, listener);
+  }
 
-    const totalVolume = recentTrades
-      .reduce((sum, t) => sum + (t.amount * t.price), 0);
-
-    return totalVolume > 0 ? buyVolume / totalVolume : 0;
+  // Override removeListener to clean up tracking
+  removeListener(event, listener) {
+    this.registeredListeners.delete({ event, listener });
+    return super.removeListener(event, listener);
   }
 }
 

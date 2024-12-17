@@ -60,17 +60,51 @@ class ExitStrategies {
   }
 
   checkRecoveryWeakening(token) {
-    const strength = token.getRecoveryStrength();
-    const marketStructure = token.analyzeMarketStructure();
-    
-    // Exit if recovery strength drops significantly
-    if (strength.total < this.config.EXIT_STRATEGIES.RECOVERY.MIN_STRENGTH) {
-      return { shouldExit: true, portion: this.remainingPosition };
+    if (!token.recoveryMetrics) {
+      return { shouldExit: false };
     }
 
-    // Check for deteriorating market structure
-    if (marketStructure.structureScore.overall < this.config.EXIT_STRATEGIES.RECOVERY.MIN_STRUCTURE_SCORE) {
-      return { shouldExit: true, portion: this.remainingPosition };
+    const {
+      recoveryStrength,
+      buyPressure,
+      marketStructure,
+      recoveryPhase
+    } = token.recoveryMetrics;
+
+    // Exit if recovery strength drops significantly
+    if (recoveryStrength < this.config.RECOVERY.MIN_STRENGTH) {
+      return {
+        shouldExit: true,
+        portion: this.remainingPosition,
+        reason: 'RECOVERY_STRENGTH_LOW'
+      };
+    }
+
+    // Exit if buy pressure weakens
+    if (buyPressure < this.config.RECOVERY.MIN_BUY_PRESSURE) {
+      return {
+        shouldExit: true,
+        portion: this.remainingPosition,
+        reason: 'BUY_PRESSURE_LOW'
+      };
+    }
+
+    // Exit if market structure turns bearish
+    if (marketStructure === 'bearish') {
+      return {
+        shouldExit: true,
+        portion: this.remainingPosition,
+        reason: 'BEARISH_STRUCTURE'
+      };
+    }
+
+    // Exit if recovery phase changes to distribution
+    if (recoveryPhase === 'distribution') {
+      return {
+        shouldExit: true,
+        portion: this.remainingPosition,
+        reason: 'DISTRIBUTION_PHASE'
+      };
     }
 
     return { shouldExit: false };
@@ -107,54 +141,59 @@ class ExitStrategies {
   }
 
   checkRapidReversal(position, currentPrice, token) {
-    const marketStructure = token.analyzeMarketStructure();
-    const percentageChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
-    
-    // Check for sharp price reversal with high volume
-    if (percentageChange < 0 && Math.abs(percentageChange) > this.config.EXIT_STRATEGIES.REVERSAL.THRESHOLD) {
-      const volumeSpike = token.hasRecentVolumeSurge();
-      const patternBreakdown = marketStructure.pattern && marketStructure.pattern.breakdown;
-      
-      return volumeSpike && patternBreakdown;
+    if (!token.recoveryMetrics) {
+      return false;
     }
-    
+
+    const priceChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    const timeInPosition = (Date.now() - position.entryTime) / 1000; // in seconds
+
+    // Check for rapid price decline after entry
+    if (timeInPosition < this.config.RAPID_REVERSAL.TIME_WINDOW) {
+      if (priceChange < -this.config.RAPID_REVERSAL.MAX_DRAWDOWN) {
+        return true;
+      }
+    }
+
+    // Check for sudden change in market structure
+    if (token.recoveryMetrics.marketStructure === 'bearish' &&
+        timeInPosition < this.config.RAPID_REVERSAL.STRUCTURE_CHANGE_WINDOW) {
+      return true;
+    }
+
     return false;
   }
 
   checkEnhancedTrailingStop(position, currentPrice, token) {
-    const trailingConfig = this.config.EXIT_STRATEGIES.TRAILING_STOP;
-    if (!trailingConfig.ENABLED) return false;
-
-    const strength = token.getRecoveryStrength();
-    const percentageChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
-    
-    // Adjust trailing stop based on recovery strength
-    if (percentageChange >= trailingConfig.ACTIVATION_THRESHOLD && !this.trailingStopPrice) {
-      const basePercentage = trailingConfig.BASE_PERCENTAGE;
-      const adjustedPercentage = basePercentage * (1 - (strength.total - 50) / 100);
-      this.trailingStopPrice = this.roundToDecimals(currentPrice * (1 - (adjustedPercentage / 100)));
-      return false;
+    if (!this.trailingStopPrice) {
+      this.trailingStopPrice = position.entryPrice;
     }
 
-    if (this.trailingStopPrice && currentPrice > this.trailingStopPrice) {
-      let trailPercentage = trailingConfig.BASE_PERCENTAGE;
-      
-      // Dynamic adjustment based on recovery metrics
-      if (trailingConfig.DYNAMIC_ADJUSTMENT.ENABLED) {
-        const marketHealth = token.analyzeMarketStructure().overallHealth / 100;
-        trailPercentage = Math.min(
-          Math.max(
-            trailPercentage * (1 + (1 - marketHealth) * trailingConfig.DYNAMIC_ADJUSTMENT.VOLATILITY_MULTIPLIER),
-            trailingConfig.DYNAMIC_ADJUSTMENT.MIN_PERCENTAGE
-          ),
-          trailingConfig.DYNAMIC_ADJUSTMENT.MAX_PERCENTAGE
-        );
+    const currentPnL = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+
+    // Adjust trailing stop based on recovery metrics
+    let stopDistance = this.config.TRAILING_STOP.BASE_DISTANCE;
+    
+    if (token.recoveryMetrics) {
+      // Tighten stop if recovery weakens
+      if (token.recoveryMetrics.recoveryStrength < 50) {
+        stopDistance *= 0.5;
       }
       
-      this.trailingStopPrice = this.roundToDecimals(currentPrice * (1 - (trailPercentage / 100)));
+      // Tighten stop in distribution phase
+      if (token.recoveryMetrics.recoveryPhase === 'distribution') {
+        stopDistance *= 0.3;
+      }
     }
 
-    return this.trailingStopPrice && currentPrice <= this.trailingStopPrice;
+    // Update trailing stop if we have a new high
+    if (currentPrice > this.trailingStopPrice) {
+      this.trailingStopPrice = currentPrice;
+    }
+
+    // Check if price has fallen below trailing stop
+    const stopPrice = this.trailingStopPrice * (1 - stopDistance / 100);
+    return currentPrice < stopPrice;
   }
 
   checkRecoveryVolumeExit(currentVolume, token) {

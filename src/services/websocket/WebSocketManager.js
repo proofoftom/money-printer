@@ -127,74 +127,153 @@ class WebSocketManager extends EventEmitter {
   }
 
   handleMessage(message) {
-    if (!message || typeof message !== "object") {
+    if (!message || typeof message !== 'object') {
       return;
     }
 
-    // Handle subscription confirmation messages
-    if (message.message && (
-      message.message === "Successfully subscribed to token creation events." ||
-      message.message === "Successfully subscribed to keys."
-    )) {
-      return; // These are expected subscription confirmations
-    }
-
-    // Handle create messages
-    if (message.txType === "create") {
-      const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
-
-      // Track new token if it meets minimum market cap requirement
-      if (marketCapUSD >= config.MCAP.MIN) {
-        this.tokenManager.handleNewToken(message);
-        // Subscribe to trades for the new token
-        this.subscribeToToken(message.mint);
+    try {
+      // Handle subscription confirmation messages
+      if (message.message && (
+        message.message === 'Successfully subscribed to token creation events.' ||
+        message.message === 'Successfully subscribed to keys.'
+      )) {
+        return;
       }
-      return;
-    }
 
-    // Handle trade messages
-    if (message.txType === "buy" || message.txType === "sell") {
-      // Check if token exists and is not dead before processing trade
-      const token = this.tokenManager.getToken(message.mint);
-      if (token && token.state !== "dead") {
-        this.emit("trade", message);
-        this.tokenManager.handleTokenUpdate(message);
+      // Validate and normalize trade messages
+      if (message.txType === 'trade') {
+        if (!this.validateTradeMessage(message)) {
+          throw new Error('Invalid trade message format');
+        }
+
+        const normalizedTrade = this.normalizeTradeMessage(message);
+        this.tokenManager.handleTokenUpdate(normalizedTrade);
+        return;
       }
-      return;
-    }
 
-    // Log unknown message formats to file
-    errorLogger.logError(
-      new Error("Unknown WebSocket message format"),
-      "WebSocketManager.handleMessage",
-      { message }
-    );
+      // Handle new token creation
+      if (message.txType === 'create') {
+        if (!this.validateCreateMessage(message)) {
+          throw new Error('Invalid create message format');
+        }
+
+        const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
+        if (marketCapUSD >= config.MCAP.MIN) {
+          this.tokenManager.handleNewToken(message);
+        }
+      }
+    } catch (error) {
+      console.error('Error handling message:', error);
+      this.emit('error', error);
+    }
   }
 
-  // For testing purposes
-  setWebSocket(ws) {
-    this.ws = ws;
-    this.isConnected = true;
+  validateCreateMessage(message) {
+    const requiredFields = [
+      'mint',
+      'traderPublicKey',
+      'initialBuy',
+      'bondingCurveKey',
+      'vTokensInBondingCurve',
+      'vSolInBondingCurve',
+      'marketCapSol',
+      'symbol'
+    ];
+
+    return requiredFields.every(field => message[field] !== undefined);
   }
 
-  subscribeToToken(mint) {
-    if (
-      !this.isConnected ||
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN
-    ) {
-      console.debug("Cannot subscribe: WebSocket not connected");
+  validateTradeMessage(message) {
+    // Basic message validation
+    if (!message || typeof message !== 'object') {
+      console.error('Invalid message format:', message);
       return false;
     }
 
-    this.subscriptions.add(mint);
-    this.ws.send(
-      JSON.stringify({
-        method: "subscribeTokenTrade",
-        keys: [mint],
-      })
-    );
+    const requiredFields = [
+      'mint',
+      'traderPublicKey',
+      'tokenAmount',
+      'newTokenBalance',
+      'bondingCurveKey',
+      'vTokensInBondingCurve',
+      'vSolInBondingCurve',
+      'marketCapSol'
+    ];
+
+    const missingFields = requiredFields.filter(field => message[field] === undefined);
+    if (missingFields.length > 0) {
+      console.error('Missing required fields:', missingFields);
+      return false;
+    }
+
+    // Validate numeric fields
+    const numericFields = ['tokenAmount', 'newTokenBalance', 'vTokensInBondingCurve', 'vSolInBondingCurve', 'marketCapSol'];
+    const invalidNumericFields = numericFields.filter(field => typeof message[field] !== 'number' || isNaN(message[field]));
+    if (invalidNumericFields.length > 0) {
+      console.error('Invalid numeric fields:', invalidNumericFields);
+      return false;
+    }
+
     return true;
+  }
+
+  normalizeTradeMessage(message) {
+    try {
+      // Calculate price safely
+      let price = 0;
+      if (message.vTokensInBondingCurve > 0) {
+        price = message.vSolInBondingCurve / message.vTokensInBondingCurve;
+      }
+
+      return {
+        mint: message.mint,
+        type: (message.txType || 'unknown').toUpperCase(),
+        amount: message.tokenAmount || 0,
+        price: price,
+        timestamp: Date.now(),
+        newBalance: message.newTokenBalance || 0,
+        traderPublicKey: message.traderPublicKey,
+        marketCap: message.marketCapSol || 0,
+        bondingCurveKey: message.bondingCurveKey
+      };
+    } catch (error) {
+      console.error('Error normalizing trade message:', error);
+      throw error;
+    }
+  }
+
+  subscribeToToken(mint) {
+    if (!mint || typeof mint !== 'string') {
+      console.error('Invalid mint address:', mint);
+      return;
+    }
+
+    if (this.subscriptions.has(mint)) {
+      console.log(`Already subscribed to token: ${mint}`);
+      return;
+    }
+
+    if (!this.isConnected || !this.ws) {
+      console.log(`WebSocket not connected. Adding ${mint} to pending subscriptions.`);
+      this.subscriptions.add(mint);
+      return;
+    }
+
+    try {
+      const subscribeMessage = {
+        op: 'subscribe',
+        channel: 'trades',
+        markets: [mint]
+      };
+
+      this.ws.send(JSON.stringify(subscribeMessage));
+      this.subscriptions.add(mint);
+      console.log(`Subscribed to token: ${mint}`);
+    } catch (error) {
+      console.error(`Error subscribing to token ${mint}:`, error);
+      this.emit('error', error);
+    }
   }
 
   unsubscribeFromToken(mint) {
@@ -236,23 +315,27 @@ class WebSocketManager extends EventEmitter {
   }
 
   resubscribeToTokens() {
-    if (
-      !this.isConnected ||
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      this.subscriptions.size === 0
-    ) {
-      return false;
+    if (!this.isConnected || !this.ws) {
+      console.log('WebSocket not connected. Will resubscribe when connected.');
+      return;
     }
 
-    const keys = Array.from(this.subscriptions);
-    this.ws.send(
-      JSON.stringify({
-        method: "subscribeTokenTrade",
-        keys,
-      })
-    );
-    return true;
+    try {
+      const allMints = Array.from(this.subscriptions);
+      if (allMints.length === 0) return;
+
+      const subscribeMessage = {
+        op: 'subscribe',
+        channel: 'trades',
+        markets: allMints
+      };
+
+      this.ws.send(JSON.stringify(subscribeMessage));
+      console.log(`Resubscribed to ${allMints.length} tokens`);
+    } catch (error) {
+      console.error('Error resubscribing to tokens:', error);
+      this.emit('error', error);
+    }
   }
 
   subscribeToTrader(publicKey) {

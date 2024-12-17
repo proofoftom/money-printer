@@ -703,16 +703,17 @@ class TraderManager extends EventEmitter {
     this.topRecoveryTraders[category] = list.slice(0, 10);
   }
 
-  handleTrade({ mint, traderPublicKey, type, amount, newBalance, price, timestamp }) {
+  async handleTrade({ mint, traderPublicKey, type, amount, newBalance, price, timestamp }) {
     try {
       // Get or create trader
-      const trader = this.getOrCreateTrader(traderPublicKey);
+      const trader = await this.getOrCreateTrader(traderPublicKey);
+      if (!trader) {
+        console.error('Failed to get or create trader:', traderPublicKey);
+        return;
+      }
 
-      // Update trader's token balance
-      trader.updateTokenBalance(mint, newBalance, timestamp);
-
-      // Record trade in trader's history
-      trader.recordTrade({
+      // Record the trade
+      const success = await trader.recordTrade({
         mint,
         type,
         amount,
@@ -720,28 +721,15 @@ class TraderManager extends EventEmitter {
         timestamp,
         newBalance
       });
+      if (!success) {
+        console.error('Failed to record trade for trader:', trader.publicKey);
+        return;
+      }
 
-      // Update trader metrics
-      trader.updateMetrics();
-
-      // Emit trader update event
-      this.emit('traderUpdated', {
-        trader,
-        mint,
-        type,
-        amount,
-        newBalance
-      });
-
+      // Emit trade event
+      this.emit('trade', trader, { mint, traderPublicKey, type, amount, newBalance, price, timestamp });
     } catch (error) {
-      console.error('Error handling trade in TraderManager:', error);
-      errorLogger.logError(error, 'TraderManager.handleTrade', {
-        mint,
-        traderPublicKey,
-        type,
-        amount,
-        newBalance
-      });
+      console.error('Error handling trade:', error.message, { mint, traderPublicKey, type, amount, newBalance, price, timestamp });
     }
   }
 

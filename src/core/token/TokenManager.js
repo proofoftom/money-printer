@@ -86,157 +86,61 @@ class TokenManager extends EventEmitter {
   }
 
   async handleTokenUpdate(tradeData) {
-    const token = this.tokens.get(tradeData.mint);
-    if (!token) return;
-
-    // Add trade amount for volume tracking if this is a trade
-    if (tradeData.txType === "buy" || tradeData.txType === "sell") {
-      tradeData.tradeAmount = tradeData.tokenAmount;
-    }
-
-    // Update token data first
-    token.update(tradeData);
-
-    // Update missed opportunity tracking
-    this.safetyChecker.updateTrackedTokens(token);
-
-    // Convert market cap to USD for threshold comparisons
-    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-
-    // Get current position if exists
-    const position = this.positionManager.getPosition(token.mint);
-    if (position && token.state !== "inPosition") {
-      token.setState("inPosition");
-    }
-
-    switch (token.state) {
-      case "new":
-        // Check for pump conditions
-        if (token.isPumping()) {
-          token.setState("pumping");
-          this.emit("tokenPumping", token);
-        }
-        break;
-
-      case "pumping":
-        // Check for drawdown
-        if (token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MIN) {
-          if (token.isSafe()) {
-            // If token is safe, enter smaller position due to volatility
-            token.setState("open");
-            this.emit("tokenSafeForEntry", { token, positionSize: "small" });
-          } else {
-            // If unsafe, move to drawdown state
-            token.setState("drawdown");
-            this.emit("tokenInDrawdown", token);
-          }
-        }
-        break;
-
-      case "drawdown":
-        // Check for recovery or new drawdown cycle
-        const gainFromBottom = token.getGainPercentage();
-        if (gainFromBottom >= config.RECOVERY.GAIN.MIN) {
-          if (token.isSafe()) {
-            if (gainFromBottom <= config.RECOVERY.GAIN.MAX_ENTRY) {
-              // Safe and within entry threshold - open full position
-              token.setState("open");
-              this.emit("tokenSafeForEntry", { token, positionSize: "full" });
-            } else {
-              // Gained too much - back to drawdown
-              token.setState("drawdown");
-            }
-          } else {
-            // Unsafe but recovering - move to recovery state
-            token.setState("recovery");
-            this.emit("tokenRecovering", token);
-          }
-        } else if (
-          token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MAX
-        ) {
-          // Too much drawdown - mark as dead
-          token.setState("dead");
-          this.emit("tokenDead", token);
-        }
-        break;
-
-      case "recovery":
-        // Monitor recovery progress
-        const currentGain = token.getGainPercentage();
-        if (token.isSafe()) {
-          if (currentGain <= config.RECOVERY.GAIN.MAX_ENTRY) {
-            // Safe and within entry threshold - open medium position
-            token.setState("open");
-            this.emit("tokenSafeForEntry", { token, positionSize: "medium" });
-          }
-        } else if (
-          token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MIN
-        ) {
-          // New drawdown cycle - reset to drawdown state
-          token.setState("drawdown");
-          this.emit("tokenInDrawdown", token);
-        }
-        break;
-
-      case "open":
-        // Monitor position
-        if (position && position.isStopLossHit()) {
-          token.setState("closed");
-          this.emit("tokenPositionClosed", token);
-        }
-        break;
-
-      case "dead":
-        this.emit("tokenDead", token);
-        this.webSocketManager.unsubscribeFromToken(token.mint);
-        break;
-
-      case "inPosition":
-        // Skip if position already exists
-        if (this.positionManager.hasPosition(token.mint)) {
-          break;
-        }
-        this.emit("tokenPositionOpened", token);
-        break;
-    }
-
-    // Update safety checker
-    this.safetyChecker.updateTrackedTokens(token);
-
-    // Check for token death in any state
-    if (marketCapUSD <= config.MCAP.DEAD) {
-      // Only mark tokens as dead if they've reached PUMP state
-      if (token.highestMarketCap >= config.MCAP.PUMP) {
-        if (position) {
-          const closeResult = this.positionManager.closePosition(
-            token.mint,
-            token.marketCapSol
-          );
-          if (closeResult) {
-            token.setState("dead");
-            this.emit("positionClosed", { token, reason: "dead" });
-            this.webSocketManager.unsubscribeFromToken(token.mint);
-          }
-        } else {
-          token.setState("dead");
-          this.webSocketManager.unsubscribeFromToken(token.mint);
-        }
+    try {
+      const token = this.tokens.get(tradeData.mint);
+      if (!token) {
+        console.warn(`No token found for mint: ${tradeData.mint}`);
+        return;
       }
-    }
 
-    // Check for recovery pattern after update
-    if (token.state === "drawdown" || token.state === "recovery") {
-      const metrics = token.recoveryMetrics;
-      if (metrics && this.isStrongRecoverySetup(token)) {
-        this.emit("recoveryOpportunity", {
-          token,
-          metrics,
-          reason: "patternDetected",
+      // Update token state with trade data
+      token.vTokensInBondingCurve = tradeData.vTokensInBondingCurve;
+      token.vSolInBondingCurve = tradeData.vSolInBondingCurve;
+      token.marketCapSol = tradeData.marketCap;
+
+      // Record the trade in token history
+      const trade = {
+        type: tradeData.type,
+        tokenAmount: tradeData.tokenAmount,
+        newTokenBalance: tradeData.newTokenBalance,
+        traderPublicKey: tradeData.traderPublicKey,
+        timestamp: tradeData.timestamp,
+        price: tradeData.price,
+        marketCap: tradeData.marketCap
+      };
+
+      // Record trade and get updated metrics
+      const success = await token.recordTrade(trade);
+      if (!success) {
+        console.error(`Failed to record trade for token ${token.symbol}`);
+        return;
+      }
+
+      // Update trader data
+      if (this.traderManager) {
+        this.traderManager.handleTrade({
+          mint: token.mint,
+          traderPublicKey: tradeData.traderPublicKey,
+          type: tradeData.type,
+          amount: tradeData.tokenAmount,
+          newBalance: tradeData.newTokenBalance,
+          price: tradeData.price,
+          timestamp: tradeData.timestamp
         });
       }
-    }
 
-    this.emit("tokenUpdated", token);
+      // Check for position opportunities
+      if (token.state === 'recovery' && !this.positionManager.hasPosition(token.mint)) {
+        const safetyCheck = await this.safetyChecker.runSecurityChecks(token);
+        if (safetyCheck.passed) {
+          token.emit('readyForPosition', token);
+        }
+      }
+
+    } catch (error) {
+      console.error('Error handling token update:', error);
+      console.error('TokenManager.handleTokenUpdate', { tradeData });
+    }
   }
 
   calculatePositionSize(token, availableBalance) {

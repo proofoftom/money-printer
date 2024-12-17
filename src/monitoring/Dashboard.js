@@ -2,8 +2,9 @@ const blessed = require("blessed");
 const contrib = require("blessed-contrib");
 const TokenCard = require('./TokenCard');
 const TokenDetailModal = require('./TokenDetailModal');
+const EventEmitter = require('events');
 
-class Dashboard {
+class Dashboard extends EventEmitter {
   constructor(
     wallet,
     tokenManager,
@@ -13,284 +14,424 @@ class Dashboard {
     traderManager,
     config
   ) {
-    this.wallet = wallet;
-    this.tokenManager = tokenManager;
-    this.positionManager = positionManager;
-    this.safetyChecker = safetyChecker;
-    this.priceManager = priceManager;
-    this.traderManager = traderManager;
-    this.config = config;
-    this.trades = [];
-    this.balanceHistory = {
-      x: [],
-      y: [],
-    };
+    // Initialize EventEmitter first
+    super();
+    
+    try {
+      // Store dependencies
+      this.wallet = wallet;
+      this.tokenManager = tokenManager;
+      this.positionManager = positionManager;
+      this.safetyChecker = safetyChecker;
+      this.priceManager = priceManager;
+      this.traderManager = traderManager;
+      this.config = config;
 
-    // Store original console methods before overriding
-    this.originalConsoleLog = console.log;
-    this.originalConsoleError = console.error;
+      // Initialize state
+      this.trades = [];
+      this.balanceHistory = {
+        x: [],
+        y: [],
+      };
+      this.tokenCards = new Map();
+      this.selectedTokenIndex = 0;
+      this.sortMetric = 'marketCap';
 
-    // Override console methods immediately to prevent any logs from bypassing the dashboard
-    console.log = (...args) => {
-      if (!this.statusBox) {
-        this.originalConsoleLog.apply(console, args);
-        return;
-      }
-      this.logStatus(args.join(" "));
-    };
+      // Store original console methods
+      this.originalConsoleLog = console.log;
+      this.originalConsoleError = console.error;
 
-    console.error = (...args) => {
-      if (!this.statusBox) {
-        this.originalConsoleError.apply(console, args);
-        return;
-      }
-      this.logStatus(args.join(" "), "error");
-    };
+      // Initialize UI
+      this.initializeDashboard();
 
-    // Subscribe to token events
-    this.subscribeToTokenEvents();
+      // Set up console overrides now that statusBox exists
+      this.setupConsoleOverrides();
 
-    // Listen for trade events from PositionManager
-    this.positionManager.on("trade", (tradeData) => {
-      this.logTrade(tradeData);
-    });
-
-    this.tokenCards = new Map();
-    this.selectedTokenIndex = 0;
-    this.sortMetric = 'marketCap'; // Default sort
-
-    this.initializeDashboard();
+      // Set up event handlers
+      this.setupEventHandling();
+    } catch (error) {
+      console.error('Error initializing Dashboard:', error);
+      throw error;
+    }
   }
 
-  subscribeToTokenEvents() {
-    // Listen for trade events from all tracked tokens
-    Array.from(this.tokenManager.tokens.values()).forEach(token => {
-      token.on('trade', ({ token, trade, metrics }) => {
-        // Handle trade event based on WebSocket message structure
-        const tradeInfo = {
-          type: trade.txType === 'buy' ? 'BUY' : 'SELL',
-          mint: trade.mint,
-          symbol: token.symbol,
-          tokenAmount: trade.tokenAmount,
-          newTokenBalance: trade.newTokenBalance,
-          traderPublicKey: trade.traderPublicKey,
-          marketCapSol: trade.marketCapSol,
-          price: metrics.price,
-          metrics: {
-            volume: metrics.volume,
-            recovery: metrics.recovery
-          }
-        };
+  setupConsoleOverrides() {
+    // Override console.log to write to status box
+    console.log = (...args) => {
+      if (this.statusBox) {
+        const message = args.map(arg => 
+          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+        ).join(' ');
+        this.statusBox.log(message);
+        this.screen.render();
+      }
+      // Also write to original console for debugging
+      this.originalConsoleLog(...args);
+    };
 
-        this.logTrade(tradeInfo);
-        this.updateMetricsBoxes(metrics);
-      });
-
-      token.on('stateChanged', () => {
-        this.updateTokenStateBoxes();
-      });
-
-      token.on('tradeError', (error) => {
-        this.logStatus(`Trade error for ${token.symbol}: ${error.message}`, 'error');
-      });
-    });
-
-    // Listen for new token additions
-    this.tokenManager.on('tokenAdded', (token) => {
-      this.subscribeToTokenEvents(token);
-      this.updateTokenStateBoxes();
-    });
+    // Override console.error to write to status box in red
+    console.error = (...args) => {
+      if (this.statusBox) {
+        const message = args.map(arg => 
+          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+        ).join(' ');
+        this.statusBox.log(`{red-fg}${message}{/red-fg}`);
+        this.screen.render();
+      }
+      // Also write to original console for debugging
+      this.originalConsoleError(...args);
+    };
   }
 
   initializeDashboard() {
-    // Initialize screen
-    this.screen = blessed.screen({
-      smartCSR: true,
-      title: "Money Printer Trading Dashboard",
-    });
+    try {
+      // Create blessed screen
+      this.screen = blessed.screen({
+        smartCSR: true,
+        title: 'Token Trading Dashboard'
+      });
 
-    // Create grid
-    this.grid = new contrib.grid({
-      rows: 12,
-      cols: 12,
-      screen: this.screen,
-    });
+      // Create status box for logging
+      this.statusBox = blessed.log({
+        parent: this.screen,
+        bottom: 0,
+        left: 0,
+        height: '25%',
+        width: '100%',
+        border: { type: 'line' },
+        label: ' System Status ',
+        tags: true,
+        keys: true,
+        vi: true,
+        mouse: true,
+        scrollback: 100,
+        scrollbar: {
+          ch: ' ',
+          track: {
+            bg: 'yellow'
+          },
+          style: {
+            inverse: true
+          }
+        }
+      });
 
-    this.createLayout();
-    this.setupEventHandlers();
+      // Create layout grid
+      this.grid = new contrib.grid({
+        rows: 12,
+        cols: 12,
+        screen: this.screen,
+      });
 
-    // Set up periodic updates
-    setInterval(() => this.updateDashboard(), 1000);
+      // Create base layout
+      this.createLayout();
 
-    // Initial render
-    this.screen.render();
+      // Set up periodic updates
+      this.setupPeriodicUpdates();
+
+      // Initial render
+      this.screen.render();
+    } catch (error) {
+      console.error('Error initializing dashboard:', error);
+      throw error;
+    }
+  }
+
+  setupEventHandling() {
+    try {
+      // Set max listeners to avoid memory leak warnings
+      this.setMaxListeners(50);
+      this.tokenManager.setMaxListeners(50);
+      
+      // Handle token events
+      this.tokenManager.on('tokenAdded', (token) => {
+        try {
+          this.logStatus(`New token added: ${token.symbol}`);
+          this.refreshTokenGrid();
+        } catch (error) {
+          console.error('Error handling tokenAdded event:', error);
+        }
+      });
+
+      this.tokenManager.on('tokenRemoved', (token) => {
+        try {
+          this.logStatus(`Token removed: ${token.symbol}`);
+          // Clean up token card if it exists
+          const card = this.tokenCards.get(token.mint);
+          if (card) {
+            card.cleanup();
+            this.tokenCards.delete(token.mint);
+          }
+          this.refreshTokenGrid();
+        } catch (error) {
+          console.error('Error handling tokenRemoved event:', error);
+        }
+      });
+
+      // Handle trade events
+      this.tokenManager.on('trade', (token, trade) => {
+        try {
+          if (!token || !trade) {
+            console.error('Invalid trade event data:', { token, trade });
+            return;
+          }
+
+          // Update token card
+          const card = this.tokenCards.get(token.mint);
+          if (card) {
+            card.updateMetrics(token);
+          }
+
+          // Log trade
+          this.logTrade({
+            type: trade.type,
+            mint: token.mint,
+            symbol: token.symbol,
+            amount: trade.amount,
+            price: trade.price
+          });
+
+          // Update metrics
+          this.handleMetricsUpdate(token);
+        } catch (error) {
+          console.error('Error handling trade event:', error);
+        }
+      });
+
+      // Handle wallet balance updates
+      if (this.wallet) {
+        this.wallet.on('balanceUpdate', ({ newBalance, change }) => {
+          try {
+            this.updateBalanceHistory();
+            this.updateWalletStatus();
+            this.logStatus(`Wallet balance updated: ${change > 0 ? '+' : ''}${change.toFixed(4)} SOL`);
+          } catch (error) {
+            console.error('Error handling balance update:', error);
+          }
+        });
+
+        this.wallet.on('trade', ({ profitLoss }) => {
+          try {
+            this.logStatus(`Trade completed: ${profitLoss > 0 ? '+' : ''}${profitLoss.toFixed(4)} SOL`);
+            this.updateBalanceHistory();
+          } catch (error) {
+            console.error('Error handling trade event:', error);
+          }
+        });
+      }
+
+      // Handle error events
+      this.tokenManager.on('error', (error) => {
+        this.logStatus(`Error: ${error.message}`, 'error');
+      });
+
+      this.logStatus('Event handlers initialized');
+    } catch (error) {
+      console.error('Error setting up event handlers:', error);
+      throw error;
+    }
+  }
+
+  handleMetricsUpdate(token) {
+    try {
+      if (!token) return;
+
+      const metrics = {
+        price: token.currentPrice,
+        marketCap: token.marketCapSol,
+        volume: token.volume24h,
+        holders: token.uniqueHolders
+      };
+
+      this.updateMetricsBoxes(metrics);
+      this.screen.render();
+    } catch (error) {
+      console.error('Error updating metrics:', error);
+    }
   }
 
   createLayout() {
-    // Create wallet status box (top row)
-    this.walletBox = this.grid.set(0, 0, 3, 3, blessed.box, {
-      label: " Wallet Status ",
-      content: "Initializing...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      style: {
-        label: { bold: true },
-      },
-    });
+    try {
+      // Create wallet status box (top row)
+      this.walletBox = this.grid.set(0, 0, 3, 3, blessed.box, {
+        label: " Wallet Status ",
+        content: this.getWalletStatus(),
+        tags: true,
+        border: {
+          type: "line",
+        },
+        style: {
+          fg: "white",
+          border: {
+            fg: "white",
+          },
+        },
+      });
 
-    // Create balance history (top row)
-    this.balanceChart = this.grid.set(0, 3, 3, 3, contrib.line, {
-      style: {
-        line: "yellow",
-        text: "green",
-        baseline: "black",
-      },
-      xLabelPadding: 3,
-      xPadding: 5,
-      label: " Balance History ",
-      showLegend: false,
-      wholeNumbersOnly: false,
-    });
+      // Create status box
+      this.statusBox = this.grid.set(0, 3, 3, 9, blessed.log, {
+        label: " Status ",
+        tags: true,
+        scrollable: true,
+        alwaysScroll: true,
+        scrollbar: {
+          ch: " ",
+          inverse: true,
+        },
+        border: {
+          type: "line",
+        },
+        style: {
+          fg: "white",
+          border: {
+            fg: "white",
+          },
+        },
+      });
 
-    // Create trade history box (top row)
-    this.tradeBox = this.grid.set(0, 6, 3, 3, blessed.box, {
-      label: " Trade History ",
-      content: "Waiting for trades...",
-      border: "line",
-      tags: true,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
+      // Create balance history (top row)
+      this.balanceChart = this.grid.set(0, 3, 3, 3, contrib.line, {
+        style: {
+          line: "yellow",
+          text: "green",
+          baseline: "black",
+        },
+        xLabelPadding: 3,
+        xPadding: 5,
+        label: " Balance History ",
+        showLegend: false,
+        wholeNumbersOnly: false,
+      });
 
-    // Create status log (top row)
-    this.statusBox = this.grid.set(0, 9, 3, 3, blessed.log, {
-      label: " System Status ",
-      scrollable: true,
-      alwaysScroll: true,
-      border: "line",
-      tags: true,
-      padding: 1,
-      style: {
-        label: { bold: true },
-      },
-    });
+      // Create trade history box (top row)
+      this.tradeBox = this.grid.set(0, 6, 3, 3, blessed.box, {
+        label: " Trade History ",
+        content: "Waiting for trades...",
+        border: "line",
+        tags: true,
+        padding: 1,
+        scrollable: true,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    // Token state boxes in second row, extending to bottom
-    // Each state gets equal width (12/5 = ~2.4 columns each)
-    this.newTokensBox = this.grid.set(3, 0, 9, 2, blessed.box, {
-      label: " New Tokens ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
+      // Create token grid
+      this.tokenGrid = blessed.box({
+        parent: this.screen,
+        top: '30%',
+        left: 0,
+        width: '100%',
+        height: '70%',
+        scrollable: true,
+        mouse: true,
+        keys: true,
+        vi: true
+      });
 
-    this.pumpingBox = this.grid.set(3, 2, 9, 2, blessed.box, {
-      label: " Pumping ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
+      // Token state boxes in second row, extending to bottom
+      // Each state gets equal width (12/5 = ~2.4 columns each)
+      this.newTokensBox = this.grid.set(3, 0, 9, 2, blessed.box, {
+        label: " New Tokens ",
+        content: "Waiting...",
+        border: "line",
+        tags: false,
+        padding: 1,
+        scrollable: true,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    this.drawdownBox = this.grid.set(3, 4, 9, 2, blessed.box, {
-      label: " Drawdown ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
+      this.pumpingBox = this.grid.set(3, 2, 9, 2, blessed.box, {
+        label: " Pumping ",
+        content: "Waiting...",
+        border: "line",
+        tags: false,
+        padding: 1,
+        scrollable: true,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    this.recoveryBox = this.grid.set(3, 6, 9, 2, blessed.box, {
-      label: " Recovery ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
+      this.drawdownBox = this.grid.set(3, 4, 9, 2, blessed.box, {
+        label: " Drawdown ",
+        content: "Waiting...",
+        border: "line",
+        tags: false,
+        padding: 1,
+        scrollable: true,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    // Active Positions box (half width)
-    this.activePositionsBox = this.grid.set(3, 8, 9, 2, blessed.box, {
-      label: " Active Positions ",
-      content: "Waiting...",
-      border: "line",
-      tags: true,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
+      this.recoveryBox = this.grid.set(3, 6, 9, 2, blessed.box, {
+        label: " Recovery ",
+        content: "Waiting...",
+        border: "line",
+        tags: false,
+        padding: 1,
+        scrollable: true,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    // Stack metrics boxes to the right of Active Positions
-    this.traderMetricsBox = this.grid.set(3, 10, 3, 2, blessed.box, {
-      label: " Trader Metrics ",
-      content: "Loading trader data...",
-      border: "line",
-      tags: true,
-      padding: 1,
-      style: {
-        label: { bold: true },
-      },
-    });
+      // Active Positions box (half width)
+      this.activePositionsBox = this.grid.set(3, 8, 9, 2, blessed.box, {
+        label: " Active Positions ",
+        content: "Waiting...",
+        border: "line",
+        tags: true,
+        padding: 1,
+        scrollable: true,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    this.traderReputationBox = this.grid.set(6, 10, 3, 2, blessed.box, {
-      label: " Trader Reputation ",
-      content: "Loading reputation data...",
-      border: "line",
-      tags: true,
-      padding: 1,
-      style: {
-        label: { bold: true },
-      },
-    });
+      // Stack metrics boxes to the right of Active Positions
+      this.traderMetricsBox = this.grid.set(3, 10, 3, 2, blessed.box, {
+        label: " Trader Metrics ",
+        content: "Loading trader data...",
+        border: "line",
+        tags: true,
+        padding: 1,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    this.tradingPatternsBox = this.grid.set(9, 10, 3, 2, blessed.box, {
-      label: " Trading Patterns ",
-      content: "Analyzing patterns...",
-      border: "line",
-      tags: true,
-      padding: 1,
-      style: {
-        label: { bold: true },
-      },
-    });
+      this.traderReputationBox = this.grid.set(6, 10, 3, 2, blessed.box, {
+        label: " Trader Reputation ",
+        content: "Loading reputation data...",
+        border: "line",
+        tags: true,
+        padding: 1,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    // Create token grid
-    this.tokenGrid = blessed.box({
-      parent: this.screen,
-      top: '30%',
-      left: 0,
-      width: '100%',
-      height: '70%',
-      scrollable: true,
-      mouse: true,
-      keys: true,
-      vi: true
-    });
+      this.tradingPatternsBox = this.grid.set(9, 10, 3, 2, blessed.box, {
+        label: " Trading Patterns ",
+        content: "Analyzing patterns...",
+        border: "line",
+        tags: true,
+        padding: 1,
+        style: {
+          label: { bold: true },
+        },
+      });
 
-    // Setup keyboard handlers
-    this.setupKeyboardHandlers();
+      // Setup keyboard handlers
+      this.setupKeyboardHandlers();
+    } catch (error) {
+      console.error('Error creating layout:', error);
+      throw error;
+    }
   }
 
   setupKeyboardHandlers() {
@@ -610,231 +751,6 @@ class Dashboard {
     }
   }
 
-  renderTokenMetrics(token) {
-    const { MCAP, RECOVERY, SAFETY } = this.config;
-    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol || 0) || 0;
-    
-    // Enhanced base metrics with null checks
-    const metrics = {
-      'Market Cap': `$${marketCapUSD.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`,
-      'Market Cap %': `${(((marketCapUSD / (MCAP.MAX_ENTRY || 1)) * 100) || 0).toFixed(1)}%`,
-      'Volume (SOL)': this.formatVolume(token.getRecentVolume(300000) || 0), // 5min volume
-      'Holders': token.getHolderCount() || 0,
-      'Age': this.formatTime((Date.now() - (token.minted || Date.now())) || 0)
-    };
-
-    // Get market structure analysis with null checks
-    const marketStructure = token.analyzeMarketStructure() || {};
-    const recoveryStrength = token.getRecoveryStrength() || {};
-    const pumpMetrics = token.pumpMetrics || {};
-
-    // State-specific metrics with enhanced null checks
-    switch (token.state) {
-      case 'new':
-        const momentum = token.getPriceMomentum() || 0;
-        return {
-          ...metrics,
-          'Price Momentum': `${momentum.toFixed(1)}%`,
-          'Volume Change': `${(token.getVolumeChange(300) || 0).toFixed(0)}%`,
-          'Buy Pressure': `${(marketStructure.buyPressure || 0).toFixed(0)}%`,
-          'Market Health': `${(marketStructure.overallHealth || 0).toFixed(0)}%`,
-          'To Pump': `${(((MCAP.PUMP - marketCapUSD) / (MCAP.PUMP || 1) * 100) || 0).toFixed(1)}%`
-        };
-
-      case 'pumping':
-        return {
-          ...metrics,
-          'Pump Count': pumpMetrics.pumpCount || 0,
-          'Gain Rate': `${(pumpMetrics.highestGainRate || 0).toFixed(1)}%/min`,
-          'Price Accel': `${(pumpMetrics.priceAcceleration || 0).toFixed(1)}x`,
-          'Buy Pressure': `${(marketStructure.buyPressure || 0).toFixed(0)}%`,
-          'Market Health': `${(marketStructure.overallHealth || 0).toFixed(0)}%`,
-          'Volume Spikes': (pumpMetrics.volumeSpikes || []).length
-        };
-
-      case 'drawdown':
-        return {
-          ...metrics,
-          'Drawdown': `${(token.getDrawdownPercentage() || 0).toFixed(1)}%`,
-          'Time in DD': this.formatTime((Date.now() - (token.drawdownStartTime || Date.now()))),
-          'Structure Score': `${((marketStructure.structureScore || {}).overall || 0).toFixed(0)}%`,
-          'Volume Health': `${(marketStructure.volumeHealth || 0).toFixed(0)}%`,
-          'Buy Ratio': `${(marketStructure.buyRatio || 0).toFixed(2)}`,
-          'Above Dead': `${(((marketCapUSD - MCAP.DEAD) / (MCAP.DEAD || 1) * 100) || 0).toFixed(1)}%`
-        };
-
-      case 'recovery':
-        const breakdown = recoveryStrength.breakdown || {};
-        return {
-          ...metrics,
-          'Recovery %': `${(recoveryStrength.total || 0).toFixed(1)}%`,
-          'Buy Pressure': `${((breakdown.buyPressure?.buyRatio) || 0).toFixed(2)}`,
-          'Volume Growth': `${(breakdown.volumeGrowth || 0).toFixed(0)}%`,
-          'Price Stability': `${(breakdown.priceStability || 0).toFixed(0)}%`,
-          'Market Health': `${(marketStructure.overallHealth || 0).toFixed(0)}%`
-        };
-
-      case 'open':
-        const position = this.positionManager.getPositionByMint(token.mint);
-        if (!position) return metrics;
-        
-        return {
-          ...metrics,
-          'Entry Price': `$${this.priceManager.solToUSD(position.entryPrice || 0).toFixed(4)}`,
-          'Current P/L': `${(((token.getCurrentPrice() - (position.entryPrice || 0)) / (position.entryPrice || 1) * 100) || 0).toFixed(1)}%`,
-          'Size Left': `${((position.remainingSize || 0) * 100).toFixed(0)}%`,
-          'Max Upside': `${(position.maxUpside || 0).toFixed(1)}%`,
-          'Max Drawdown': `${(position.maxDrawdown || 0).toFixed(1)}%`
-        };
-
-      case 'unsafe':
-        return {
-          ...metrics,
-          'Unsafe Reason': token.unsafeReason || 'Unknown',
-          'Market Health': `${(marketStructure.overallHealth || 0).toFixed(0)}%`,
-          'Volume Health': `${(marketStructure.volumeHealth || 0).toFixed(0)}%`
-        };
-
-      default:
-        return metrics;
-    }
-  }
-
-  updateDashboard() {
-    try {
-      this.walletBox.setContent(this.getWalletStatus());
-      this.newTokensBox.setContent(this.getTokensByState("new"));
-      this.pumpingBox.setContent(this.getTokensByState("pumping"));
-      this.drawdownBox.setContent(this.getTokensByState("drawdown"));
-      this.recoveryBox.setContent(this.getTokensByState("recovery"));
-      this.activePositionsBox.setContent(this.getActivePositions());
-      this.tradeBox.setContent(this.getTradeHistory());
-      this.updateBalanceHistory();
-      this.updateTraderMetrics();
-      this.updateTraderReputation();
-      this.updateTradingPatterns();
-      this.screen.render();
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  updateTraderMetrics() {
-    if (!this.traderManager) return;
-
-    const trader = this.traderManager.getTrader(this.wallet.publicKey);
-    if (!trader) return;
-
-    const metrics = [
-      `Total Trades: ${trader.reputation.totalTrades}`,
-      `Profitable Trades: ${trader.reputation.profitableTrades}`,
-      `Win Rate: ${((trader.reputation.profitableTrades / trader.reputation.totalTrades) * 100).toFixed(2)}%`,
-      `Avg Hold Time: ${(trader.reputation.averageHoldTime / 1000 / 60).toFixed(2)} mins`,
-      `Recovery Win Rate: ${trader.recoveryMetrics.recoveryWinRate.toFixed(2)}%`,
-      `Best Recovery: ${trader.recoveryMetrics.bestRecoveryGain.toFixed(2)}%`
-    ].join('\n');
-
-    this.traderMetricsBox.setContent(metrics);
-  }
-
-  updateTraderReputation() {
-    if (!this.traderManager) return;
-
-    const trader = this.traderManager.getTrader(this.wallet.publicKey);
-    if (!trader) return;
-
-    const reputation = [
-      `Reputation Score: ${trader.reputation.score}`,
-      `Wash Trading Incidents: ${trader.reputation.washTradingIncidents}`,
-      `Rug Pull Involvements: ${trader.reputation.rugPullInvolvements}`,
-      `Successful Pumps: ${trader.reputation.successfulPumps}`,
-      `Failed Pumps: ${trader.reputation.failedPumps}`
-    ].join('\n');
-
-    this.traderReputationBox.setContent(reputation);
-  }
-
-  updateTradingPatterns() {
-    if (!this.traderManager) return;
-
-    const trader = this.traderManager.getTrader(this.wallet.publicKey);
-    if (!trader) return;
-
-    const patterns = [
-      `Buy/Sell Ratio: ${trader.patterns.tradingBehavior.buyToSellRatio.toFixed(2)}`,
-      `Avg Trade Size: ${trader.patterns.tradingBehavior.averageTradeSize.toFixed(2)}`,
-      `Trade Frequency: ${trader.patterns.tradingBehavior.tradeFrequency.toFixed(2)}/hr`,
-      `Trading Style:`,
-      ` Early Accumulator: ${trader.patterns.recovery.recoveryStyle.earlyAccumulator}`,
-      ` Trend Follower: ${trader.patterns.recovery.recoveryStyle.trendFollower}`,
-      ` Breakout Trader: ${trader.patterns.recovery.recoveryStyle.breakoutTrader}`
-    ].join('\n');
-
-    this.tradingPatternsBox.setContent(patterns);
-  }
-
-  getTokensByState(state) {
-    try {
-      const tokens = Array.from(this.tokenManager.tokens.values()).filter(
-        (token) => token.state === state
-      );
-      return tokens;
-    } catch (error) {
-      console.error('Error getting tokens by state:', error);
-      return [];
-    }
-  }
-
-  formatTime(time) {
-    const hours = Math.floor(time / 3600);
-    const minutes = Math.floor((time % 3600) / 60);
-    const seconds = time % 60;
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-  }
-
-  logTrade({ type, mint, symbol, tokenAmount, newTokenBalance, traderPublicKey, marketCapSol, price, metrics }) {
-    try {
-      const timestamp = new Date().toLocaleTimeString();
-      const trade = {
-        timestamp,
-        type,
-        mint,
-        symbol,
-        tokenAmount,
-        newTokenBalance,
-        traderPublicKey: traderPublicKey ? traderPublicKey.slice(0, 8) + '...' : 'unknown',
-        marketCapSol: marketCapSol ? marketCapSol.toFixed(4) : 'N/A',
-        price: price ? price.toFixed(8) : 'N/A',
-        metrics
-      };
-
-      this.trades.unshift(trade);
-      if (this.trades.length > 100) {
-        this.trades.pop();
-      }
-
-      // Format trade for display
-      const color = type === 'BUY' ? '{green-fg}' : '{red-fg}';
-      const displayStr = [
-        `${timestamp} | ${color}${type}{/${type === 'BUY' ? 'green' : 'red'}-fg}`,
-        `${symbol} | ${trade.marketCapSol} SOL`,
-        `Amount: ${(tokenAmount || 0).toLocaleString()} | Price: ${trade.price}`,
-        `Trader: ${trade.traderPublicKey}`,
-        '─'.repeat(50)
-      ].join('\n');
-
-      if (this.tradeBox) {
-        let content = this.tradeBox.getContent();
-        content = displayStr + '\n' + content;
-        this.tradeBox.setContent(content);
-        this.screen.render();
-      }
-
-    } catch (error) {
-      this.logStatus(`Error logging trade: ${error.message}`, 'error');
-    }
-  }
-
   updateMetricsBoxes(metrics) {
     // Update trader metrics
     if (this.traderMetricsBox) {
@@ -901,6 +817,49 @@ class Dashboard {
         `Vol: ${volume}`
       ].join(' | ');
     }).join('\n');
+  }
+
+  setupPeriodicUpdates() {
+    // Update dashboard components every second
+    setInterval(() => {
+      // Update wallet status
+      this.updateWalletStatus();
+      
+      // Update token metrics
+      this.refreshTokenGrid();
+      
+      // Update trade history
+      this.updateTradeHistory();
+      
+      // Update balance chart
+      this.updateBalanceChart();
+      
+      // Render screen
+      this.screen.render();
+    }, 1000);
+  }
+
+  updateWalletStatus() {
+    if (this.walletBox) {
+      this.walletBox.setContent(this.getWalletStatus());
+    }
+  }
+
+  updateTradeHistory() {
+    if (this.tradesBox) {
+      // Get last 10 trades
+      const recentTrades = this.trades.slice(-10).reverse();
+      this.tradesBox.setContent(this.formatTradeHistory(recentTrades));
+    }
+  }
+
+  updateBalanceChart() {
+    if (this.balanceChart && this.balanceHistory.x.length > 0) {
+      this.balanceChart.setData({
+        x: this.balanceHistory.x,
+        y: this.balanceHistory.y,
+      });
+    }
   }
 }
 
