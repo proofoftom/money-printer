@@ -128,15 +128,15 @@ class Token extends EventEmitter {
     }
 
     // Update price tracking
-    this.updatePriceMetrics(this.calculateTokenPrice());
-
+    const newPrice = this.calculateTokenPrice();
+    
     // Update wallet data if trade occurred
     if (data.tokenAmount) {
-      const volumeInSol = Math.abs(data.tokenAmount * this.currentPrice);
+      const volumeInSol = Math.abs(data.tokenAmount * newPrice);
       this.updateWalletActivity(data.traderPublicKey, {
         amount: data.tokenAmount,
         volumeInSol,
-        priceChange: ((this.currentPrice - oldPrice) / oldPrice) * 100,
+        priceChange: ((newPrice - oldPrice) / oldPrice) * 100,
         timestamp: now,
         newBalance: data.newTokenBalance
       });
@@ -146,7 +146,15 @@ class Token extends EventEmitter {
       this.updateWalletBalance(data.traderPublicKey, data.newTokenBalance, now);
     }
 
-    // Update all metrics including volume
+    // Calculate volumes before price update
+    this.volume1m = this.getRecentVolume(60 * 1000);
+    this.volume5m = this.getRecentVolume(5 * 60 * 1000);
+    this.volume30m = this.getRecentVolume(30 * 60 * 1000);
+
+    // Update price metrics with volumes
+    this.updatePriceMetrics(newPrice);
+
+    // Update all metrics
     this.updateMetrics();
 
     // Emit price and volume updates together
@@ -172,24 +180,19 @@ class Token extends EventEmitter {
     this.priceBuffer.head = (this.priceBuffer.head + 1) % this.priceBuffer.size;
     this.priceBuffer.count = Math.min(this.priceBuffer.count + 1, this.priceBuffer.size);
     
-    // Calculate volumes for different time windows
-    const volume1m = this.getRecentVolume(60 * 1000);
-    const volume5m = this.getRecentVolume(5 * 60 * 1000);
-    const volume30m = this.getRecentVolume(30 * 60 * 1000);
-    
     // Calculate price acceleration
     const timeWindow = 60 * 1000; // 1 minute window for acceleration
     const oldPrice = this.getPriceAtTime(now - timeWindow);
     const acceleration = oldPrice ? ((newPrice - oldPrice) / oldPrice) * 100 / (timeWindow / 1000) : 0;
     
-    // Emit price update with volumes
+    // Emit price update with current volumes
     this.emit('priceUpdate', {
       price: newPrice,
       acceleration,
       pumpMetrics: this.pumpMetrics,
-      volume1m,
-      volume5m,
-      volume30m
+      volume1m: this.volume1m,
+      volume5m: this.volume5m,
+      volume30m: this.volume30m
     });
     
     // Check for pump conditions
