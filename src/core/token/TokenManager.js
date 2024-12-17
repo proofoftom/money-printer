@@ -40,7 +40,6 @@ class TokenManager extends EventEmitter {
       
       // Unsubscribe from WebSocket updates when token enters dead state
       if (to === "dead") {
-        console.log(`Token ${token.symbol || token.mint.slice(0, 8)} marked as dead, unsubscribing from updates`);
         this.webSocketManager.unsubscribeFromToken(token.mint);
       }
     });
@@ -48,7 +47,6 @@ class TokenManager extends EventEmitter {
     token.on("readyForPosition", async (token) => {
       // Check if we already have a position for this token
       if (this.positionManager.getPosition(token.mint)) {
-        console.log(`Position already exists for ${token.symbol || token.mint.slice(0, 8)}, skipping`);
         return;
       }
 
@@ -178,6 +176,19 @@ class TokenManager extends EventEmitter {
           token.setState("closed");
           this.emit("tokenPositionClosed", token);
         }
+        break;
+
+      case "dead":
+        this.emit("tokenDead", token);
+        this.webSocketManager.unsubscribeFromToken(token.mint);
+        break;
+
+      case "inPosition":
+        // Skip if position already exists
+        if (this.positionManager.hasPosition(token.mint)) {
+          break;
+        }
+        this.emit("tokenPositionOpened", token);
         break;
     }
 

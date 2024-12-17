@@ -34,42 +34,19 @@ class PositionManager extends EventEmitter {
   }
 
   handlePositionAdded(position) {
-    console.log(`
-New Position Added:
-- Mint: ${position.mint}
-- Entry Price: ${position.entryPrice} SOL
-- Size: ${position.size} SOL
-- Entry Time: ${new Date(position.entryTime).toISOString()}
-    `);
+    this.emit('positionEntered', position);
   }
 
   handlePositionUpdated(position) {
-    console.log(`
-Position Updated:
-- Mint: ${position.mint}
-- Current Price: ${position.currentPrice} SOL
-- P/L: ${position.getProfitLoss().toFixed(2)}%
-- Max Upside: ${position.maxUpside.toFixed(2)}%
-- Max Drawdown: ${position.maxDrawdown.toFixed(2)}%
-    `);
+    this.emit('positionUpdated', position);
   }
 
   handlePositionClosed(position) {
-    console.log(`
-Position Closed:
-- Mint: ${position.mint}
-- Final P/L: ${position.getProfitLoss().toFixed(2)}%
-- Hold Time: ${Math.round((position.closedAt - position.entryTime) / 1000)}s
-    `);
+    this.emit('positionExited', position);
   }
 
   handlePartialExit(position) {
-    console.log(`
-Partial Exit:
-- Mint: ${position.mint}
-- Remaining Size: ${(position.remainingSize * 100).toFixed(2)}%
-- Partial Exits: ${position.partialExits.length}
-    `);
+    this.emit('partialExit', position);
   }
 
   handleRecoveryAccumulation({ mint, metrics }) {
@@ -105,6 +82,50 @@ Partial Exit:
     if (metrics.buyPressure < 0.3 || metrics.marketStructure === 'bearish') {
       this.closePosition(mint, position.currentPrice);
     }
+  }
+
+  async enterPosition(token, options = {}) {
+    const { size = config.POSITION.MAX_SOL } = options;
+
+    // Create and store the new position
+    const position = new Position(token, {
+      size,
+      entryPrice: token.currentPrice,
+      timestamp: Date.now()
+    });
+
+    this.stateManager.addPosition(position);
+    await this.stateManager.saveState();
+
+    this.emit("positionEntered", position);
+    return position;
+  }
+
+  async exitPosition(position, reason = "manual") {
+    const profitLoss = position.calculateProfitLoss();
+    
+    this.stateManager.closePosition(position.mint);
+    await this.stateManager.saveState();
+
+    this.emit("positionExited", { position, profitLoss, reason });
+    return { profitLoss, reason };
+  }
+
+  async updatePosition(mint, marketCapSol, volumeData) {
+    const position = this.getPosition(mint);
+    if (!position) return null;
+
+    // Check if position no longer meets criteria
+    if (!await this.meetsHoldingCriteria(position, marketCapSol, volumeData)) {
+      return this.exitPosition(position, "criteria_not_met");
+    }
+
+    // Check recovery conditions
+    if (position.isRecoveryPosition && !this.checkRecoveryConditions(position)) {
+      return this.exitPosition(position, "recovery_failed");
+    }
+
+    return null;
   }
 
   async openPosition(token) {
@@ -344,7 +365,6 @@ Partial Exit:
       try {
         // Check if position meets current safety criteria
         if (!this.meetsCurrentCriteria(position)) {
-          console.log(`Position ${position.mint} no longer meets criteria - considering exit`);
           this.considerExit(position);
         }
 
@@ -377,7 +397,6 @@ Partial Exit:
     // Check for deteriorating recovery conditions
     if (metrics.recoveryStrength < config.RECOVERY.MIN_STRENGTH ||
         metrics.marketStructure === 'bearish') {
-      console.log(`Recovery conditions deteriorating for ${position.mint}`);
       this.considerExit(position);
     }
   }

@@ -310,6 +310,20 @@ class TokenStateManager extends EventEmitter {
     this.setState(token, newState);
     errorLogger.log(`Moved token to state ${newState}: ${reason}`);
   }
+
+  async loadState() {
+    try {
+      const data = await this.dataManager.loadData('tokenStates');
+      if (data) {
+        data.forEach(tokenState => {
+          this.tokens.set(tokenState.mint, tokenState);
+        });
+        this.emit('statesLoaded', this.tokens);
+      }
+    } catch (error) {
+      this.errorLogger.logError(error, 'TokenStateManager.loadState');
+    }
+  }
 }
 
 module.exports = TokenStateManager;
