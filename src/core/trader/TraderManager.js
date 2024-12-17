@@ -24,7 +24,18 @@ class TraderManager extends EventEmitter {
       
       // Set up periodic pattern analysis
       this.analysisInterval = setInterval(() => this.analyzeGlobalPatterns(), config.TRADER.ANALYSIS_INTERVAL || 300000);
+      
+      // Recovery pattern analysis
+      this.recoveryInterval = setInterval(() => this.analyzeRecoveryPatterns(), config.TRADER.RECOVERY_ANALYSIS_INTERVAL || 60000);
     }
+    
+    // Track top recovery traders
+    this.topRecoveryTraders = {
+      byWinRate: [],
+      byVolume: [],
+      byAccumulationAccuracy: [],
+      byExpansionAccuracy: []
+    };
   }
 
   ensureDataDirectory() {
@@ -409,7 +420,104 @@ class TraderManager extends EventEmitter {
     if (this.analysisInterval) {
       clearInterval(this.analysisInterval);
     }
+    if (this.recoveryInterval) {
+      clearInterval(this.recoveryInterval);
+    }
     this.removeAllListeners();
+  }
+
+  analyzeRecoveryPatterns() {
+    const recoveryTraders = Array.from(this.traders.values())
+      .filter(trader => trader.recoveryMetrics.totalRecoveryTrades > 0);
+    
+    if (recoveryTraders.length === 0) return;
+    
+    // Update top traders lists
+    this.topRecoveryTraders = {
+      byWinRate: recoveryTraders
+        .sort((a, b) => b.recoveryMetrics.recoveryWinRate - a.recoveryMetrics.recoveryWinRate)
+        .slice(0, 10),
+        
+      byVolume: recoveryTraders
+        .sort((a, b) => b.recoveryMetrics.totalRecoveryTrades - a.recoveryMetrics.totalRecoveryTrades)
+        .slice(0, 10),
+        
+      byAccumulationAccuracy: recoveryTraders
+        .sort((a, b) => b.recoveryMetrics.accumulationAccuracy - a.recoveryMetrics.accumulationAccuracy)
+        .slice(0, 10),
+        
+      byExpansionAccuracy: recoveryTraders
+        .sort((a, b) => b.recoveryMetrics.expansionAccuracy - a.recoveryMetrics.expansionAccuracy)
+        .slice(0, 10)
+    };
+    
+    // Analyze recovery trading patterns
+    for (const trader of recoveryTraders) {
+      this.analyzeTraderRecoveryStyle(trader);
+    }
+    
+    // Emit recovery analysis update
+    this.emit('recoveryAnalysisUpdated', {
+      topTraders: this.topRecoveryTraders,
+      timestamp: Date.now()
+    });
+  }
+  
+  analyzeTraderRecoveryStyle(trader) {
+    const {
+      earlyAccumulator,
+      trendFollower,
+      breakoutTrader
+    } = trader.patterns.recovery.recoveryStyle;
+    
+    // Calculate dominant style
+    const styles = [
+      { name: 'accumulator', score: earlyAccumulator },
+      { name: 'trendFollower', score: trendFollower },
+      { name: 'breakoutTrader', score: breakoutTrader }
+    ];
+    
+    const dominantStyle = styles.reduce((prev, current) => 
+      (current.score > prev.score) ? current : prev
+    );
+    
+    // Calculate style effectiveness
+    const styleEffectiveness = {
+      accumulator: trader.recoveryMetrics.accumulationAccuracy,
+      trendFollower: trader.recoveryMetrics.expansionAccuracy,
+      breakoutTrader: trader.recoveryMetrics.recoveryWinRate
+    };
+    
+    // Emit trader style analysis
+    this.emit('traderRecoveryStyleAnalyzed', {
+      trader,
+      dominantStyle: dominantStyle.name,
+      effectiveness: styleEffectiveness,
+      timestamp: Date.now()
+    });
+  }
+  
+  getTopRecoveryTraders(category = 'byWinRate', limit = 10) {
+    if (!this.topRecoveryTraders[category]) {
+      throw new Error(`Invalid category: ${category}`);
+    }
+    return this.topRecoveryTraders[category].slice(0, limit);
+  }
+  
+  getTraderRecoveryStats(publicKey) {
+    const trader = this.traders.get(publicKey);
+    if (!trader) return null;
+    
+    return {
+      metrics: trader.recoveryMetrics,
+      patterns: trader.patterns.recovery,
+      ranking: {
+        byWinRate: this.topRecoveryTraders.byWinRate.findIndex(t => t.publicKey === publicKey),
+        byVolume: this.topRecoveryTraders.byVolume.findIndex(t => t.publicKey === publicKey),
+        byAccumulationAccuracy: this.topRecoveryTraders.byAccumulationAccuracy.findIndex(t => t.publicKey === publicKey),
+        byExpansionAccuracy: this.topRecoveryTraders.byExpansionAccuracy.findIndex(t => t.publicKey === publicKey)
+      }
+    };
   }
 }
 

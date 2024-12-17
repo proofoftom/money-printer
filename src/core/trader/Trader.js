@@ -49,11 +49,35 @@ class Trader extends EventEmitter {
         buyToSellRatio: 1,
         averageTradeSize: 0,
         tradeFrequency: 0
+      },
+      recovery: {
+        successfulRecoveries: 0,
+        failedRecoveries: 0,
+        avgRecoveryGain: 0,
+        recoveryTrades: [],
+        lastRecoveryTrade: null,
+        recoveryStyle: {
+          earlyAccumulator: 0,    // Score for buying during accumulation
+          trendFollower: 0,       // Score for buying during expansion
+          breakoutTrader: 0       // Score for buying at recovery confirmation
+        }
       }
+    };
+
+    // Recovery-specific metrics
+    this.recoveryMetrics = {
+      totalRecoveryTrades: 0,
+      profitableRecoveries: 0,
+      averageRecoveryHoldTime: 0,
+      bestRecoveryGain: 0,
+      accumulationAccuracy: 0,    // Success rate of accumulation phase entries
+      expansionAccuracy: 0,       // Success rate of expansion phase entries
+      averageRecoverySize: 0,     // Average position size in recoveries
+      recoveryWinRate: 0          // Overall recovery trade success rate
     };
   }
 
-  recordTrade(tradeData) {
+  recordTrade(trade, token) {
     const {
       mint,
       amount,
@@ -61,7 +85,7 @@ class Trader extends EventEmitter {
       type, // 'buy' or 'sell'
       timestamp = Date.now(),
       otherParty // public key of counter-party
-    } = tradeData;
+    } = trade;
 
     // Update last active
     this.lastActive = timestamp;
@@ -70,20 +94,20 @@ class Trader extends EventEmitter {
     this.updateTokenBalance(mint, amount, type);
 
     // Record trade in history
-    const trade = { mint, amount, price, type, timestamp, otherParty };
-    this.tradeHistory.all.push(trade);
+    const tradeData = { mint, amount, price, type, timestamp, otherParty };
+    this.tradeHistory.all.push(tradeData);
     
     // Update time-windowed histories
-    this.updateTimeWindowedHistory(trade);
+    this.updateTimeWindowedHistory(tradeData);
 
     // Update trading patterns
-    this.updateTradingPatterns(trade);
+    this.updateTradingPatterns(tradeData);
 
     // Check for wash trading
-    if (this.detectWashTrading(trade)) {
+    if (this.detectWashTrading(tradeData)) {
       this.reputation.washTradingIncidents++;
       this.reputation.score = Math.max(0, this.reputation.score - 5);
-      this.emit('washTradingDetected', { trader: this, trade });
+      this.emit('washTradingDetected', { trader: this, trade: tradeData });
     }
 
     // Update relationships
@@ -91,8 +115,18 @@ class Trader extends EventEmitter {
       this.updateTraderRelationship(otherParty);
     }
 
+    // Analyze recovery patterns if token is in recovery-related state
+    if (token.state === 'drawdown' || token.state === 'recovery') {
+      this.analyzeRecoveryPattern(tradeData, token);
+    }
+    
+    // Update recovery metrics for completed trades
+    if (trade.type === 'SELL' || trade.type === 'PARTIAL_SELL') {
+      this.updateRecoveryMetrics(tradeData, token, trade.profitLoss);
+    }
+
     // Emit trade event
-    this.emit('trade', { trader: this, trade });
+    this.emit('trade', { trader: this, trade: tradeData });
   }
 
   updateTokenBalance(mint, amount, type) {
@@ -176,6 +210,93 @@ class Trader extends EventEmitter {
         frequency: frequency + 1
       });
     }
+  }
+
+  analyzeRecoveryPattern(trade, token) {
+    if (!token.recoveryMetrics) return;
+    
+    const {
+      recoveryPhase,
+      recoveryStrength,
+      accumulationScore,
+      marketStructure
+    } = token.recoveryMetrics;
+    
+    // Track recovery trade
+    this.patterns.recovery.recoveryTrades.push({
+      mint: token.mint,
+      phase: recoveryPhase,
+      strength: recoveryStrength,
+      price: trade.price,
+      size: trade.size,
+      timestamp: Date.now()
+    });
+    
+    // Update recovery style scores
+    if (trade.type === 'BUY') {
+      switch (recoveryPhase) {
+        case 'accumulation':
+          this.patterns.recovery.recoveryStyle.earlyAccumulator += 
+            accumulationScore > 0.7 ? 1 : 0;
+          break;
+          
+        case 'expansion':
+          this.patterns.recovery.recoveryStyle.trendFollower +=
+            marketStructure === 'bullish' ? 1 : 0;
+          break;
+          
+        case 'distribution':
+          // Penalize buying in distribution
+          this.patterns.recovery.recoveryStyle.breakoutTrader -= 0.5;
+          break;
+      }
+    }
+    
+    this.patterns.recovery.lastRecoveryTrade = {
+      phase: recoveryPhase,
+      strength: recoveryStrength,
+      timestamp: Date.now()
+    };
+  }
+
+  updateRecoveryMetrics(trade, token, profitLoss) {
+    if (!token.recoveryMetrics) return;
+    
+    this.recoveryMetrics.totalRecoveryTrades++;
+    
+    if (profitLoss > 0) {
+      this.recoveryMetrics.profitableRecoveries++;
+      this.patterns.recovery.successfulRecoveries++;
+      
+      // Update best gain
+      if (profitLoss > this.recoveryMetrics.bestRecoveryGain) {
+        this.recoveryMetrics.bestRecoveryGain = profitLoss;
+      }
+    } else {
+      this.patterns.recovery.failedRecoveries++;
+    }
+    
+    // Update averages
+    this.recoveryMetrics.recoveryWinRate = 
+      this.recoveryMetrics.profitableRecoveries / this.recoveryMetrics.totalRecoveryTrades;
+    
+    this.recoveryMetrics.averageRecoverySize = 
+      (this.recoveryMetrics.averageRecoverySize * (this.recoveryMetrics.totalRecoveryTrades - 1) + trade.size) / 
+      this.recoveryMetrics.totalRecoveryTrades;
+    
+    // Update phase-specific accuracy
+    if (token.recoveryMetrics.recoveryPhase === 'accumulation') {
+      this.recoveryMetrics.accumulationAccuracy = 
+        (this.patterns.recovery.recoveryStyle.earlyAccumulator / this.recoveryMetrics.totalRecoveryTrades) * 100;
+    } else if (token.recoveryMetrics.recoveryPhase === 'expansion') {
+      this.recoveryMetrics.expansionAccuracy = 
+        (this.patterns.recovery.recoveryStyle.trendFollower / this.recoveryMetrics.totalRecoveryTrades) * 100;
+    }
+    
+    // Update average recovery gain
+    this.patterns.recovery.avgRecoveryGain = 
+      (this.patterns.recovery.avgRecoveryGain * (this.recoveryMetrics.totalRecoveryTrades - 1) + profitLoss) / 
+      this.recoveryMetrics.totalRecoveryTrades;
   }
 
   getTradeStats(timeWindow = '5m') {
