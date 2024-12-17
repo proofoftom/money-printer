@@ -109,10 +109,6 @@ class TraderManager extends EventEmitter {
       trader.firstSeen = Date.now(); // Set first seen time
       this.setupTraderEventListeners(trader);
       this.traders.set(publicKey, trader);
-      
-      // Emit events for new trader
-      this.emit('newTrader', trader);
-      this.emit('subscribeTrader', { publicKey }); // Emit event to subscribe to trader's trades
     }
     
     return trader;
@@ -749,6 +745,19 @@ class TraderManager extends EventEmitter {
     return holders
       .sort((a, b) => b.balance - a.balance)
       .slice(0, limit);
+  }
+
+  addTrader(publicKey, token) {
+    if (!this.traders.has(publicKey)) {
+      const trader = new Trader(publicKey);
+      this.traders.set(publicKey, trader);
+    }
+    
+    const trader = this.traders.get(publicKey);
+    trader.addToken(token);
+    
+    // Update trader groups
+    this.updateTraderGroups(publicKey, token);
   }
 
 }

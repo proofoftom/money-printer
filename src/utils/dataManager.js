@@ -23,8 +23,8 @@ class DataManager {
       for (const file of files) {
         const filePath = path.join(dataDir, file);
         
-        // Skip if it's not a JSON file
-        if (!file.endsWith('.json')) continue;
+        // Skip if it's not a JSON file or if it's a token file
+        if (!file.endsWith('.json') || file.startsWith('token')) continue;
         
         try {
           // Remove the file

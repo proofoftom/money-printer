@@ -12,77 +12,63 @@ class TokenManager extends EventEmitter {
     this.traderManager = traderManager;
     this.tokens = new Map();
 
+    // Set high max listeners as we manage many tokens
+    this.setMaxListeners(100);
+
     // Recovery monitoring
     this._recoveryInterval = setInterval(
       () => this.monitorRecoveryOpportunities(),
       config.RECOVERY_MONITOR_INTERVAL || 30000
     );
+
+    // Set up periodic cleanup
+    this._cleanupInterval = setInterval(
+      () => this.cleanupInactiveTokens(),
+      300000 // Every 5 minutes
+    );
   }
 
   handleNewToken(tokenData) {
-    const token = new Token(tokenData, this.traderManager);
-
-    // Check market cap threshold before processing
-    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-    if (marketCapUSD >= config.MCAP.MAX_ENTRY) {
-      console.info(
-        `Ignoring new token ${
-          token.symbol || token.mint.slice(0, 8)
-        } - Market cap too high: $${marketCapUSD.toFixed(
-          2
-        )} (${token.marketCapSol.toFixed(2)} SOL)`
-      );
-      return null;
+    const mint = tokenData.mint;
+    
+    // Skip if token already exists
+    if (this.tokens.has(mint)) {
+      return;
     }
 
-    this.tokens.set(token.mint, token);
+    try {
+      // Create new token instance
+      const token = new Token(tokenData);
+      
+      // Add to tokens map
+      this.tokens.set(mint, token);
+      
+      // Emit new token event
+      this.emit('newToken', token);
+      
+      return token;
+    } catch (error) {
+      console.error('Error handling new token:', error);
+      return null;
+    }
+  }
 
-    token.on("stateChanged", ({ token, from, to }) => {
-      this.emit("tokenStateChanged", { token, from, to });
+  removeToken(mint) {
+    const token = this.tokens.get(mint);
+    if (!token) return;
 
-      // Unsubscribe from WebSocket updates when token enters dead state
-      if (to === "dead") {
-        this.webSocketManager.unsubscribeFromToken(token.mint);
-      }
-    });
+    try {
+      // Clean up token resources
+      token.cleanup();
 
-    token.on("readyForPosition", async (token) => {
-      // Check if we already have a position for this token
-      if (this.positionManager.getPosition(token.mint)) {
-        return;
-      }
+      // Remove from tokens map
+      this.tokens.delete(mint);
 
-      const availableBalance = await this.positionManager.getAvailableBalance();
-      const positionSize = this.calculatePositionSize(token, availableBalance);
-      const success = await this.positionManager.openPosition(
-        token.mint,
-        token.marketCapSol,
-        positionSize
-      );
-      if (success) {
-        token.setState("inPosition");
-        this.emit("positionOpened", token);
-      }
-    });
-
-    token.on("unsafeRecovery", (data) => {
-      this.emit("unsafeRecovery", data);
-    });
-
-    token.on("recoveryGainTooHigh", (data) => {
-      this.emit("recoveryGainTooHigh", data);
-      const { token, gainPercentage } = data;
-      console.warn(
-        `Token ${token.symbol} (${
-          token.mint
-        }) recovery gain too high: ${gainPercentage.toFixed(2)}%`
-      );
-    });
-
-    // Let handleTokenUpdate manage all state transitions
-    this.handleTokenUpdate(tokenData);
-    this.emit("tokenAdded", token);
-    return token;
+      this.emit('tokenRemoved', token);
+      console.log(`Token ${token.symbol} (${mint}) removed and cleaned up`);
+    } catch (error) {
+      console.error(`Error removing token ${mint}:`, error);
+    }
   }
 
   async handleTokenUpdate(tradeData) {
@@ -114,19 +100,6 @@ class TokenManager extends EventEmitter {
       if (!success) {
         console.error(`Failed to record trade for token ${token.symbol}`);
         return;
-      }
-
-      // Update trader data
-      if (this.traderManager) {
-        this.traderManager.handleTrade({
-          mint: token.mint,
-          traderPublicKey: tradeData.traderPublicKey,
-          type: tradeData.type,
-          amount: tradeData.tokenAmount,
-          newBalance: tradeData.newTokenBalance,
-          price: tradeData.price,
-          timestamp: tradeData.timestamp
-        });
       }
 
       // Check for position opportunities
@@ -371,16 +344,33 @@ class TokenManager extends EventEmitter {
     }
   }
 
+  cleanupInactiveTokens() {
+    const now = Date.now();
+    const inactivityThreshold = 30 * 60 * 1000; // 30 minutes
+
+    for (const [mint, token] of this.tokens.entries()) {
+      if (token.lastTradeTime && (now - token.lastTradeTime > inactivityThreshold)) {
+        console.log(`Removing inactive token ${token.symbol}`);
+        this.removeToken(mint);
+      }
+    }
+  }
+
   cleanup() {
-    // Remove all event listeners from tokens
-    for (const token of this.tokens.values()) {
-      token.removeAllListeners();
+    // Clear intervals
+    if (this._recoveryInterval) {
+      clearInterval(this._recoveryInterval);
+    }
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
     }
 
-    // Clear tokens map
-    this.tokens.clear();
+    // Clean up all tokens
+    for (const [mint, token] of this.tokens.entries()) {
+      this.removeToken(mint);
+    }
 
-    // Remove all event listeners from TokenManager itself
+    // Clear all listeners
     this.removeAllListeners();
   }
 }

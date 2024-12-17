@@ -255,41 +255,16 @@ class Dashboard extends EventEmitter {
       // Create wallet status box (top row)
       this.walletBox = this.grid.set(0, 0, 3, 3, blessed.box, {
         label: " Wallet Status ",
-        content: this.getWalletStatus(),
+        content: "Loading wallet status...",
+        border: "line",
         tags: true,
-        border: {
-          type: "line",
-        },
+        padding: 1,
         style: {
-          fg: "white",
-          border: {
-            fg: "white",
-          },
+          label: { bold: true },
         },
       });
 
-      // Create status box
-      this.statusBox = this.grid.set(0, 3, 3, 9, blessed.log, {
-        label: " Status ",
-        tags: true,
-        scrollable: true,
-        alwaysScroll: true,
-        scrollbar: {
-          ch: " ",
-          inverse: true,
-        },
-        border: {
-          type: "line",
-        },
-        style: {
-          fg: "white",
-          border: {
-            fg: "white",
-          },
-        },
-      });
-
-      // Create balance history (top row)
+      // Create balance history chart (top row)
       this.balanceChart = this.grid.set(0, 3, 3, 3, contrib.line, {
         style: {
           line: "yellow",
@@ -303,8 +278,33 @@ class Dashboard extends EventEmitter {
         wholeNumbersOnly: false,
       });
 
+      // Create system status box (top row)
+      this.statusBox = this.grid.set(0, 6, 3, 3, blessed.log, {
+        label: " System Status ",
+        tags: true,
+        padding: 1,
+        scrollable: true,
+        style: {
+          label: { bold: true },
+        },
+        border: { type: 'line' },
+        keys: true,
+        vi: true,
+        mouse: true,
+        scrollback: 100,
+        scrollbar: {
+          ch: ' ',
+          track: {
+            bg: 'yellow'
+          },
+          style: {
+            inverse: true
+          }
+        }
+      });
+
       // Create trade history box (top row)
-      this.tradeBox = this.grid.set(0, 6, 3, 3, blessed.box, {
+      this.tradeBox = this.grid.set(0, 9, 3, 3, blessed.box, {
         label: " Trade History ",
         content: "Waiting for trades...",
         border: "line",

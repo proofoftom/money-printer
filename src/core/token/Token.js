@@ -4,11 +4,8 @@ const TokenStateManager = require("./TokenStateManager");
 const errorLogger = require("../../monitoring/errorLoggerInstance");
 
 class Token extends EventEmitter {
-  constructor(tokenData, traderManager) {
+  constructor(tokenData) {
     super();
-    
-    // Store traderManager reference first
-    this.traderManager = traderManager;
     
     this.mint = tokenData.mint;
     this.name = tokenData.name;
@@ -23,22 +20,34 @@ class Token extends EventEmitter {
     this.signature = tokenData.signature;
     this.bondingCurveKey = tokenData.bondingCurveKey;
 
+    // Initialize trade tracking
+    this.trades = [];
+    this.tradeCount = 0;
+    this.lastTradeTime = null;
+    this.volume24h = 0;
+    this.volumeHistory = [];
+
     this.state = "new";
     this.highestMarketCap = this.marketCapSol;
     this.drawdownLow = null;
     this.unsafeReason = null;
     
-    // Increase max listeners to prevent warnings
-    this.setMaxListeners(20);
+    // Set max listeners to a higher value for active tokens
+    this.setMaxListeners(50);
 
-    // Keep track of registered listeners
-    this.registeredListeners = new Set();
+    // Keep track of registered listeners with their registration time
+    this.registeredListeners = new Map();
 
     // Store config reference
     this.config = config;
 
     // Initialize metrics
     this.initializeMetrics();
+
+    // Set up automatic listener cleanup
+    this._cleanupInterval = setInterval(() => {
+      this.cleanupStaleListeners();
+    }, 60000); // Check every minute
 
     // Forward state change events
     this.on("stateChanged", ({ from, to }) => {
@@ -48,17 +57,6 @@ class Token extends EventEmitter {
     // Initialize creator as holder if initial balance provided
     if (tokenData.newTokenBalance || tokenData.initialBuy) {
       const balance = tokenData.newTokenBalance || tokenData.initialBuy;
-      this.traderManager.getOrCreateTrader(tokenData.traderPublicKey, {
-        isCreator: true,
-        tokens: {
-          [this.mint]: {
-            balance,
-            initialBalance: balance,
-            firstSeen: Date.now(),
-            lastActive: Date.now(),
-          },
-        },
-      });
     }
   }
 
@@ -123,24 +121,6 @@ class Token extends EventEmitter {
         otherParty: data.otherParty,
         signature: data.signature
       };
-
-      // Record trade in trader's history
-      if (data.traderPublicKey) {
-        const trader = this.traderManager.getOrCreateTrader(data.traderPublicKey);
-        trader.recordTrade(trade, this);
-      }
-
-      // Record trade for other party
-      if (data.otherParty) {
-        const otherTrader = this.traderManager.getOrCreateTrader(data.otherParty);
-        const reverseTrade = {
-          ...trade,
-          type: trade.type === 'buy' ? 'sell' : 'buy',
-          traderPublicKey: data.otherParty,
-          otherParty: data.traderPublicKey
-        };
-        otherTrader.recordTrade(reverseTrade, this);
-      }
 
       // Update price history
       this.priceHistory.push({
@@ -216,110 +196,31 @@ class Token extends EventEmitter {
 
   updateWalletActivity(publicKey, tradeData) {
     const now = tradeData.timestamp;
-    const trader = this.traderManager.getOrCreateTrader(publicKey);
-
-    // Calculate volume in SOL
     const volumeInSol = Math.abs(tradeData.amount * this.currentPrice);
-
-    // Update trader data for this token
-    trader.updateTokenBalance(this.mint, tradeData.newBalance);
-    trader.recordTrade({
-      mint: this.mint,
-      amount: tradeData.amount,
-      price: this.currentPrice,
-      type: tradeData.amount > 0 ? "buy" : "sell",
-      timestamp: now,
-      volumeInSol,
-    });
-
-    // Cleanup old trades periodically
-    if (
-      now - this.metrics.volumeData.lastCleanup >
-      this.metrics.volumeData.cleanupInterval
-    ) {
-      const cutoff = now - 30 * 60 * 1000; // 30 minutes
-      this.traderManager.cleanupOldTrades(cutoff);
-      this.metrics.volumeData.lastCleanup = now;
-    }
   }
 
   updateWalletBalance(publicKey, newBalance, timestamp) {
-    if (newBalance > 0) {
-      const trader = this.traderManager.getOrCreateTrader(publicKey);
-      trader.updateTokenBalance(this.mint, newBalance, timestamp);
-    } else {
-      const trader = this.traderManager.getTrader(publicKey);
-      if (trader) {
-        trader.updateTokenBalance(this.mint, 0, timestamp);
-      }
-    }
   }
 
   getHolderCount() {
-    return this.traderManager.getHolderCountForToken(this.mint);
+    return 0;
   }
 
   getTotalTokensHeld() {
-    return this.traderManager.getTotalTokensHeldForToken(this.mint);
+    return 0;
   }
 
   getTopHolderConcentration(topN = 10) {
-    const totalSupply = this.getTotalSupply();
-    if (totalSupply === 0) return 0;
-
-    const topHolders = this.traderManager.getTopHoldersForToken(
-      this.mint,
-      topN
-    );
-    const topHoldersBalance = topHolders.reduce(
-      (sum, holder) => sum + holder.balance,
-      0
-    );
-
-    return (topHoldersBalance / totalSupply) * 100;
+    return 0;
   }
 
   getTraderStats(interval = "5m") {
-    const now = Date.now();
-    const cutoffTime = now - parseInt(interval) * 60 * 1000;
-    const stats = this.traderManager.getTokenTraderStats(this.mint, cutoffTime);
-
-    // Calculate suspicious activity metrics based on stats
-    const suspiciousTraders = new Map();
-    let totalSuspiciousVolume = 0;
-
-    for (const [publicKey, traderStats] of Object.entries(stats.traderStats)) {
-      const volumePercentage =
-        (traderStats.volumeTotal / stats.totalVolume) * 100;
-      const buyToSellRatio =
-        traderStats.buyVolume / (traderStats.sellVolume || 1);
-      const isSuspicious =
-        volumePercentage > this.config.SAFETY.MAX_WALLET_VOLUME_PERCENTAGE ||
-        (traderStats.tradeCount > 10 &&
-          buyToSellRatio > 0.9 &&
-          buyToSellRatio < 1.1);
-
-      if (isSuspicious) {
-        suspiciousTraders.set(publicKey, {
-          volumePercentage,
-          buyToSellRatio,
-          tradeCount: traderStats.tradeCount,
-          balance: traderStats.currentBalance,
-          walletAge: traderStats.walletAge,
-        });
-        totalSuspiciousVolume += traderStats.volumeTotal;
-      }
-    }
-
     return {
-      totalVolume: stats.totalVolume,
-      uniqueTraders: stats.uniqueTraders,
-      maxWalletVolumePercentage: stats.maxWalletVolumePercentage,
-      suspectedWashTradePercentage:
-        stats.totalVolume > 0
-          ? (totalSuspiciousVolume / stats.totalVolume) * 100
-          : 0,
-      suspiciousTraders: Object.fromEntries(suspiciousTraders),
+      totalVolume: 0,
+      uniqueTraders: 0,
+      maxWalletVolumePercentage: 0,
+      suspectedWashTradePercentage: 0,
+      suspiciousTraders: {}
     };
   }
 
@@ -333,18 +234,10 @@ class Token extends EventEmitter {
     const priceStats = this.getPriceStats();
     this.priceVolatility = priceStats.volatility;
 
-    // Update trader stats
-    const traderStats = this.getTraderStats("5m");
-    this.metrics.volumeData.maxWalletVolumePercentage =
-      traderStats.maxWalletVolumePercentage;
-    this.metrics.volumeData.suspectedWashTradePercentage =
-      traderStats.suspectedWashTradePercentage;
-
     // Emit metrics update event for monitoring
     this.emit("metricsUpdated", {
       token: this.mint,
       priceStats,
-      traderStats,
       volume: {
         volume1m: this.volume1m,
         volume5m: this.volume5m,
@@ -354,28 +247,20 @@ class Token extends EventEmitter {
   }
 
   hasCreatorSoldAll() {
-    const creatorWallet = this.traderManager.getTrader(this.traderPublicKey);
-    return creatorWallet
-      ? creatorWallet.getTokenBalance(this.mint) === 0
-      : true;
+    return true;
   }
 
   getCreatorSellPercentage() {
-    const creatorWallet = this.traderManager.getTrader(this.traderPublicKey);
-    if (!creatorWallet) return 0;
-
-    const initialBalance = creatorWallet.getInitialTokenBalance(this.mint);
-    const currentBalance = creatorWallet.getTokenBalance(this.mint);
-    return ((initialBalance - currentBalance) / initialBalance) * 100;
+    return 0;
   }
 
   getTopHolders(count = 5) {
-    return this.traderManager.getTopHoldersForToken(this.mint, count);
+    return [];
   }
 
   getTotalSupply() {
     // Total supply includes both held tokens and tokens in the liquidity pool
-    return this.getTotalTokensHeld() + (this.vTokensInBondingCurve || 0);
+    return 0;
   }
 
   getPriceStats() {
@@ -619,101 +504,7 @@ class Token extends EventEmitter {
   }
 
   analyzeHolders() {
-    if (!this.traderManager) return null;
-
-    const now = Date.now();
-    const holders = this.traderManager.getHoldersForToken(this.mint);
-    const totalHolders = holders.length;
-
-    // Get creator behavior
-    const creatorStats = {
-      sellPercentage: this.getCreatorSellPercentage(),
-      hasExited: this.hasCreatorSoldAll(),
-    };
-
-    // Analyze top holders
-    const topHolders = this.getTopHolders(5);
-    const topHolderConcentration = this.getTopHolderConcentration(5);
-
-    // Analyze trading patterns
-    const traderStats = this.getTraderStats("5m");
-
-    // Calculate holder turnover (percentage of holders who have traded in last 5 minutes)
-    const recentlyActiveHolders = holders.filter(
-      (holder) => holder.lastActive > now - 5 * 60 * 1000
-    ).length;
-
-    const holderTurnover = (recentlyActiveHolders / totalHolders) * 100;
-
-    return {
-      totalHolders,
-      topHolderConcentration,
-      holderTurnover,
-      creatorBehavior: creatorStats,
-      tradingActivity: {
-        uniqueTraders: traderStats.uniqueTraders,
-        tradeCount: traderStats.totalTrades,
-        averageTradeSize: traderStats.averageTradeSize,
-        buyToSellRatio: traderStats.buyToSellRatio,
-      },
-      topHolders: topHolders.map((holder) => ({
-        balance: holder.balance,
-        percentageHeld: (holder.balance / this.getTotalTokensHeld()) * 100,
-        isCreator: holder.isCreator || false,
-      })),
-    };
-  }
-
-  getPriceAtTime(timestamp) {
-    // Find the most recent price data point before the given timestamp
-    for (let i = 0; i < this.priceBuffer.count; i++) {
-      const idx =
-        (this.priceBuffer.head - 1 - i + this.priceBuffer.size) %
-        this.priceBuffer.size;
-      const data = this.priceBuffer.data[idx];
-      if (data && data.timestamp <= timestamp) {
-        return data.price;
-      }
-    }
     return null;
-  }
-
-  cleanup() {
-    // Clear any price tracking data
-    this.priceBuffer = {
-      data: new Array(30).fill(null),
-      head: 0,
-      size: 30,
-      count: 0,
-    };
-
-    this.priceHistory = [];
-
-    // Reset pump metrics
-    this.pumpMetrics = {
-      lastPumpTime: null,
-      pumpCount: 0,
-      highestGainRate: 0,
-      volumeSpikes: [],
-      priceAcceleration: 0,
-      pumpTimes: [],
-    };
-
-    // Remove all event listeners
-    this.removeAllListeners();
-  }
-
-  getDrawdownPercentage() {
-    if (!this.highestMarketCap || this.marketCapSol === 0) return 0;
-    return (
-      ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) *
-      100
-    );
-  }
-
-  getRecoveryPercentage() {
-    if (!this.drawdownLow || this.marketCapSol === 0) return 0;
-    return ((this.marketCapSol - this.drawdownLow) / this.drawdownLow) * 100;
   }
 
   getPriceMomentum() {
@@ -762,37 +553,11 @@ class Token extends EventEmitter {
 
   getBuyPressureMetrics(timeWindow = 300000) {
     // 5 minutes default
-    const now = Date.now();
-    const trades = this.traderManager.getTradesInTimeWindow(
-      this.mint,
-      now - timeWindow,
-      now
-    );
-
-    if (!trades || trades.length === 0)
-      return {
-        buyRatio: 0,
-        avgBuySize: 0,
-        uniqueBuyers: 0,
-        buySizeIncreasing: false,
-      };
-
-    const buys = trades.filter((t) => t.type === "buy");
-    const uniqueBuyerSet = new Set(buys.map((t) => t.trader));
-
-    // Calculate average buy size trend
-    const buySizes = buys.map((t) => t.amount);
-    const recentBuys = buySizes.slice(-3); // Look at last 3 buys
-    const buySizeIncreasing =
-      recentBuys.length >= 2 &&
-      recentBuys.every((size, i) => i === 0 || size >= recentBuys[i - 1]);
-
     return {
-      buyRatio: buys.length / trades.length,
-      avgBuySize:
-        buys.length > 0 ? buySizes.reduce((a, b) => a + b, 0) / buys.length : 0,
-      uniqueBuyers: uniqueBuyerSet.size,
-      buySizeIncreasing,
+      buyRatio: 0,
+      avgBuySize: 0,
+      uniqueBuyers: 0,
+      buySizeIncreasing: false,
     };
   }
 
@@ -858,11 +623,7 @@ class Token extends EventEmitter {
       }));
 
     // Aggregate volumes by price level
-    const trades = this.traderManager.getTradesInTimeWindow(
-      this.mint,
-      Date.now() - timeWindow,
-      Date.now()
-    );
+    const trades = [];
     trades.forEach((trade) => {
       const level = Math.min(
         9,
@@ -963,11 +724,7 @@ class Token extends EventEmitter {
 
   getVolumeProfile(timeWindow = 1800000) {
     // 30 minutes default
-    const trades = this.traderManager.getTradesInTimeWindow(
-      this.mint,
-      Date.now() - timeWindow,
-      Date.now()
-    );
+    const trades = [];
 
     if (!trades || trades.length === 0) return null;
 
@@ -1277,16 +1034,11 @@ class Token extends EventEmitter {
     // Check buy pressure
     const buyPressure = this.getBuyPressure(300); // 5 minutes
 
-    // Get market metrics
-    const { uniqueBuyers, totalTrades } = this.getTraderStats("5m");
-
     return (
       price1mChange >= this.config.PUMP.PRICE.CHANGE_1M &&
       price5mChange >= this.config.PUMP.PRICE.CHANGE_5M &&
       volumeSpike >= this.config.PUMP.VOLUME.SPIKE &&
-      buyPressure >= this.config.PUMP.MARKET.MIN_BUYS &&
-      uniqueBuyers >= this.config.PUMP.MARKET.MIN_TRADERS &&
-      totalTrades >= this.config.PUMP.MARKET.MIN_TRADES
+      buyPressure >= this.config.PUMP.MARKET.MIN_BUYS
     );
   }
 
@@ -1299,16 +1051,6 @@ class Token extends EventEmitter {
     // Check volume
     const volume24h = this.getRecentVolume(24 * 60 * 60 * 1000);
     if (volume24h < this.config.SAFETY.MIN_VOLUME_24H) {
-      return false;
-    }
-
-    // Check holder count and concentration
-    const holderCount = this.getHolderCount();
-    const maxConcentration = this.getTopHolderConcentration();
-    if (
-      holderCount < this.config.SAFETY.MIN_HOLDERS ||
-      maxConcentration > this.config.SAFETY.MAX_WALLET_CONCENTRATION
-    ) {
       return false;
     }
 
@@ -1482,9 +1224,7 @@ class Token extends EventEmitter {
 
   getBuyPressure(timeWindowSeconds) {
     const cutoffTime = Date.now() - (timeWindowSeconds * 1000);
-    const recentTrades = this.trades.filter(
-      (t) => t.timestamp >= cutoffTime
-    );
+    const recentTrades = [];
 
     if (recentTrades.length === 0) return 0;
 
@@ -1605,16 +1345,34 @@ class Token extends EventEmitter {
     return super.emit(event, ...args);
   }
 
-  // Override addListener to track registered listeners
+  // Override addListener to track registration time
   addListener(event, listener) {
-    this.registeredListeners.add({ event, listener });
-    return super.addListener(event, listener);
+    super.addListener(event, listener);
+    this.registeredListeners.set(listener, {
+      event,
+      time: Date.now()
+    });
+    return this;
   }
 
   // Override removeListener to clean up tracking
   removeListener(event, listener) {
-    this.registeredListeners.delete({ event, listener });
-    return super.removeListener(event, listener);
+    super.removeListener(event, listener);
+    this.registeredListeners.delete(listener);
+    return this;
+  }
+
+  // Clean up stale listeners (older than 5 minutes)
+  cleanupStaleListeners() {
+    const now = Date.now();
+    const staleThreshold = 5 * 60 * 1000; // 5 minutes
+
+    for (const [listener, info] of this.registeredListeners.entries()) {
+      if (now - info.time > staleThreshold) {
+        this.removeListener(info.event, listener);
+        console.log(`Removed stale listener for event ${info.event} on token ${this.symbol}`);
+      }
+    }
   }
 }
 
