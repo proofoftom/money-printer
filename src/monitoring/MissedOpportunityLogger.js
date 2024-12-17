@@ -8,6 +8,38 @@ class MissedOpportunityLogger {
     this.trackedTokens = new Map(); // Track tokens that failed safety checks
     this.priceManager = priceManager;
     this.ensureLogDirectory();
+    this.metrics = {
+      totalMissed: 0,
+      totalPotentialProfit: 0,
+      avgPotentialProfit: 0,
+      missedByReason: {},
+      missedByTokenType: {},
+      missedByTimeframe: {},
+      missedByVolume: {
+        low: 0,
+        medium: 0,
+        high: 0
+      },
+      recoveryMetrics: {
+        missedRecoveries: 0,
+        avgRecoveryPotential: 0,
+        byPhase: {
+          accumulation: 0,
+          expansion: 0,
+          distribution: 0
+        },
+        byMarketStructure: {
+          bullish: 0,
+          bearish: 0,
+          neutral: 0
+        },
+        byRecoveryStrength: {
+          weak: 0,
+          moderate: 0,
+          strong: 0
+        }
+      }
+    };
   }
 
   ensureLogDirectory() {
@@ -189,7 +221,7 @@ class MissedOpportunityLogger {
     return analysis;
   }
 
-  logMissedOpportunity(tokenData) {
+  logMissedOpportunity(data) {
     const date = new Date().toISOString().split('T')[0];
     const logFile = path.join(this.logDir, `missed_opportunities_${date}.json`);
     
@@ -201,10 +233,50 @@ class MissedOpportunityLogger {
 
     opportunities.push({
       timestamp: Date.now(),
-      token: tokenData
+      token: data
     });
 
     fs.writeFileSync(logFile, JSON.stringify(opportunities, null, 2));
+
+    // Log recovery-specific metrics if available
+    if (data.token && data.token.recoveryMetrics) {
+      const {
+        recoveryPhase,
+        marketStructure,
+        recoveryStrength
+      } = data.token.recoveryMetrics;
+      
+      this.metrics.recoveryMetrics.missedRecoveries++;
+      
+      // Update average recovery potential
+      this.metrics.recoveryMetrics.avgRecoveryPotential = 
+        (this.metrics.recoveryMetrics.avgRecoveryPotential * 
+         (this.metrics.recoveryMetrics.missedRecoveries - 1) + 
+         data.potentialProfit) / this.metrics.recoveryMetrics.missedRecoveries;
+      
+      // Update phase stats
+      if (recoveryPhase && this.metrics.recoveryMetrics.byPhase.hasOwnProperty(recoveryPhase)) {
+        this.metrics.recoveryMetrics.byPhase[recoveryPhase]++;
+      }
+      
+      // Update market structure stats
+      if (marketStructure && this.metrics.recoveryMetrics.byMarketStructure.hasOwnProperty(marketStructure)) {
+        this.metrics.recoveryMetrics.byMarketStructure[marketStructure]++;
+      }
+      
+      // Categorize recovery strength
+      if (recoveryStrength) {
+        let strengthCategory;
+        if (recoveryStrength < 0.33) {
+          strengthCategory = 'weak';
+        } else if (recoveryStrength < 0.66) {
+          strengthCategory = 'moderate';
+        } else {
+          strengthCategory = 'strong';
+        }
+        this.metrics.recoveryMetrics.byRecoveryStrength[strengthCategory]++;
+      }
+    }
   }
 }
 

@@ -11,7 +11,23 @@ class SafetyLogger {
       totalChecks: 0,
       approvedChecks: 0,
       failedChecks: 0,
-      failureReasons: {}
+      failureReasons: {},
+      recoveryMetrics: {
+        totalRecoveryChecks: 0,
+        approvedRecoveryChecks: 0,
+        failedRecoveryChecks: 0,
+        byPhase: {
+          accumulation: { total: 0, approved: 0 },
+          expansion: { total: 0, approved: 0 },
+          distribution: { total: 0, approved: 0 }
+        },
+        byMarketStructure: {
+          bullish: { total: 0, approved: 0 },
+          bearish: { total: 0, approved: 0 },
+          neutral: { total: 0, approved: 0 }
+        },
+        failureReasons: {}
+      }
     };
 
     // Create log directory if it doesn't exist
@@ -49,19 +65,66 @@ class SafetyLogger {
 
   logSafetyCheck(token, approved, failedChecks = []) {
     const checkData = {
-      mint: token.mint,
+      token: token.address,
+      symbol: token.symbol,
       approved,
-      marketCap: token.marketCap,
-      volume: token.volume,
-      price: token.currentPrice,
-      state: token.state,
-      failedChecks: failedChecks.map(check => ({
-        name: check.name,
-        reason: check.reason,
-        actual: check.actual,
-        configPath: check.configPath
-      }))
+      failedChecks,
+      timestamp: new Date().toISOString()
     };
+
+    // Update general metrics
+    this.metrics.totalChecks++;
+    if (approved) {
+      this.metrics.approvedChecks++;
+    } else {
+      this.metrics.failedChecks++;
+      failedChecks.forEach(reason => {
+        this.metrics.failureReasons[reason] = (this.metrics.failureReasons[reason] || 0) + 1;
+      });
+    }
+
+    // Update recovery-specific metrics if available
+    if (token.recoveryMetrics) {
+      const {
+        recoveryPhase,
+        marketStructure
+      } = token.recoveryMetrics;
+
+      this.metrics.recoveryMetrics.totalRecoveryChecks++;
+      
+      if (approved) {
+        this.metrics.recoveryMetrics.approvedRecoveryChecks++;
+      } else {
+        this.metrics.recoveryMetrics.failedRecoveryChecks++;
+        failedChecks.forEach(reason => {
+          this.metrics.recoveryMetrics.failureReasons[reason] = 
+            (this.metrics.recoveryMetrics.failureReasons[reason] || 0) + 1;
+        });
+      }
+
+      // Update phase stats
+      if (recoveryPhase && this.metrics.recoveryMetrics.byPhase[recoveryPhase]) {
+        this.metrics.recoveryMetrics.byPhase[recoveryPhase].total++;
+        if (approved) {
+          this.metrics.recoveryMetrics.byPhase[recoveryPhase].approved++;
+        }
+      }
+
+      // Update market structure stats
+      if (marketStructure && this.metrics.recoveryMetrics.byMarketStructure[marketStructure]) {
+        this.metrics.recoveryMetrics.byMarketStructure[marketStructure].total++;
+        if (approved) {
+          this.metrics.recoveryMetrics.byMarketStructure[marketStructure].approved++;
+        }
+      }
+
+      // Add recovery metrics to check data
+      checkData.recoveryMetrics = {
+        phase: recoveryPhase,
+        marketStructure,
+        strength: token.recoveryMetrics.recoveryStrength
+      };
+    }
 
     this.logCheck(checkData);
   }
@@ -98,17 +161,7 @@ class SafetyLogger {
   }
 
   updateMetrics(checkData) {
-    this.metrics.totalChecks++;
-    
-    if (checkData.approved) {
-      this.metrics.approvedChecks++;
-    } else {
-      this.metrics.failedChecks++;
-      checkData.failedChecks.forEach(check => {
-        const reason = check.name;
-        this.metrics.failureReasons[reason] = (this.metrics.failureReasons[reason] || 0) + 1;
-      });
-    }
+    // No-op, metrics are updated in logSafetyCheck
   }
 
   getMetrics() {
@@ -132,7 +185,23 @@ class SafetyLogger {
       totalChecks: 0,
       approvedChecks: 0,
       failedChecks: 0,
-      failureReasons: {}
+      failureReasons: {},
+      recoveryMetrics: {
+        totalRecoveryChecks: 0,
+        approvedRecoveryChecks: 0,
+        failedRecoveryChecks: 0,
+        byPhase: {
+          accumulation: { total: 0, approved: 0 },
+          expansion: { total: 0, approved: 0 },
+          distribution: { total: 0, approved: 0 }
+        },
+        byMarketStructure: {
+          bullish: { total: 0, approved: 0 },
+          bearish: { total: 0, approved: 0 },
+          neutral: { total: 0, approved: 0 }
+        },
+        failureReasons: {}
+      }
     };
   }
 

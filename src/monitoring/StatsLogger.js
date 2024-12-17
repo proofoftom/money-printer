@@ -45,6 +45,39 @@ class StatsLogger {
         avgDrawdown: 0,
         avgRecoveryTime: 0,
         totalPriceSamples: 0
+      },
+      recoveryMetrics: {
+        totalRecoveryTrades: 0,
+        successfulRecoveries: 0,
+        failedRecoveries: 0,
+        avgRecoveryGain: 0,
+        avgRecoveryHoldTime: 0,
+        bestRecoveryGain: 0,
+        phaseStats: {
+          accumulation: {
+            trades: 0,
+            winRate: 0,
+            avgGain: 0,
+            avgHoldTime: 0
+          },
+          expansion: {
+            trades: 0,
+            winRate: 0,
+            avgGain: 0,
+            avgHoldTime: 0
+          },
+          distribution: {
+            trades: 0,
+            winRate: 0,
+            avgGain: 0,
+            avgHoldTime: 0
+          }
+        },
+        marketStructure: {
+          bullish: { count: 0, winRate: 0 },
+          bearish: { count: 0, winRate: 0 },
+          neutral: { count: 0, winRate: 0 }
+        }
       }
     };
 
@@ -183,7 +216,8 @@ class StatsLogger {
       riskRewardRatio: this.summaryMetrics.riskRewardRatio,
       exitStats: this.summaryMetrics.exitStats,
       volumeMetrics: this.summaryMetrics.volumeMetrics,
-      priceMetrics: this.summaryMetrics.priceMetrics
+      priceMetrics: this.summaryMetrics.priceMetrics,
+      recoveryMetrics: this.summaryMetrics.recoveryMetrics
     };
   }
 
@@ -269,6 +303,64 @@ class StatsLogger {
           priceMetrics.avgMaxUpside = (priceMetrics.avgMaxUpside * (priceMetrics.totalPriceSamples - 1) + stats.maxUpside) / priceMetrics.totalPriceSamples;
           priceMetrics.avgDrawdown = (priceMetrics.avgDrawdown * (priceMetrics.totalPriceSamples - 1) + stats.maxDrawdown) / priceMetrics.totalPriceSamples;
         }
+      }
+
+      // Log recovery-specific metrics if available
+      if (stats.token && stats.token.recoveryMetrics) {
+        const {
+          recoveryPhase,
+          marketStructure,
+          recoveryStrength
+        } = stats.token.recoveryMetrics;
+        
+        this.summaryMetrics.recoveryMetrics.totalRecoveryTrades++;
+        
+        // Update phase-specific stats
+        if (recoveryPhase && this.summaryMetrics.recoveryMetrics.phaseStats[recoveryPhase]) {
+          const phaseStats = this.summaryMetrics.recoveryMetrics.phaseStats[recoveryPhase];
+          phaseStats.trades++;
+          
+          if (stats.profitLoss > 0) {
+            phaseStats.winRate = (phaseStats.winRate * (phaseStats.trades - 1) + 1) / phaseStats.trades;
+            phaseStats.avgGain = (phaseStats.avgGain * (phaseStats.trades - 1) + stats.profitLoss) / phaseStats.trades;
+          } else {
+            phaseStats.winRate = (phaseStats.winRate * (phaseStats.trades - 1)) / phaseStats.trades;
+          }
+          
+          phaseStats.avgHoldTime = (phaseStats.avgHoldTime * (phaseStats.trades - 1) + stats.holdTime) / phaseStats.trades;
+        }
+        
+        // Update market structure stats
+        if (marketStructure && this.summaryMetrics.recoveryMetrics.marketStructure[marketStructure]) {
+          const structureStats = this.summaryMetrics.recoveryMetrics.marketStructure[marketStructure];
+          structureStats.count++;
+          
+          if (stats.profitLoss > 0) {
+            structureStats.winRate = (structureStats.winRate * (structureStats.count - 1) + 1) / structureStats.count;
+          } else {
+            structureStats.winRate = (structureStats.winRate * (structureStats.count - 1)) / structureStats.count;
+          }
+        }
+        
+        // Update overall recovery metrics
+        if (stats.profitLoss > 0) {
+          this.summaryMetrics.recoveryMetrics.successfulRecoveries++;
+          this.summaryMetrics.recoveryMetrics.avgRecoveryGain = 
+            (this.summaryMetrics.recoveryMetrics.avgRecoveryGain * 
+             (this.summaryMetrics.recoveryMetrics.successfulRecoveries - 1) + 
+             stats.profitLoss) / this.summaryMetrics.recoveryMetrics.successfulRecoveries;
+             
+          if (stats.profitLoss > this.summaryMetrics.recoveryMetrics.bestRecoveryGain) {
+            this.summaryMetrics.recoveryMetrics.bestRecoveryGain = stats.profitLoss;
+          }
+        } else {
+          this.summaryMetrics.recoveryMetrics.failedRecoveries++;
+        }
+        
+        this.summaryMetrics.recoveryMetrics.avgRecoveryHoldTime = 
+          (this.summaryMetrics.recoveryMetrics.avgRecoveryHoldTime * 
+           (this.summaryMetrics.recoveryMetrics.totalRecoveryTrades - 1) + 
+           stats.holdTime) / this.summaryMetrics.recoveryMetrics.totalRecoveryTrades;
       }
 
       this.updateSummaryMetrics(stats);
