@@ -15,6 +15,10 @@ class TokenManager extends EventEmitter {
     this.priceManager = priceManager;
     this.webSocketManager = webSocketManager;
     this.tokens = new Map();
+    
+    // Recovery monitoring
+    this._recoveryInterval = setInterval(() => this.monitorRecoveryOpportunities(), 
+      config.RECOVERY_MONITOR_INTERVAL || 30000);
   }
 
   handleNewToken(tokenData) {
@@ -186,6 +190,18 @@ class TokenManager extends EventEmitter {
       }
     }
 
+    // Check for recovery pattern after update
+    if (token.state === 'drawdown' || token.state === 'recovery') {
+      const metrics = token.recoveryMetrics;
+      if (metrics && this.isStrongRecoverySetup(token)) {
+        this.emit('recoveryOpportunity', {
+          token,
+          metrics,
+          reason: 'patternDetected'
+        });
+      }
+    }
+
     this.emit("tokenUpdated", token);
   }
 
@@ -336,6 +352,78 @@ class TokenManager extends EventEmitter {
     return Array.from(this.tokens.values()).filter(
       (token) => token.state === state
     );
+  }
+
+  monitorRecoveryOpportunities() {
+    for (const [mint, token] of this.tokens) {
+      // Skip tokens that aren't in drawdown or recovery state
+      if (!['drawdown', 'recovery'].includes(token.state)) continue;
+      
+      const metrics = token.recoveryMetrics;
+      if (!metrics) continue;
+      
+      // Check for strong recovery setups
+      if (this.isStrongRecoverySetup(token)) {
+        this.emit('recoveryOpportunity', {
+          token,
+          metrics,
+          reason: 'strongSetup'
+        });
+      }
+      
+      // Monitor ongoing recoveries
+      if (token.state === 'recovery') {
+        this.monitorOngoingRecovery(token);
+      }
+    }
+  }
+  
+  isStrongRecoverySetup(token) {
+    const {
+      drawdownDepth,
+      recoveryStrength,
+      accumulationScore,
+      buyPressure,
+      marketStructure
+    } = token.recoveryMetrics;
+    
+    // Check for ideal recovery conditions
+    return (
+      drawdownDepth > config.RECOVERY_MIN_DRAWDOWN &&
+      recoveryStrength > 0.2 &&
+      accumulationScore > 0.7 &&
+      buyPressure > 0.6 &&
+      marketStructure === 'bullish'
+    );
+  }
+  
+  monitorOngoingRecovery(token) {
+    const metrics = token.recoveryMetrics;
+    
+    // Check for recovery weakness
+    if (
+      metrics.recoveryPhase === 'distribution' ||
+      (metrics.marketStructure === 'bearish' && metrics.buyPressure < 0.3)
+    ) {
+      this.emit('recoveryWarning', {
+        token,
+        metrics,
+        reason: 'weakening'
+      });
+    }
+    
+    // Check for recovery strength
+    if (
+      metrics.recoveryPhase === 'expansion' &&
+      metrics.recoveryStrength > 0.5 &&
+      metrics.marketStructure === 'bullish'
+    ) {
+      this.emit('recoveryStrength', {
+        token,
+        metrics,
+        reason: 'acceleration'
+      });
+    }
   }
 
   cleanup() {

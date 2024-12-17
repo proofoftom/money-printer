@@ -43,6 +43,19 @@ class Token extends EventEmitter {
       pumpTimes: []  // Array to track pump event timestamps
     };
 
+    // Recovery metrics
+    this.recoveryMetrics = {
+      drawdownDepth: 0,           // Maximum drawdown from peak
+      recoveryStrength: 0,        // Current recovery strength
+      recoveryVolume: 0,          // Volume during recovery
+      accumulationScore: 0,       // Score based on accumulation patterns
+      buyPressure: 0,            // Buy side pressure during recovery
+      marketStructure: 'unknown', // Current market structure
+      recoveryPhase: 'none',     // Current recovery phase
+      lastDrawdownTime: null,    // Timestamp of last significant drawdown
+      recoveryAttempts: []       // History of recovery attempts
+    };
+
     // Price tracking
     this.currentPrice = this.calculateTokenPrice();
     this.initialPrice = this.currentPrice;
@@ -156,6 +169,9 @@ class Token extends EventEmitter {
 
     // Update all metrics
     this.updateMetrics();
+
+    // Update recovery metrics
+    this.updateRecoveryMetrics();
 
     // Emit price and volume updates together
     this.emit('priceUpdate', { 
@@ -1017,6 +1033,124 @@ class Token extends EventEmitter {
         .map(level => level.priceLevel)
       )
     };
+  }
+
+  updateRecoveryMetrics() {
+    if (!this.priceHistory || this.priceHistory.length < 5) return;
+
+    const recentPrices = this.priceHistory.slice(-5);
+    const peakPrice = Math.max(...this.priceHistory.map(p => p.price));
+    
+    // Update drawdown metrics
+    this.recoveryMetrics.drawdownDepth = (peakPrice - Math.min(...recentPrices.map(p => p.price))) / peakPrice;
+    
+    // Calculate recovery strength
+    const lowestPrice = Math.min(...recentPrices.map(p => p.price));
+    const currentRecovery = (this.currentPrice - lowestPrice) / lowestPrice;
+    this.recoveryMetrics.recoveryStrength = currentRecovery;
+    
+    // Calculate volume metrics
+    const recentVolumes = this.volumeHistory.slice(-5);
+    this.recoveryMetrics.recoveryVolume = recentVolumes.reduce((sum, v) => sum + v.volume, 0);
+    
+    // Calculate accumulation score
+    const volumeProfile = this.calculateVolumeProfile();
+    this.recoveryMetrics.accumulationScore = this.calculateAccumulationScore(volumeProfile);
+    
+    // Update buy pressure
+    const buyCandles = recentPrices.filter((p, i) => 
+      i > 0 && p.price > recentPrices[i-1].price
+    ).length;
+    this.recoveryMetrics.buyPressure = buyCandles / (recentPrices.length - 1);
+    
+    // Analyze market structure
+    this.recoveryMetrics.marketStructure = this.analyzeMarketStructure();
+    
+    // Update recovery phase
+    this.updateRecoveryPhase();
+    
+    // Track recovery attempts
+    if (this.recoveryMetrics.recoveryStrength > 0.1 && 
+        this.state === 'drawdown') {
+      this.recoveryMetrics.recoveryAttempts.push({
+        timestamp: Date.now(),
+        strength: this.recoveryMetrics.recoveryStrength,
+        volume: this.recoveryMetrics.recoveryVolume,
+        buyPressure: this.recoveryMetrics.buyPressure
+      });
+    }
+  }
+
+  calculateAccumulationScore(volumeProfile) {
+    if (!volumeProfile) return 0;
+    
+    const {
+      maxVolume,
+      minVolume,
+      avgVolume,
+      volumeStability,
+      recentTrend
+    } = volumeProfile;
+    
+    let score = 0;
+    
+    // Volume stability indicates accumulation
+    score += (1 - volumeStability) * 0.3;
+    
+    // Increasing volume trend is positive
+    if (recentTrend === 'increasing') score += 0.4;
+    else if (recentTrend === 'stable') score += 0.2;
+    
+    // Higher than average volume is positive
+    if (maxVolume > avgVolume * 1.5) score += 0.3;
+    
+    return Math.min(1, score);
+  }
+
+  analyzeMarketStructure() {
+    const prices = this.priceHistory.slice(-10);
+    if (prices.length < 10) return 'unknown';
+    
+    const highs = [];
+    const lows = [];
+    
+    for (let i = 1; i < prices.length - 1; i++) {
+      if (prices[i].price > prices[i-1].price && prices[i].price > prices[i+1].price) {
+        highs.push(prices[i].price);
+      }
+      if (prices[i].price < prices[i-1].price && prices[i].price < prices[i+1].price) {
+        lows.push(prices[i].price);
+      }
+    }
+    
+    if (highs.length >= 2 && lows.length >= 2) {
+      const higherHighs = highs[highs.length-1] > highs[highs.length-2];
+      const higherLows = lows[lows.length-1] > lows[lows.length-2];
+      
+      if (higherHighs && higherLows) return 'bullish';
+      if (!higherHighs && !higherLows) return 'bearish';
+    }
+    
+    return 'neutral';
+  }
+
+  updateRecoveryPhase() {
+    const {
+      recoveryStrength,
+      buyPressure,
+      accumulationScore,
+      marketStructure
+    } = this.recoveryMetrics;
+    
+    if (recoveryStrength < 0.1) {
+      this.recoveryMetrics.recoveryPhase = 'none';
+    } else if (recoveryStrength < 0.3 && buyPressure > 0.6 && accumulationScore > 0.7) {
+      this.recoveryMetrics.recoveryPhase = 'accumulation';
+    } else if (recoveryStrength >= 0.3 && marketStructure === 'bullish') {
+      this.recoveryMetrics.recoveryPhase = 'expansion';
+    } else if (recoveryStrength >= 0.5 && buyPressure < 0.4) {
+      this.recoveryMetrics.recoveryPhase = 'distribution';
+    }
   }
 }
 
