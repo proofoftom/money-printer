@@ -7,6 +7,7 @@ describe("Token", () => {
   let tokenData;
 
   beforeEach(() => {
+    process.env.NODE_ENV = 'test';
     tokenData = {
       mint: "testMint123",
       name: "Test Token",
@@ -24,6 +25,10 @@ describe("Token", () => {
   });
 
   afterEach(() => {
+    process.env.NODE_ENV = undefined;
+    if (token) {
+      token.cleanup();
+    }
     sinon.restore();
   });
 

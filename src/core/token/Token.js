@@ -628,6 +628,31 @@ class Token extends EventEmitter {
     }
     return null;
   }
+
+  cleanup() {
+    // Clear any price tracking data
+    this.priceBuffer = {
+      data: new Array(30).fill(null),
+      head: 0,
+      size: 30,
+      count: 0
+    };
+    
+    this.priceHistory = [];
+    
+    // Reset pump metrics
+    this.pumpMetrics = {
+      lastPumpTime: null,
+      pumpCount: 0,
+      highestGainRate: 0,
+      volumeSpikes: [],
+      priceAcceleration: 0,
+      pumpTimes: []
+    };
+    
+    // Remove all event listeners
+    this.removeAllListeners();
+  }
 }
 
 module.exports = Token;

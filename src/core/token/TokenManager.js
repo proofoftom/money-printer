@@ -195,6 +195,19 @@ class TokenManager extends EventEmitter {
       (token) => token.state === state
     );
   }
+
+  cleanup() {
+    // Remove all event listeners from tokens
+    for (const token of this.tokens.values()) {
+      token.removeAllListeners();
+    }
+    
+    // Clear tokens map
+    this.tokens.clear();
+    
+    // Remove all event listeners from TokenManager itself
+    this.removeAllListeners();
+  }
 }
 
 module.exports = TokenManager;

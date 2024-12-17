@@ -8,6 +8,7 @@ describe("SafetyChecker", () => {
   let mockPriceManager;
 
   beforeEach(() => {
+    process.env.NODE_ENV = 'test';
     // Mock PriceManager with realistic SOL price of $100
     mockPriceManager = {
       solToUSD: (sol) => sol * 100, // 1 SOL = $100 USD for testing
@@ -32,6 +33,13 @@ describe("SafetyChecker", () => {
       volumePriceCorrelation: 0.7,
       suspectedWashTradePercentage: 10,
     };
+  });
+
+  afterEach(() => {
+    process.env.NODE_ENV = undefined;
+    if (safetyChecker) {
+      safetyChecker.cleanup();
+    }
   });
 
   describe("Market Cap Checks", () => {

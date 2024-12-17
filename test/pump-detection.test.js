@@ -9,6 +9,7 @@ describe('Pump Fun Token Strategy Tests', function() {
     let realSafetyChecker;
 
     beforeEach(function() {
+        process.env.NODE_ENV = 'test';
         // Create mock token with initial state
         token = new Token({
             mint: "mockMint123",
@@ -28,6 +29,16 @@ describe('Pump Fun Token Strategy Tests', function() {
         };
         
         realSafetyChecker = new SafetyChecker(config);
+    });
+
+    afterEach(function() {
+        process.env.NODE_ENV = undefined;
+        if (token) {
+            token.cleanup();
+        }
+        if (realSafetyChecker) {
+            realSafetyChecker.cleanup && realSafetyChecker.cleanup();
+        }
     });
 
     describe('Token State Transitions', () => {

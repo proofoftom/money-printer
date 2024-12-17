@@ -12,6 +12,7 @@ describe("TokenManager", () => {
   let tokenData;
 
   beforeEach(() => {
+    process.env.NODE_ENV = 'test';
     safetyChecker = {
       runSecurityChecks: sinon.stub().resolves(true)
     };
@@ -51,6 +52,8 @@ describe("TokenManager", () => {
   });
 
   afterEach(() => {
+    process.env.NODE_ENV = undefined;
+    tokenManager.cleanup();
     sinon.restore();
   });
 

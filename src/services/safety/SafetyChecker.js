@@ -250,6 +250,11 @@ class SafetyChecker {
   getSafetyMetrics() {
     return {};
   }
+
+  cleanup() {
+    this.lastFailureReason = null;
+    this.removeAllListeners();
+  }
 }
 
 module.exports = SafetyChecker;

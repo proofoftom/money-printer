@@ -17,11 +17,14 @@ class TraderManager extends EventEmitter {
     // Load existing trader data
     this.loadTraders();
     
-    // Set up periodic state persistence
-    setInterval(() => this.saveTraders(), config.TRADER.SAVE_INTERVAL || 60000);
-    
-    // Set up periodic pattern analysis
-    setInterval(() => this.analyzeGlobalPatterns(), config.TRADER.ANALYSIS_INTERVAL || 300000);
+    // Don't set up intervals in test mode
+    if (process.env.NODE_ENV !== 'test') {
+      // Set up periodic state persistence
+      this.saveInterval = setInterval(() => this.saveTraders(), config.TRADER.SAVE_INTERVAL || 60000);
+      
+      // Set up periodic pattern analysis
+      this.analysisInterval = setInterval(() => this.analyzeGlobalPatterns(), config.TRADER.ANALYSIS_INTERVAL || 300000);
+    }
   }
 
   ensureDataDirectory() {
@@ -397,6 +400,16 @@ class TraderManager extends EventEmitter {
     return Array.from(this.traders.values())
       .filter(trader => trader.tokenBalances.has(token.mint))
       .length;
+  }
+
+  cleanup() {
+    if (this.saveInterval) {
+      clearInterval(this.saveInterval);
+    }
+    if (this.analysisInterval) {
+      clearInterval(this.analysisInterval);
+    }
+    this.removeAllListeners();
   }
 }
 

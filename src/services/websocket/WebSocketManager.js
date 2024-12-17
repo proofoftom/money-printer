@@ -29,13 +29,16 @@ class WebSocketManager extends EventEmitter {
     };
 
     // Handle process termination
-    process.on("SIGINT", this.sigintHandler);
+    if (process.env.NODE_ENV !== "test") {
+      process.on("SIGINT", this.sigintHandler);
+    }
 
     // Listen for trader subscription events
     if (tokenManager.traderManager) {
-      tokenManager.traderManager.on('subscribeTrader', ({ publicKey }) => {
+      this.traderSubscriptionHandler = ({ publicKey }) => {
         this.subscribeToTrader(publicKey);
-      });
+      };
+      tokenManager.traderManager.on('subscribeTrader', this.traderSubscriptionHandler);
     }
   }
 
@@ -260,13 +263,30 @@ class WebSocketManager extends EventEmitter {
   }
 
   close() {
+    // Remove SIGINT handler
+    if (this.sigintHandler) {
+      process.removeListener("SIGINT", this.sigintHandler);
+    }
+
+    // Remove trader subscription handler
+    if (this.tokenManager.traderManager && this.traderSubscriptionHandler) {
+      this.tokenManager.traderManager.removeListener('subscribeTrader', this.traderSubscriptionHandler);
+    }
+
+    // Close WebSocket connection
     if (this.ws) {
       this.ws.removeAllListeners();
-      this.ws.close();
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.close();
+      }
       this.ws = null;
     }
+
     this.isConnected = false;
-    process.removeListener("SIGINT", this.sigintHandler);
+    this.subscriptions.clear();
+    this.pendingTraderSubscriptions.clear();
+    this.subscribedTraders.clear();
+    this.removeAllListeners();
   }
 }
 

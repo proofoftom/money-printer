@@ -7,12 +7,15 @@ describe('TraderManager', () => {
   let clock;
 
   beforeEach(() => {
+    process.env.NODE_ENV = 'test';
     clock = sinon.useFakeTimers(Date.now());
     traderManager = new TraderManager();
   });
 
   afterEach(() => {
+    process.env.NODE_ENV = undefined;
     clock.restore();
+    traderManager.cleanup();
   });
 
   describe('getOrCreateTrader', () => {
