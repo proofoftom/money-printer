@@ -127,6 +127,10 @@ class PositionStateManager extends EventEmitter {
   }
 
   getActivePositions() {
+    return Array.from(this.positions.values()).filter(position => !position.isClosed);
+  }
+
+  getAllPositions() {
     return Array.from(this.positions.values());
   }
 

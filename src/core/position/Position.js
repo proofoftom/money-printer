@@ -8,7 +8,9 @@ class Position extends EventEmitter {
     size,
     entryTime = Date.now(),
     symbol = null,
-    simulationManager
+    simulationManager,
+    traderManager,
+    traderPublicKey
   }) {
     super();
     this.mint = mint;
@@ -33,6 +35,8 @@ class Position extends EventEmitter {
     this.symbol = symbol || mint.slice(0, 8);
     this.partialExits = [];
     this.simulationManager = simulationManager;
+    this.traderManager = traderManager;
+    this.traderPublicKey = traderPublicKey;
     
     // Recovery metrics
     this.recoveryStrength = 0;
@@ -189,6 +193,20 @@ class Position extends EventEmitter {
       const tx = await this.executeEntry(size, POSITION.ENTRY.SLIPPAGE);
       if (!tx) {
         throw new Error('Entry transaction failed');
+      }
+
+      // Record the trade in the trader's history
+      if (this.traderManager && this.traderPublicKey) {
+        const trader = this.traderManager.getOrCreateTrader(this.traderPublicKey);
+        trader.recordTrade({
+          mint: this.mint,
+          amount: size,
+          price: this.entryPrice,
+          type: 'buy',
+          timestamp: Date.now(),
+          traderPublicKey: this.traderPublicKey,
+          signature: tx.signature
+        }, this.token);
       }
 
       this.entryPrice = this.token.currentPrice;
@@ -453,25 +471,98 @@ class Position extends EventEmitter {
     return this;
   }
 
-  close(exitPrice) {
-    // Validate exit price
-    if (typeof exitPrice !== 'number' || exitPrice <= 0) {
-      throw new Error(`Invalid exit price: ${exitPrice}. Exit price must be a positive number.`);
+  async close(reason = 'manual') {
+    try {
+      const exitPrice = this.token.currentPrice;
+      const remainingSize = this.size * this.remainingSize;
+
+      // Execute exit with slippage protection
+      const tx = await this.executeExit(remainingSize, config.POSITION.EXIT.SLIPPAGE);
+      if (!tx) {
+        throw new Error('Exit transaction failed');
+      }
+
+      // Record the trade in the trader's history
+      if (this.traderManager && this.traderPublicKey) {
+        const trader = this.traderManager.getOrCreateTrader(this.traderPublicKey);
+        trader.recordTrade({
+          mint: this.mint,
+          amount: remainingSize,
+          price: exitPrice,
+          type: 'sell',
+          timestamp: Date.now(),
+          traderPublicKey: this.traderPublicKey,
+          signature: tx.signature,
+          profitLoss: ((exitPrice - this.entryPrice) / this.entryPrice) * 100
+        }, this.token);
+      }
+
+      // Calculate final P/L
+      const profitLoss = ((exitPrice - this.entryPrice) / this.entryPrice) * 100;
+      
+      this.emit('closed', {
+        reason,
+        profitLoss,
+        exitPrice,
+        holdTime: Date.now() - this.entryTime
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error closing position:', error);
+      return false;
     }
+  }
 
-    // Ensure position isn't already closed
-    if (this.closedAt) {
-      throw new Error('Position is already closed');
+  async partialExit(percentage, reason = 'partial') {
+    try {
+      const exitPrice = this.token.currentPrice;
+      const exitSize = this.size * this.remainingSize * (percentage / 100);
+
+      // Execute partial exit with slippage protection
+      const tx = await this.executeExit(exitSize, config.POSITION.EXIT.SLIPPAGE);
+      if (!tx) {
+        throw new Error('Partial exit transaction failed');
+      }
+
+      // Record the trade in the trader's history
+      if (this.traderManager && this.traderPublicKey) {
+        const trader = this.traderManager.getOrCreateTrader(this.traderPublicKey);
+        trader.recordTrade({
+          mint: this.mint,
+          amount: exitSize,
+          price: exitPrice,
+          type: 'sell',
+          timestamp: Date.now(),
+          traderPublicKey: this.traderPublicKey,
+          signature: tx.signature,
+          profitLoss: ((exitPrice - this.entryPrice) / this.entryPrice) * 100
+        }, this.token);
+      }
+
+      // Update remaining size
+      this.remainingSize *= (1 - percentage / 100);
+      
+      // Record partial exit
+      this.partialExits.push({
+        timestamp: Date.now(),
+        percentage,
+        price: exitPrice,
+        profitLoss: ((exitPrice - this.entryPrice) / this.entryPrice) * 100
+      });
+
+      this.emit('partialExit', {
+        reason,
+        percentage,
+        exitPrice,
+        remainingSize: this.remainingSize
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error executing partial exit:', error);
+      return false;
     }
-
-    this.closedAt = Date.now();
-    this.exitPrice = exitPrice;
-    this.finalProfitLoss = ((exitPrice - this.entryPrice) / this.entryPrice) * 100;
-
-    // Emit close event
-    this.emit('closed', this);
-
-    return this;
   }
 
   getProfitLoss() {

@@ -9,9 +9,18 @@ const PositionStateManager = require('./PositionStateManager');
 const errorLogger = require('../../monitoring/errorLoggerInstance');
 
 class PositionManager extends EventEmitter {
-  constructor(wallet) {
+  constructor(wallet, priceManager, traderManager) {
     super();
     this.wallet = wallet;
+    this.priceManager = priceManager;
+    this.traderManager = traderManager;
+    this.positions = new Map();
+    this.closedPositions = [];
+    this.maxPositions = config.POSITION.MAX_POSITIONS || 3;
+    this.totalProfit = 0;
+    this.winRate = 0;
+    this.avgHoldTime = 0;
+    this.avgProfitPerTrade = 0;
     this.wins = 0;
     this.losses = 0;
     this.exitStrategies = new ExitStrategies(config.EXIT_STRATEGIES);
@@ -128,82 +137,88 @@ class PositionManager extends EventEmitter {
     return null;
   }
 
-  async openPosition(token) {
-    const { POSITION, RISK } = config;
-    
+  async openPosition(token, size) {
     try {
-      // Risk management checks
-      if (this.getDailyLoss() <= -RISK.MAX_DAILY_LOSS) {
-        throw new Error('Daily loss limit reached');
+      if (this.positions.size >= this.maxPositions) {
+        console.warn('Maximum number of positions reached');
+        return null;
       }
 
-      if (this.getTotalExposure() >= RISK.MAX_EXPOSURE) {
-        throw new Error('Maximum portfolio exposure reached');
+      const position = new Position({
+        mint: token.mint,
+        entryPrice: token.currentPrice,
+        size,
+        symbol: token.symbol,
+        traderManager: this.traderManager,
+        traderPublicKey: this.wallet.publicKey
+      });
+
+      // Set up position event handlers
+      this.setupPositionEventHandlers(position);
+
+      // Add to active positions
+      this.positions.set(token.mint, position);
+
+      // Open the position
+      const success = await position.open();
+      if (!success) {
+        this.positions.delete(token.mint);
+        return null;
       }
 
-      // Calculate risk/reward
-      const potentialLoss = Math.abs(POSITION.EXIT.STOP_LOSS);
-      const potentialGain = POSITION.EXIT.PROFIT;
-      if (potentialGain / potentialLoss < RISK.MIN_RISK_REWARD) {
-        throw new Error('Risk/reward ratio too low');
-      }
-
-      // Create and open position
-      const positionSize = this.calculatePositionSize(token.marketCap, token.volatility);
-      
-      if (this.wallet.balance >= positionSize) {
-        // Simulate transaction delay and price impact
-        const delay = await this.transactionSimulator.simulateTransactionDelay();
-        const executionPrice = this.transactionSimulator.calculatePriceImpact(
-          positionSize,
-          token.marketCap,
-          0
-        );
-
-        const position = new Position({
-          mint: token.mint,
-          entryPrice: executionPrice,
-          size: positionSize,
-          simulatedDelay: delay
-        });
-
-        this.stateManager.addPosition(position);
-        this.wallet.updateBalance(-positionSize);
-
-        // Set up position event listeners
-        position.on('updated', this.handlePositionUpdated.bind(this));
-        position.on('partialExit', this.handlePartialExit.bind(this));
-        position.on('closed', this.handlePositionClosed.bind(this));
-
-        // Emit trade event for opening position
-        this.emit('trade', {
-          type: 'BUY',
-          mint: token.mint,
-          profitLoss: 0,
-          symbol: token.symbol,
-          size: positionSize,
-          price: executionPrice,
-          timestamp: Date.now()
-        });
-
-        return true;
-      }
-
-      return false;
+      this.emit('positionOpened', position);
+      return position;
     } catch (error) {
-      console.error('Failed to open position:', error);
-      return false;
+      console.error('Error opening position:', error);
+      return null;
     }
   }
 
-  getTotalExposure() {
-    let totalValue = 0;
-    for (const position of this.stateManager.getPositions()) {
-      if (position.isOpen()) {
-        totalValue += position.getCurrentValue();
-      }
-    }
-    return (totalValue / this.wallet.getTotalBalance()) * 100;
+  setupPositionEventHandlers(position) {
+    position.on('closed', (data) => {
+      const { reason, profitLoss, exitPrice, holdTime } = data;
+      
+      // Update statistics
+      this.updateStats(position, profitLoss, holdTime);
+      
+      // Move to closed positions
+      this.positions.delete(position.mint);
+      this.closedPositions.push({
+        mint: position.mint,
+        symbol: position.symbol,
+        entryPrice: position.entryPrice,
+        exitPrice,
+        profitLoss,
+        holdTime,
+        size: position.size,
+        closedAt: Date.now(),
+        reason
+      });
+
+      this.emit('positionClosed', { position, data });
+    });
+
+    position.on('partialExit', (data) => {
+      this.emit('positionPartialExit', { position, data });
+    });
+  }
+
+  updateStats(position, profitLoss, holdTime) {
+    // Update total profit
+    this.totalProfit += profitLoss;
+
+    // Update win rate
+    const totalTrades = this.closedPositions.length + 1;
+    const winningTrades = this.closedPositions.filter(p => p.profitLoss > 0).length + (profitLoss > 0 ? 1 : 0);
+    this.winRate = (winningTrades / totalTrades) * 100;
+
+    // Update average hold time
+    const totalHoldTime = this.closedPositions.reduce((sum, p) => sum + p.holdTime, 0) + holdTime;
+    this.avgHoldTime = totalHoldTime / totalTrades;
+
+    // Update average profit per trade
+    const totalProfit = this.closedPositions.reduce((sum, p) => sum + p.profitLoss, 0) + profitLoss;
+    this.avgProfitPerTrade = totalProfit / totalTrades;
   }
 
   async closePosition(mint, exitPrice, portion = 1.0) {

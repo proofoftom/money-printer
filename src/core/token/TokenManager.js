@@ -3,32 +3,34 @@ const Token = require("./Token");
 const config = require("../../utils/config");
 
 class TokenManager extends EventEmitter {
-  constructor(
-    safetyChecker,
-    positionManager,
-    priceManager,
-    webSocketManager
-  ) {
+  constructor(safetyChecker, positionManager, priceManager, webSocketManager, traderManager) {
     super();
     this.safetyChecker = safetyChecker;
     this.positionManager = positionManager;
     this.priceManager = priceManager;
     this.webSocketManager = webSocketManager;
+    this.traderManager = traderManager;
     this.tokens = new Map();
-    
+
     // Recovery monitoring
-    this._recoveryInterval = setInterval(() => this.monitorRecoveryOpportunities(), 
-      config.RECOVERY_MONITOR_INTERVAL || 30000);
+    this._recoveryInterval = setInterval(
+      () => this.monitorRecoveryOpportunities(),
+      config.RECOVERY_MONITOR_INTERVAL || 30000
+    );
   }
 
   handleNewToken(tokenData) {
-    const token = new Token(tokenData);
+    const token = new Token(tokenData, this.traderManager);
 
     // Check market cap threshold before processing
     const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
     if (marketCapUSD >= config.MCAP.MAX_ENTRY) {
       console.info(
-        `Ignoring new token ${token.symbol || token.mint.slice(0, 8)} - Market cap too high: $${marketCapUSD.toFixed(2)} (${token.marketCapSol.toFixed(2)} SOL)`
+        `Ignoring new token ${
+          token.symbol || token.mint.slice(0, 8)
+        } - Market cap too high: $${marketCapUSD.toFixed(
+          2
+        )} (${token.marketCapSol.toFixed(2)} SOL)`
       );
       return null;
     }
@@ -37,7 +39,7 @@ class TokenManager extends EventEmitter {
 
     token.on("stateChanged", ({ token, from, to }) => {
       this.emit("tokenStateChanged", { token, from, to });
-      
+
       // Unsubscribe from WebSocket updates when token enters dead state
       if (to === "dead") {
         this.webSocketManager.unsubscribeFromToken(token.mint);
@@ -71,7 +73,9 @@ class TokenManager extends EventEmitter {
       this.emit("recoveryGainTooHigh", data);
       const { token, gainPercentage } = data;
       console.warn(
-        `Token ${token.symbol} (${token.mint}) recovery gain too high: ${gainPercentage.toFixed(2)}%`
+        `Token ${token.symbol} (${
+          token.mint
+        }) recovery gain too high: ${gainPercentage.toFixed(2)}%`
       );
     });
 
@@ -147,7 +151,9 @@ class TokenManager extends EventEmitter {
             token.setState("recovery");
             this.emit("tokenRecovering", token);
           }
-        } else if (token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MAX) {
+        } else if (
+          token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MAX
+        ) {
           // Too much drawdown - mark as dead
           token.setState("dead");
           this.emit("tokenDead", token);
@@ -163,7 +169,9 @@ class TokenManager extends EventEmitter {
             token.setState("open");
             this.emit("tokenSafeForEntry", { token, positionSize: "medium" });
           }
-        } else if (token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MIN) {
+        } else if (
+          token.getDrawdownPercentage() >= config.RECOVERY.DRAWDOWN.MIN
+        ) {
           // New drawdown cycle - reset to drawdown state
           token.setState("drawdown");
           this.emit("tokenInDrawdown", token);
@@ -196,11 +204,14 @@ class TokenManager extends EventEmitter {
     this.safetyChecker.updateTrackedTokens(token);
 
     // Check for token death in any state
-    if (marketCapUSD <= config.THRESHOLDS.DEAD_USD) {
-      // Only mark tokens as dead if they've reached FIRST_PUMP state
-      if (token.highestMarketCap >= config.THRESHOLDS.FIRST_PUMP_USD) {
+    if (marketCapUSD <= config.MCAP.DEAD) {
+      // Only mark tokens as dead if they've reached PUMP state
+      if (token.highestMarketCap >= config.MCAP.PUMP) {
         if (position) {
-          const closeResult = this.positionManager.closePosition(token.mint, token.marketCapSol);
+          const closeResult = this.positionManager.closePosition(
+            token.mint,
+            token.marketCapSol
+          );
           if (closeResult) {
             token.setState("dead");
             this.emit("positionClosed", { token, reason: "dead" });
@@ -214,13 +225,13 @@ class TokenManager extends EventEmitter {
     }
 
     // Check for recovery pattern after update
-    if (token.state === 'drawdown' || token.state === 'recovery') {
+    if (token.state === "drawdown" || token.state === "recovery") {
       const metrics = token.recoveryMetrics;
       if (metrics && this.isStrongRecoverySetup(token)) {
-        this.emit('recoveryOpportunity', {
+        this.emit("recoveryOpportunity", {
           token,
           metrics,
-          reason: 'patternDetected'
+          reason: "patternDetected",
         });
       }
     }
@@ -231,21 +242,22 @@ class TokenManager extends EventEmitter {
   calculatePositionSize(token, availableBalance) {
     const marketStructure = token.analyzeMarketStructure();
     const riskLevel = this.calculateRiskLevel(token, marketStructure);
-    
+
     // Base position size on confidence and risk
-    let baseSize = availableBalance * (marketStructure.recommendation.confidence / 100);
-    
+    let baseSize =
+      availableBalance * (marketStructure.recommendation.confidence / 100);
+
     // Adjust for risk level
-    baseSize *= (1 - riskLevel);
-    
+    baseSize *= 1 - riskLevel;
+
     // Apply position sizing rules
     const maxPositionSize = availableBalance * 0.1; // Never use more than 10% of balance
     const minPositionSize = availableBalance * 0.01; // Minimum 1% of balance
-    
+
     // Scale based on market structure health
     const healthAdjustment = marketStructure.overallHealth / 100;
     baseSize *= healthAdjustment;
-    
+
     // Ensure within limits
     return Math.min(Math.max(baseSize, minPositionSize), maxPositionSize);
   }
@@ -254,19 +266,19 @@ class TokenManager extends EventEmitter {
     const riskFactors = {
       priceVolatility: token.getPriceVolatility() / 100,
       volumeConcentration: this.calculateVolumeConcentration(token),
-      patternReliability: (100 - marketStructure.structureScore.patternQuality) / 100,
+      patternReliability:
+        (100 - marketStructure.structureScore.patternQuality) / 100,
       marketDepth: this.calculateMarketDepth(token),
-      recoveryStability: this.calculateRecoveryStability(token)
+      recoveryStability: this.calculateRecoveryStability(token),
     };
 
     // Weight the risk factors
-    const weightedRisk = (
+    const weightedRisk =
       riskFactors.priceVolatility * 0.25 +
-      riskFactors.volumeConcentration * 0.20 +
-      riskFactors.patternReliability * 0.20 +
+      riskFactors.volumeConcentration * 0.2 +
+      riskFactors.patternReliability * 0.2 +
       riskFactors.marketDepth * 0.15 +
-      riskFactors.recoveryStability * 0.20
-    );
+      riskFactors.recoveryStability * 0.2;
 
     return Math.min(Math.max(weightedRisk, 0), 1);
   }
@@ -276,10 +288,13 @@ class TokenManager extends EventEmitter {
     if (!volumeProfile) return 1; // Maximum risk if no volume data
 
     // Calculate Herfindahl-Hirschman Index for volume concentration
-    const totalVolume = volumeProfile.profile.reduce((sum, level) => sum + level.totalVolume, 0);
+    const totalVolume = volumeProfile.profile.reduce(
+      (sum, level) => sum + level.totalVolume,
+      0
+    );
     const hhi = volumeProfile.profile.reduce((sum, level) => {
       const marketShare = level.totalVolume / totalVolume;
-      return sum + (marketShare * marketShare);
+      return sum + marketShare * marketShare;
     }, 0);
 
     return Math.min(hhi * 10, 1); // Normalize to 0-1 range
@@ -290,49 +305,52 @@ class TokenManager extends EventEmitter {
     if (!volumeProfile) return 1;
 
     // Calculate liquidity depth score
-    const totalVolume = volumeProfile.volumeDistribution.buyVolume + 
-                       volumeProfile.volumeDistribution.sellVolume;
+    const totalVolume =
+      volumeProfile.volumeDistribution.buyVolume +
+      volumeProfile.volumeDistribution.sellVolume;
     const avgVolumePerLevel = totalVolume / volumeProfile.profile.length;
-    
+
     // Count levels with significant volume
     const significantLevels = volumeProfile.profile.filter(
-      level => level.totalVolume > avgVolumePerLevel * 0.5
+      (level) => level.totalVolume > avgVolumePerLevel * 0.5
     ).length;
 
-    return 1 - (significantLevels / volumeProfile.profile.length);
+    return 1 - significantLevels / volumeProfile.profile.length;
   }
 
   calculateRecoveryStability(token) {
     const strength = token.getRecoveryStrength();
     const recentPrices = token.priceHistory.slice(-10);
-    
+
     if (recentPrices.length < 2) return 1;
 
     // Calculate price stability
     const priceChanges = [];
     for (let i = 1; i < recentPrices.length; i++) {
       const change = Math.abs(
-        (recentPrices[i].price - recentPrices[i-1].price) / recentPrices[i-1].price
+        (recentPrices[i].price - recentPrices[i - 1].price) /
+          recentPrices[i - 1].price
       );
       priceChanges.push(change);
     }
 
-    const avgChange = priceChanges.reduce((a,b) => a + b, 0) / priceChanges.length;
+    const avgChange =
+      priceChanges.reduce((a, b) => a + b, 0) / priceChanges.length;
     const stability = Math.min(avgChange * 5, 1); // Normalize to 0-1
 
-    return (stability * 0.7) + ((100 - strength.total) / 100 * 0.3);
+    return stability * 0.7 + ((100 - strength.total) / 100) * 0.3;
   }
 
   getDynamicStopLoss(token) {
     const marketStructure = token.analyzeMarketStructure();
     const volumeProfile = token.getVolumeProfile();
-    
+
     if (!volumeProfile) return null;
 
     // Find strongest support level below current price
     const currentPrice = token.getTokenPrice();
     const supportLevels = volumeProfile.profile
-      .filter(level => level.priceLevel < currentPrice)
+      .filter((level) => level.priceLevel < currentPrice)
       .sort((a, b) => {
         const aStrength = a.buyVolume / a.totalVolume;
         const bStrength = b.buyVolume / b.totalVolume;
@@ -343,26 +361,26 @@ class TokenManager extends EventEmitter {
 
     // Use the strongest support level as base
     const baseStopLevel = supportLevels[0].priceLevel;
-    
+
     // Add buffer based on volatility
     const volatility = token.getPriceVolatility();
     const buffer = baseStopLevel * (volatility * 0.01); // 1% buffer per volatility point
-    
+
     return Math.max(baseStopLevel - buffer, 0);
   }
 
   getDynamicTakeProfit(token) {
     const marketStructure = token.analyzeMarketStructure();
     const strength = token.getRecoveryStrength();
-    
+
     // Base take profit on recovery strength
-    let takeProfit = 1 + (strength.total / 100); // 100% recovery = 2x target
-    
+    let takeProfit = 1 + strength.total / 100; // 100% recovery = 2x target
+
     // Adjust based on market structure
     if (marketStructure.pattern && marketStructure.pattern.confidence > 70) {
       takeProfit *= 1.2; // 20% higher target for strong patterns
     }
-    
+
     // Cap maximum take profit
     return Math.min(takeProfit, 3); // Maximum 3x
   }
@@ -380,71 +398,71 @@ class TokenManager extends EventEmitter {
   monitorRecoveryOpportunities() {
     for (const [mint, token] of this.tokens) {
       // Skip tokens that aren't in drawdown or recovery state
-      if (!['drawdown', 'recovery'].includes(token.state)) continue;
-      
+      if (!["drawdown", "recovery"].includes(token.state)) continue;
+
       const metrics = token.recoveryMetrics;
       if (!metrics) continue;
-      
+
       // Check for strong recovery setups
       if (this.isStrongRecoverySetup(token)) {
-        this.emit('recoveryOpportunity', {
+        this.emit("recoveryOpportunity", {
           token,
           metrics,
-          reason: 'strongSetup'
+          reason: "strongSetup",
         });
       }
-      
+
       // Monitor ongoing recoveries
-      if (token.state === 'recovery') {
+      if (token.state === "recovery") {
         this.monitorOngoingRecovery(token);
       }
     }
   }
-  
+
   isStrongRecoverySetup(token) {
     const {
       drawdownDepth,
       recoveryStrength,
       accumulationScore,
       buyPressure,
-      marketStructure
+      marketStructure,
     } = token.recoveryMetrics;
-    
+
     // Check for ideal recovery conditions
     return (
       drawdownDepth > config.RECOVERY_MIN_DRAWDOWN &&
       recoveryStrength > 0.2 &&
       accumulationScore > 0.7 &&
       buyPressure > 0.6 &&
-      marketStructure === 'bullish'
+      marketStructure === "bullish"
     );
   }
-  
+
   monitorOngoingRecovery(token) {
     const metrics = token.recoveryMetrics;
-    
+
     // Check for recovery weakness
     if (
-      metrics.recoveryPhase === 'distribution' ||
-      (metrics.marketStructure === 'bearish' && metrics.buyPressure < 0.3)
+      metrics.recoveryPhase === "distribution" ||
+      (metrics.marketStructure === "bearish" && metrics.buyPressure < 0.3)
     ) {
-      this.emit('recoveryWarning', {
+      this.emit("recoveryWarning", {
         token,
         metrics,
-        reason: 'weakening'
+        reason: "weakening",
       });
     }
-    
+
     // Check for recovery strength
     if (
-      metrics.recoveryPhase === 'expansion' &&
+      metrics.recoveryPhase === "expansion" &&
       metrics.recoveryStrength > 0.5 &&
-      metrics.marketStructure === 'bullish'
+      metrics.marketStructure === "bullish"
     ) {
-      this.emit('recoveryStrength', {
+      this.emit("recoveryStrength", {
         token,
         metrics,
-        reason: 'acceleration'
+        reason: "acceleration",
       });
     }
   }
@@ -454,10 +472,10 @@ class TokenManager extends EventEmitter {
     for (const token of this.tokens.values()) {
       token.removeAllListeners();
     }
-    
+
     // Clear tokens map
     this.tokens.clear();
-    
+
     // Remove all event listeners from TokenManager itself
     this.removeAllListeners();
   }

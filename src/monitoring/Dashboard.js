@@ -8,6 +8,7 @@ class Dashboard {
     positionManager,
     safetyChecker,
     priceManager,
+    traderManager,
     config
   ) {
     this.wallet = wallet;
@@ -15,6 +16,7 @@ class Dashboard {
     this.positionManager = positionManager;
     this.safetyChecker = safetyChecker;
     this.priceManager = priceManager;
+    this.traderManager = traderManager;
     this.config = config;
     this.trades = [];
     this.balanceHistory = {
@@ -189,6 +191,42 @@ class Dashboard {
         label: { bold: true },
       },
     });
+
+    // Create trader metrics box
+    this.traderMetricsBox = this.grid.set(6, 0, 3, 3, blessed.box, {
+      label: " Trader Metrics ",
+      content: "Loading trader data...",
+      border: "line",
+      tags: true,
+      padding: 1,
+      style: {
+        label: { bold: true },
+      },
+    });
+
+    // Create trader reputation box
+    this.traderReputationBox = this.grid.set(9, 0, 3, 3, blessed.box, {
+      label: " Trader Reputation ",
+      content: "Loading reputation data...",
+      border: "line",
+      tags: true,
+      padding: 1,
+      style: {
+        label: { bold: true },
+      },
+    });
+
+    // Create trading patterns box
+    this.tradingPatternsBox = this.grid.set(6, 3, 3, 3, blessed.box, {
+      label: " Trading Patterns ",
+      content: "Analyzing patterns...",
+      border: "line",
+      tags: true,
+      padding: 1,
+      style: {
+        label: { bold: true },
+      },
+    });
   }
 
   setupEventHandlers() {
@@ -273,70 +311,38 @@ class Dashboard {
       // Calculate basic stats
       const pnl = ((pos.currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
       const holdTime = (Date.now() - pos.entryTime) / 1000;
-      const holdTimeStr =
-        holdTime < 60
-          ? `${holdTime.toFixed(0)}s`
-          : `${(holdTime / 60).toFixed(1)}m`;
+      const holdTimeStr = this.formatTime(holdTime);
 
-      // Calculate price velocity (change per minute)
-      const priceHistory = pos.priceHistory || [];
-      const recentPrices = priceHistory.slice(-5); // Last 5 price points
-      const velocity =
-        recentPrices.length > 1
-          ? ((recentPrices[recentPrices.length - 1] - recentPrices[0]) /
-              recentPrices[0]) *
-            100
-          : 0;
+      // Get market structure and recovery metrics
+      const marketStructure = pos.marketStructure || 'unknown';
+      const recoveryPhase = pos.recoveryPhase || 'none';
+      const recoveryStrength = pos.recoveryStrength || 0;
+      const buyPressure = pos.buyPressure || 0;
 
-      // Get volume trends
-      const volumeHistory = pos.volumeHistory || [];
-      const recentVolume = volumeHistory.slice(-3); // Last 3 volume points
-      const volumeTrend =
-        recentVolume.length > 1
-          ? ((recentVolume[recentVolume.length - 1] - recentVolume[0]) /
-              recentVolume[0]) *
-            100
-          : 0;
+      // Calculate position size and remaining
+      const remainingSize = pos.remainingSize * 100;
+      const maxDrawdown = pos.maxDrawdown || 0;
+      const maxUpside = pos.maxUpside || 0;
 
-      // Format velocity indicator
-      const velocityIndicator =
-        velocity > 0
-          ? "{green-fg}↑" + velocity.toFixed(1) + "%/m{/green-fg}"
-          : "{red-fg}↓" + Math.abs(velocity).toFixed(1) + "%/m{/red-fg}";
-
-      // Format volume trend indicator
-      const volumeIndicator =
-        volumeTrend > 0
-          ? "{green-fg}↑" + volumeTrend.toFixed(0) + "%{/green-fg}"
-          : "{red-fg}↓" + Math.abs(volumeTrend).toFixed(0) + "%{/red-fg}";
-
-      // Calculate profit trend
-      const profitTrend = pos.profitHistory || [];
-      const recentProfit = profitTrend.slice(-3);
-      const profitDirection =
-        recentProfit.length > 1
-          ? recentProfit[recentProfit.length - 1] > recentProfit[0]
-            ? "▲"
-            : "▼"
-          : "─";
-
-      // Format P/L with color and trend
-      const plColor = pnl >= 0 ? "green" : "red";
-      const plStr = `{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(
-        1
-      )}%{/${plColor}-fg}`;
-
-      // Get volume in USD
-      const volumeUSD = this.priceManager.solToUSD(pos.volume);
+      // Format indicators
+      const structureColor = 
+        marketStructure === 'bullish' ? 'green' :
+        marketStructure === 'bearish' ? 'red' : 'white';
+      
+      const phaseColor =
+        recoveryPhase === 'accumulation' ? 'yellow' :
+        recoveryPhase === 'expansion' ? 'green' :
+        recoveryPhase === 'distribution' ? 'red' : 'white';
 
       // Build the display string with dynamic data
       return [
-        `${pos.mint?.slice(0, 8)}... | ${holdTimeStr} | P/L: ${plStr}`,
-        `Price: ${pos.currentPrice?.toFixed(4)} SOL ${velocityIndicator}`,
-        `Vol: ${this.formatVolume(pos.volume5m || 0)}$ ${volumeIndicator}`,
-        `Entry: ${pos.entryPrice?.toFixed(4)} | High: ${pos.highPrice?.toFixed(
-          4
-        )}`,
+        `${pos.symbol} | ${holdTimeStr} | Size: ${remainingSize.toFixed(0)}%`,
+        `P/L: ${pnl >= 0 ? '{green-fg}+' : '{red-fg}'}${Math.abs(pnl).toFixed(1)}%{/${pnl >= 0 ? 'green' : 'red'}-fg}`,
+        `Entry: ${pos.entryPrice.toFixed(4)} | Current: ${pos.currentPrice.toFixed(4)}`,
+        `High: ${pos.highestPrice.toFixed(4)} | Low: ${pos.lowestPrice.toFixed(4)}`,
+        `Max Up: ${maxUpside.toFixed(1)}% | Max Down: ${maxDrawdown.toFixed(1)}%`,
+        `Structure: {${structureColor}-fg}${marketStructure}{/${structureColor}-fg} | Phase: {${phaseColor}-fg}${recoveryPhase}{/${phaseColor}-fg}`,
+        `Recovery: ${recoveryStrength.toFixed(0)}% | Buy Pressure: ${buyPressure.toFixed(0)}%`,
         "─".repeat(50), // Separator
       ].join("\n");
     });
@@ -344,7 +350,7 @@ class Dashboard {
     return positionStrings.join("\n");
   }
 
-  logTrade({ type, mint, profitLoss, symbol }) {
+  logTrade({ type, mint, profitLoss, symbol, trader, size }) {
     try {
       const timestamp = new Date().toLocaleTimeString();
       const trade = {
@@ -353,6 +359,8 @@ class Dashboard {
         mint,
         profitLoss,
         symbol,
+        trader,
+        size,
       };
       this.trades.unshift(trade);
       // Keep only last 50 trades
@@ -375,34 +383,37 @@ class Dashboard {
           try {
             const profitLossStr =
               trade.profitLoss !== undefined && trade.profitLoss !== null
-                ? `${
-                    trade.profitLoss >= 0 ? "+" : ""
-                  }${trade.profitLoss.toFixed(1)}%`
+                ? `${trade.profitLoss >= 0 ? "+" : ""}${trade.profitLoss.toFixed(1)}%`
                 : "N/A";
 
             const symbol = trade.symbol || trade.mint?.slice(0, 8) || "Unknown";
 
-            // Color code based on trade type and profit/loss
+            // Get trader reputation info
+            const trader = trade.trader || {};
+            const reputation = trader.reputation || {};
+            const score = reputation.score || 100;
+            const tradeSize = trade.size || 0;
+
+            // Color code based on trade type, profit/loss and reputation
             let tradeColor = "white";
-            if (trade.type === "BUY") tradeColor = "yellow";
-            else if (trade.type === "SELL" || trade.type === "CLOSE") {
+            if (trade.type === "BUY") {
+              tradeColor = score > 80 ? "green" : score > 50 ? "yellow" : "red";
+            } else if (trade.type === "SELL" || trade.type === "CLOSE") {
               tradeColor = trade.profitLoss >= 0 ? "green" : "red";
             }
 
-            return `{${tradeColor}-fg}[${
-              trade.timestamp
-            }] {${tradeColor}-fg}${trade.type.padEnd(
-              5
-            )} {/${tradeColor}-fg}{white-fg} ${symbol.padEnd(
-              12
-            )} {/${tradeColor}-fg}{${tradeColor}-fg} ${profitLossStr}{/${tradeColor}-fg}`;
+            // Format trade size and reputation indicators
+            const sizeIndicator = tradeSize > 1000 ? "🔥" : tradeSize > 100 ? "+" : "";
+            const reputationIndicator = score > 90 ? "⭐" : score < 50 ? "⚠️" : "";
+
+            return `{${tradeColor}-fg}[${trade.timestamp}] ${trade.type.padEnd(5)} ${symbol.padEnd(12)} ${profitLossStr.padEnd(8)} ${sizeIndicator}${reputationIndicator}{/${tradeColor}-fg}`;
           } catch (err) {
             return `Error formatting trade: ${err.message}`;
           }
         })
         .join("\n");
     } catch (error) {
-      return "Error displaying trade history";
+      throw error;
     }
   }
 
@@ -452,57 +463,88 @@ class Dashboard {
   }
 
   renderTokenMetrics(token) {
-    const { PUMP, RECOVERY, SAFETY } = this.config;
+    const { MCAP, RECOVERY, SAFETY } = this.config;
+    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol || 0) || 0;
     
-    // Common metrics
+    // Enhanced base metrics with null checks
     const metrics = {
-      'Market Cap': `$${this.priceManager.solToUSD(token.marketCapSol).toFixed(1)}`,
-      'Volume (SOL)': this.formatVolume(token.volumeSOL),
-      'Holders': token.holders,
-      'Age': this.formatTime(token.age)
+      'Market Cap': `$${marketCapUSD.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`,
+      'Market Cap %': `${(((marketCapUSD / (MCAP.MAX_ENTRY || 1)) * 100) || 0).toFixed(1)}%`,
+      'Volume (SOL)': this.formatVolume(token.getRecentVolume(300000) || 0), // 5min volume
+      'Holders': token.getHolderCount() || 0,
+      'Age': this.formatTime((Date.now() - (token.minted || Date.now())) || 0)
     };
 
-    // State-specific metrics
+    // Get market structure analysis with null checks
+    const marketStructure = token.analyzeMarketStructure() || {};
+    const recoveryStrength = token.getRecoveryStrength() || {};
+    const pumpMetrics = token.pumpMetrics || {};
+
+    // State-specific metrics with enhanced null checks
     switch (token.state) {
       case 'new':
+        const momentum = token.getPriceMomentum() || 0;
         return {
           ...metrics,
-          'Price Change (1m)': `${token.getPriceChange(60).toFixed(1)}%`,
-          'Volume Change': `${token.getVolumeSpike().toFixed(0)}%`,
-          'Buy Pressure': `${token.getMarketMetrics().buyPressure.toFixed(0)}%`
+          'Price Momentum': `${momentum.toFixed(1)}%`,
+          'Volume Change': `${(token.getVolumeChange(300) || 0).toFixed(0)}%`,
+          'Buy Pressure': `${(marketStructure.buyPressure || 0).toFixed(0)}%`,
+          'Market Health': `${(marketStructure.overallHealth || 0).toFixed(0)}%`,
+          'To Pump': `${(((MCAP.PUMP - marketCapUSD) / (MCAP.PUMP || 1) * 100) || 0).toFixed(1)}%`
         };
 
       case 'pumping':
         return {
           ...metrics,
-          'Price Change (1m)': `${token.getPriceChange(60).toFixed(1)}%`,
-          'Price Change (5m)': `${token.getPriceChange(300).toFixed(1)}%`,
-          'Volume Spike': `${token.getVolumeSpike().toFixed(0)}%`,
-          'Buy Pressure': `${token.getMarketMetrics().buyPressure.toFixed(0)}%`
+          'Pump Count': pumpMetrics.pumpCount || 0,
+          'Gain Rate': `${(pumpMetrics.highestGainRate || 0).toFixed(1)}%/min`,
+          'Price Accel': `${(pumpMetrics.priceAcceleration || 0).toFixed(1)}x`,
+          'Buy Pressure': `${(marketStructure.buyPressure || 0).toFixed(0)}%`,
+          'Market Health': `${(marketStructure.overallHealth || 0).toFixed(0)}%`,
+          'Volume Spikes': (pumpMetrics.volumeSpikes || []).length
         };
 
       case 'drawdown':
         return {
           ...metrics,
-          'Drawdown': `${((token.marketCapSol - token.highestMarketCap) / token.highestMarketCap * 100).toFixed(1)}%`,
-          'Time in Drawdown': this.formatTime(token.getDrawdownTime()),
-          'Volume vs Peak': `${token.getVolumeVsPeak().toFixed(0)}%`
+          'Drawdown': `${(token.getDrawdownPercentage() || 0).toFixed(1)}%`,
+          'Time in DD': this.formatTime((Date.now() - (token.drawdownStartTime || Date.now()))),
+          'Structure Score': `${((marketStructure.structureScore || {}).overall || 0).toFixed(0)}%`,
+          'Volume Health': `${(marketStructure.volumeHealth || 0).toFixed(0)}%`,
+          'Buy Ratio': `${(marketStructure.buyRatio || 0).toFixed(2)}`,
+          'Above Dead': `${(((marketCapUSD - MCAP.DEAD) / (MCAP.DEAD || 1) * 100) || 0).toFixed(1)}%`
         };
 
       case 'recovery':
+        const breakdown = recoveryStrength.breakdown || {};
         return {
           ...metrics,
-          'Gain from Bottom': `${((token.currentPrice - token.drawdownLow) / token.drawdownLow * 100).toFixed(1)}%`,
-          'Buy Pressure': `${token.getMarketMetrics().buyPressure.toFixed(0)}%`,
-          'Market Structure': `${token.getMarketMetrics().volumePriceCorrelation.toFixed(0)}`
+          'Recovery %': `${(recoveryStrength.total || 0).toFixed(1)}%`,
+          'Buy Pressure': `${((breakdown.buyPressure?.buyRatio) || 0).toFixed(2)}`,
+          'Volume Growth': `${(breakdown.volumeGrowth || 0).toFixed(0)}%`,
+          'Price Stability': `${(breakdown.priceStability || 0).toFixed(0)}%`,
+          'Market Health': `${(marketStructure.overallHealth || 0).toFixed(0)}%`
         };
 
       case 'open':
+        const position = this.positionManager.getPositionByMint(token.mint);
+        if (!position) return metrics;
+        
         return {
           ...metrics,
-          'Entry Price': this.priceManager.solToUSD(token.entryPrice).toFixed(1),
-          'Current Gain': `${((token.currentPrice - token.entryPrice) / token.entryPrice * 100).toFixed(1)}%`,
-          'Stop Loss': `${this.config.POSITION.EXIT.STOP_LOSS}%`
+          'Entry Price': `$${this.priceManager.solToUSD(position.entryPrice || 0).toFixed(4)}`,
+          'Current P/L': `${(((token.getCurrentPrice() - (position.entryPrice || 0)) / (position.entryPrice || 1) * 100) || 0).toFixed(1)}%`,
+          'Size Left': `${((position.remainingSize || 0) * 100).toFixed(0)}%`,
+          'Max Upside': `${(position.maxUpside || 0).toFixed(1)}%`,
+          'Max Drawdown': `${(position.maxDrawdown || 0).toFixed(1)}%`
+        };
+
+      case 'unsafe':
+        return {
+          ...metrics,
+          'Unsafe Reason': token.unsafeReason || 'Unknown',
+          'Market Health': `${(marketStructure.overallHealth || 0).toFixed(0)}%`,
+          'Volume Health': `${(marketStructure.volumeHealth || 0).toFixed(0)}%`
         };
 
       default:
@@ -520,10 +562,67 @@ class Dashboard {
       this.activePositionsBox.setContent(this.getActivePositions());
       this.tradeBox.setContent(this.getTradeHistory());
       this.updateBalanceHistory();
+      this.updateTraderMetrics();
+      this.updateTraderReputation();
+      this.updateTradingPatterns();
       this.screen.render();
     } catch (error) {
       throw error;
     }
+  }
+
+  updateTraderMetrics() {
+    if (!this.traderManager) return;
+
+    const trader = this.traderManager.getTrader(this.wallet.publicKey);
+    if (!trader) return;
+
+    const metrics = [
+      `Total Trades: ${trader.reputation.totalTrades}`,
+      `Profitable Trades: ${trader.reputation.profitableTrades}`,
+      `Win Rate: ${((trader.reputation.profitableTrades / trader.reputation.totalTrades) * 100).toFixed(2)}%`,
+      `Avg Hold Time: ${(trader.reputation.averageHoldTime / 1000 / 60).toFixed(2)} mins`,
+      `Recovery Win Rate: ${trader.recoveryMetrics.recoveryWinRate.toFixed(2)}%`,
+      `Best Recovery: ${trader.recoveryMetrics.bestRecoveryGain.toFixed(2)}%`
+    ].join('\n');
+
+    this.traderMetricsBox.setContent(metrics);
+  }
+
+  updateTraderReputation() {
+    if (!this.traderManager) return;
+
+    const trader = this.traderManager.getTrader(this.wallet.publicKey);
+    if (!trader) return;
+
+    const reputation = [
+      `Reputation Score: ${trader.reputation.score}`,
+      `Wash Trading Incidents: ${trader.reputation.washTradingIncidents}`,
+      `Rug Pull Involvements: ${trader.reputation.rugPullInvolvements}`,
+      `Successful Pumps: ${trader.reputation.successfulPumps}`,
+      `Failed Pumps: ${trader.reputation.failedPumps}`
+    ].join('\n');
+
+    this.traderReputationBox.setContent(reputation);
+  }
+
+  updateTradingPatterns() {
+    if (!this.traderManager) return;
+
+    const trader = this.traderManager.getTrader(this.wallet.publicKey);
+    if (!trader) return;
+
+    const patterns = [
+      `Buy/Sell Ratio: ${trader.patterns.tradingBehavior.buyToSellRatio.toFixed(2)}`,
+      `Avg Trade Size: ${trader.patterns.tradingBehavior.averageTradeSize.toFixed(2)}`,
+      `Trade Frequency: ${trader.patterns.tradingBehavior.tradeFrequency.toFixed(2)}/hr`,
+      `Trading Style:`,
+      ` Early Accumulator: ${trader.patterns.recovery.recoveryStyle.earlyAccumulator}`,
+      ` Trend Follower: ${trader.patterns.recovery.recoveryStyle.trendFollower}`,
+      ` Breakout Trader: ${trader.patterns.recovery.recoveryStyle.breakoutTrader}`
+    ].join('\n');
+
+    this.tradingPatternsBox.setContent(patterns);
   }
 
   getTokensByState(state) {

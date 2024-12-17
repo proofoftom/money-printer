@@ -273,92 +273,60 @@ class TraderManager extends EventEmitter {
   }
 
   getHolderCountForToken(mint) {
-    return this.getTraders().filter(trader => {
+    let count = 0;
+    for (const trader of this.traders.values()) {
       const balance = trader.tokenBalances.get(mint);
-      return balance && balance.balance > 0;
-    }).length;
+      if (balance && balance.balance > 0) {
+        count++;
+      }
+    }
+    return count;
   }
 
   getTotalTokensHeldForToken(mint) {
-    return this.getTraders().reduce((sum, trader) => {
+    let total = 0;
+    for (const trader of this.traders.values()) {
       const balance = trader.tokenBalances.get(mint);
-      return sum + (balance ? balance.balance : 0);
-    }, 0);
+      if (balance && balance.balance > 0) {
+        total += balance.balance;
+      }
+    }
+    return total;
   }
 
-  getTopHoldersForToken(mint, count = 10) {
-    return this.getTraders()
-      .filter(trader => {
-        const balance = trader.tokenBalances.get(mint);
-        return balance && balance.balance > 0;
-      })
-      .sort((a, b) => {
-        const balanceA = a.tokenBalances.get(mint).balance;
-        const balanceB = b.tokenBalances.get(mint).balance;
-        return balanceB - balanceA;
-      })
-      .slice(0, count)
-      .map(trader => ({
-        address: trader.publicKey,
-        balance: trader.tokenBalances.get(mint).balance
-      }));
-  }
+  getTradesInTimeWindow(mint, timeWindow) {
+    const now = Date.now();
+    const cutoff = now - timeWindow;
+    const trades = [];
 
-  getTokenTraderStats(mint, cutoffTime) {
-    const stats = {
-      totalVolume: 0,
-      uniqueTraders: 0,
-      maxWalletVolumePercentage: 0,
-      traderStats: {}
-    };
-
-    const activeTraders = this.getTraders().filter(trader => {
-      const recentTrades = trader.tradeHistory.all.filter(t => 
-        t.mint === mint && t.timestamp > cutoffTime
+    // Collect trades from all traders
+    for (const trader of this.traders.values()) {
+      const traderTrades = trader.tradeHistory.all.filter(
+        trade => trade.mint === mint && trade.timestamp > cutoff
       );
-      return recentTrades.length > 0;
-    });
-
-    stats.uniqueTraders = activeTraders.length;
-
-    activeTraders.forEach(trader => {
-      const recentTrades = trader.tradeHistory.all.filter(t => 
-        t.mint === mint && t.timestamp > cutoffTime
-      );
-
-      const traderStat = {
-        volumeTotal: 0,
-        tradeCount: recentTrades.length,
-        buyVolume: 0,
-        sellVolume: 0,
-        currentBalance: trader.tokenBalances.get(mint)?.balance || 0,
-        walletAge: Date.now() - trader.firstSeen
-      };
-
-      recentTrades.forEach(trade => {
-        const volume = Math.abs(trade.amount * trade.price);
-        traderStat.volumeTotal += volume;
-        if (trade.type === 'buy') {
-          traderStat.buyVolume += volume;
-        } else {
-          traderStat.sellVolume += volume;
-        }
-      });
-
-      stats.totalVolume += traderStat.volumeTotal;
-      stats.traderStats[trader.publicKey] = traderStat;
-    });
-
-    // Calculate max wallet volume percentage
-    if (stats.totalVolume > 0) {
-      stats.maxWalletVolumePercentage = Math.max(
-        ...Object.values(stats.traderStats).map(s => 
-          (s.volumeTotal / stats.totalVolume) * 100
-        )
-      );
+      trades.push(...traderTrades);
     }
 
-    return stats;
+    // Sort by timestamp
+    return trades.sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  getTotalVolumeInTimeWindow(mint, startTime, endTime) {
+    let totalVolume = 0;
+    
+    // Iterate through all traders
+    for (const trader of this.traders.values()) {
+      const trades = trader.tradeHistory.all.filter(trade => 
+        trade.mint === mint && 
+        trade.timestamp >= startTime && 
+        trade.timestamp <= endTime
+      );
+      trades.forEach(trade => {
+        totalVolume += trade.amount;
+      });
+    }
+    
+    return totalVolume;
   }
 
   cleanupOldTrades(cutoffTime) {
@@ -413,18 +381,62 @@ class TraderManager extends EventEmitter {
       .length;
   }
 
-  getTotalVolumeInTimeWindow(mint, startTime, endTime) {
-    let totalVolume = 0;
-    
-    // Iterate through all traders
-    for (const trader of this.traders.values()) {
-      const trades = trader.getTradesInTimeWindow(mint, { startTime, endTime });
-      trades.forEach(trade => {
-        totalVolume += trade.amount;
+  getTokenTraderStats(mint, cutoffTime) {
+    const stats = {
+      totalVolume: 0,
+      uniqueTraders: 0,
+      traderStats: {},
+    };
+
+    // Get all traders who have traded this token
+    const tradersForToken = Array.from(this.traders.values()).filter(trader => 
+      trader.tradeHistory.all.some(trade => trade.mint === mint)
+    );
+
+    stats.uniqueTraders = tradersForToken.length;
+
+    // Process each trader's stats
+    tradersForToken.forEach(trader => {
+      const relevantTrades = trader.tradeHistory.all.filter(trade => 
+        trade.mint === mint && trade.timestamp >= cutoffTime
+      );
+
+      if (relevantTrades.length === 0) return;
+
+      const traderStats = {
+        volumeTotal: 0,
+        buyVolume: 0,
+        sellVolume: 0,
+        tradeCount: relevantTrades.length,
+        lastTradeTime: 0,
+        averageTradeSize: 0
+      };
+
+      // Calculate volumes and other metrics
+      relevantTrades.forEach(trade => {
+        const volume = trade.amount * trade.price;
+        traderStats.volumeTotal += volume;
+        
+        if (trade.type === 'buy') {
+          traderStats.buyVolume += volume;
+        } else {
+          traderStats.sellVolume += volume;
+        }
+
+        traderStats.lastTradeTime = Math.max(traderStats.lastTradeTime, trade.timestamp);
       });
-    }
-    
-    return totalVolume;
+
+      // Calculate average trade size
+      traderStats.averageTradeSize = traderStats.volumeTotal / traderStats.tradeCount;
+
+      // Add to total volume
+      stats.totalVolume += traderStats.volumeTotal;
+
+      // Store trader stats
+      stats.traderStats[trader.publicKey] = traderStats;
+    });
+
+    return stats;
   }
 
   cleanup() {
@@ -564,6 +576,32 @@ class TraderManager extends EventEmitter {
       }
     };
   }
+
+  recordTrade(trade) {
+    const { mint, amount, price, type, timestamp = Date.now(), traderPublicKey, otherParty } = trade;
+    
+    // Get or create trader
+    const trader = this.getOrCreateTrader(traderPublicKey);
+    
+    // Record the trade
+    trader.recordTrade(trade);
+    
+    // Update other party's trade history if available
+    if (otherParty) {
+      const otherTrader = this.getOrCreateTrader(otherParty);
+      const reverseTrade = {
+        ...trade,
+        type: type === 'buy' ? 'sell' : 'buy',
+        traderPublicKey: otherParty,
+        otherParty: traderPublicKey
+      };
+      otherTrader.recordTrade(reverseTrade);
+    }
+
+    // Emit trade event
+    this.emit('trade', { trader, trade });
+  }
+
 }
 
 module.exports = TraderManager;
