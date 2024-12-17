@@ -128,7 +128,7 @@ class Token extends EventEmitter {
     }
 
     // Update price tracking
-    this.updatePriceMetrics();
+    this.updatePriceMetrics(this.calculateTokenPrice());
 
     // Update wallet data if trade occurred
     if (data.tokenAmount) {
@@ -160,11 +160,11 @@ class Token extends EventEmitter {
     });
   }
 
-  updatePriceMetrics() {
+  updatePriceMetrics(newPrice) {
     const now = Date.now();
-    const newPrice = this.calculateTokenPrice();
+    const priceChange = ((newPrice - this.currentPrice) / this.currentPrice) * 100;
     
-    // Update circular buffer
+    // Update price buffer
     this.priceBuffer.data[this.priceBuffer.head] = {
       price: newPrice,
       timestamp: now
@@ -172,32 +172,29 @@ class Token extends EventEmitter {
     this.priceBuffer.head = (this.priceBuffer.head + 1) % this.priceBuffer.size;
     this.priceBuffer.count = Math.min(this.priceBuffer.count + 1, this.priceBuffer.size);
     
-    // Calculate price acceleration (rate of price change)
-    if (this.priceBuffer.count >= 3) {
-      const idx1 = (this.priceBuffer.head - 1 + this.priceBuffer.size) % this.priceBuffer.size;
-      const idx2 = (this.priceBuffer.head - 2 + this.priceBuffer.size) % this.priceBuffer.size;
-      const idx3 = (this.priceBuffer.head - 3 + this.priceBuffer.size) % this.priceBuffer.size;
-      
-      const price1 = this.priceBuffer.data[idx1].price;
-      const price2 = this.priceBuffer.data[idx2].price;
-      const price3 = this.priceBuffer.data[idx3].price;
-      
-      const time1 = this.priceBuffer.data[idx1].timestamp;
-      const time2 = this.priceBuffer.data[idx2].timestamp;
-      const time3 = this.priceBuffer.data[idx3].timestamp;
-      
-      const rate1 = (price1 - price2) / (time1 - time2);
-      const rate2 = (price2 - price3) / (time2 - time3);
-      
-      this.pumpMetrics.priceAcceleration = (rate1 - rate2) / ((time1 - time3) / 2000);
-    }
+    // Calculate volumes for different time windows
+    const volume1m = this.getRecentVolume(60 * 1000);
+    const volume5m = this.getRecentVolume(5 * 60 * 1000);
+    const volume30m = this.getRecentVolume(30 * 60 * 1000);
     
-    // Detect pump conditions
-    const priceChange = ((newPrice - this.currentPrice) / this.currentPrice) * 100;
-    const timeWindow = 60 * 1000; // 1 minute window
+    // Calculate price acceleration
+    const timeWindow = 60 * 1000; // 1 minute window for acceleration
+    const oldPrice = this.getPriceAtTime(now - timeWindow);
+    const acceleration = oldPrice ? ((newPrice - oldPrice) / oldPrice) * 100 / (timeWindow / 1000) : 0;
     
-    if (priceChange > config.THRESHOLDS.PUMP && 
-        (!this.pumpMetrics.lastPumpTime || now - this.pumpMetrics.lastPumpTime > timeWindow)) {
+    // Emit price update with volumes
+    this.emit('priceUpdate', {
+      price: newPrice,
+      acceleration,
+      pumpMetrics: this.pumpMetrics,
+      volume1m,
+      volume5m,
+      volume30m
+    });
+    
+    // Check for pump conditions
+    if (priceChange >= config.PUMP_THRESHOLD && 
+        (!this.pumpMetrics.lastPumpTime || (now - this.pumpMetrics.lastPumpTime) > config.MIN_PUMP_INTERVAL)) {
       this.pumpMetrics.pumpCount++;
       this.pumpMetrics.lastPumpTime = now;
       this.pumpMetrics.pumpTimes.push(now);  // Record pump timestamp
@@ -606,6 +603,18 @@ class Token extends EventEmitter {
         isCreator: holder.isCreator || false
       }))
     };
+  }
+
+  getPriceAtTime(timestamp) {
+    // Find the most recent price data point before the given timestamp
+    for (let i = 0; i < this.priceBuffer.count; i++) {
+      const idx = (this.priceBuffer.head - 1 - i + this.priceBuffer.size) % this.priceBuffer.size;
+      const data = this.priceBuffer.data[idx];
+      if (data && data.timestamp <= timestamp) {
+        return data.price;
+      }
+    }
+    return null;
   }
 }
 
