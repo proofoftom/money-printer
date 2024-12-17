@@ -1,6 +1,7 @@
 const WebSocket = require("ws");
 const EventEmitter = require("events");
 const config = require("../../utils/config");
+const errorLogger = require("../../monitoring/errorLoggerInstance");
 
 class WebSocketManager extends EventEmitter {
   constructor(tokenManager, priceManager) {
@@ -126,48 +127,21 @@ class WebSocketManager extends EventEmitter {
   }
 
   handleMessage(message) {
-    if (!message) {
+    if (!message || typeof message !== "object") {
       return;
     }
 
-    // Handle subscription and unsubscription confirmation messages silently
-    if (
-      message.message &&
-      (message.message.includes("Successfully subscribed") ||
-       message.message.includes("Unsubscribed"))
-    ) {
-      return;
-    }
-
-    // Handle token creation messages
+    // Handle create messages
     if (message.txType === "create") {
-      // Ignore tokens that are already above our max entry threshold
       const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
-      if (marketCapUSD > config.MCAP.MAX_ENTRY) {
-        console.log(
-          `Ignoring new token ${message.name} (${
-            message.mint
-          }) - Market cap too high: $${marketCapUSD.toFixed(
-            2
-          )} (${message.marketCapSol.toFixed(2)} SOL)`
-        );
-        return;
-      }
 
       // Track new token if it meets minimum market cap requirement
       if (marketCapUSD >= config.MCAP.MIN) {
-        console.log(
-          `New token detected: ${message.name} (${
-            message.mint
-          }) - Market cap: $${marketCapUSD.toFixed(
-            2
-          )} (${message.marketCapSol.toFixed(2)} SOL)`
-        );
         this.tokenManager.handleNewToken(message);
-        
         // Subscribe to trades for the new token
         this.subscribeToToken(message.mint);
       }
+      return;
     }
 
     // Handle trade messages
@@ -181,7 +155,12 @@ class WebSocketManager extends EventEmitter {
       return;
     }
 
-    console.debug("Unknown message format:", message);
+    // Log unknown message formats to file
+    errorLogger.log("Unknown WebSocket message format", {
+      component: "WebSocketManager",
+      method: "handleMessage",
+      message
+    });
   }
 
   // For testing purposes
