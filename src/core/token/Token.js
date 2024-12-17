@@ -104,68 +104,30 @@ class Token extends EventEmitter {
     this.volume1m = 0;
     this.volume5m = 0;
     this.volume30m = 0;
+    this.trades = [];  // Initialize trades array
   }
 
   update(data) {
-    const oldPrice = this.currentPrice;
-    const now = Date.now();
+    // Update token data
+    Object.assign(this, data);
     
-    if (data.marketCapSol) {
-      if (data.marketCapSol > this.highestMarketCap) {
-        this.highestMarketCap = data.marketCapSol;
-      }
-      
-      // Check if we're in drawdown and need to update drawdownLow
-      if (this.state === "drawdown" || this.state === "unsafeRecovery") {
-        // Initialize drawdownLow if not set
-        if (this.drawdownLow === null) {
-          this.drawdownLow = data.marketCapSol;
-          const warning = new Error(`Initialized drawdownLow for token ${this.mint} in ${this.state} state`);
-          errorLogger.logError(warning, 'Token.update', { state: this.state, marketCap: data.marketCapSol });
-        }
-        // Update drawdownLow if new market cap is lower
-        else if (data.marketCapSol < this.drawdownLow) {
-          this.drawdownLow = data.marketCapSol;
-        }
-      }
-      
-      this.marketCapSol = data.marketCapSol;
-    }
-
-    if (data.vTokensInBondingCurve) {
-      this.vTokensInBondingCurve = data.vTokensInBondingCurve;
-    }
-
-    if (data.vSolInBondingCurve) {
-      this.vSolInBondingCurve = data.vSolInBondingCurve;
-    }
-
-    // Update price tracking
-    const newPrice = this.calculateTokenPrice();
-    
-    // Update wallet data if trade occurred
-    if (data.tokenAmount) {
-      const volumeInSol = Math.abs(data.tokenAmount * newPrice);
-      this.updateWalletActivity(data.traderPublicKey, {
-        amount: data.tokenAmount,
-        volumeInSol,
-        priceChange: ((newPrice - oldPrice) / oldPrice) * 100,
-        timestamp: now,
-        newBalance: data.newTokenBalance
+    // Add trade to history if it's a new trade
+    if (data.signature && !this.trades.some(t => t.signature === data.signature)) {
+      this.trades.push({
+        timestamp: Date.now(),
+        price: this.calculateTokenPrice(),
+        size: data.size || 0,
+        signature: data.signature
       });
     }
-    // Update wallet balance if no trade (e.g., transfer)
-    else if (data.traderPublicKey && typeof data.newTokenBalance !== "undefined") {
-      this.updateWalletBalance(data.traderPublicKey, data.newTokenBalance, now);
-    }
+
+    // Update price metrics
+    this.updatePriceMetrics(this.calculateTokenPrice());
 
     // Calculate volumes before price update
     this.volume1m = this.getRecentVolume(60 * 1000);
     this.volume5m = this.getRecentVolume(5 * 60 * 1000);
     this.volume30m = this.getRecentVolume(30 * 60 * 1000);
-
-    // Update price metrics with volumes
-    this.updatePriceMetrics(newPrice);
 
     // Update all metrics
     this.updateMetrics();
@@ -1402,19 +1364,32 @@ class Token extends EventEmitter {
 
   getVolumeChange(timeWindowSeconds) {
     const timeWindow = timeWindowSeconds * 1000;
+    const now = Date.now();
+
+    // Ensure trades array exists
+    if (!Array.isArray(this.trades)) {
+      return 0;
+    }
+
+    // Calculate current window volume
     const currentWindow = this.trades
-      .filter(t => Date.now() - t.timestamp <= timeWindow)
+      .filter(t => now - t.timestamp <= timeWindow)
       .reduce((sum, t) => sum + (t.price * t.size), 0);
 
+    // Calculate previous window volume
     const previousWindow = this.trades
       .filter(t => 
-        Date.now() - t.timestamp <= timeWindow * 2 && 
-        Date.now() - t.timestamp > timeWindow
+        now - t.timestamp <= timeWindow * 2 && 
+        now - t.timestamp > timeWindow
       )
       .reduce((sum, t) => sum + (t.price * t.size), 0);
 
-    return previousWindow > 0 ? 
-      ((currentWindow - previousWindow) / previousWindow) * 100 : 0;
+    // Calculate percentage change, handling edge cases
+    if (previousWindow <= 0) {
+      return currentWindow > 0 ? 100 : 0; // 100% increase if we went from 0 to something
+    }
+
+    return ((currentWindow - previousWindow) / previousWindow) * 100;
   }
 }
 
