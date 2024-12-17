@@ -180,7 +180,8 @@ class Dashboard {
       },
     });
 
-    this.activePositionsBox = this.grid.set(3, 8, 9, 4, blessed.box, {
+    // Active Positions box (half width)
+    this.activePositionsBox = this.grid.set(3, 8, 9, 2, blessed.box, {
       label: " Active Positions ",
       content: "Waiting...",
       border: "line",
@@ -192,8 +193,8 @@ class Dashboard {
       },
     });
 
-    // Create trader metrics box
-    this.traderMetricsBox = this.grid.set(6, 0, 3, 3, blessed.box, {
+    // Stack metrics boxes to the right of Active Positions
+    this.traderMetricsBox = this.grid.set(3, 10, 3, 2, blessed.box, {
       label: " Trader Metrics ",
       content: "Loading trader data...",
       border: "line",
@@ -204,8 +205,7 @@ class Dashboard {
       },
     });
 
-    // Create trader reputation box
-    this.traderReputationBox = this.grid.set(9, 0, 3, 3, blessed.box, {
+    this.traderReputationBox = this.grid.set(6, 10, 3, 2, blessed.box, {
       label: " Trader Reputation ",
       content: "Loading reputation data...",
       border: "line",
@@ -216,8 +216,7 @@ class Dashboard {
       },
     });
 
-    // Create trading patterns box
-    this.tradingPatternsBox = this.grid.set(6, 3, 3, 3, blessed.box, {
+    this.tradingPatternsBox = this.grid.set(9, 10, 3, 2, blessed.box, {
       label: " Trading Patterns ",
       content: "Analyzing patterns...",
       border: "line",
