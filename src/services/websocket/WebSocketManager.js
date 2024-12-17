@@ -156,11 +156,11 @@ class WebSocketManager extends EventEmitter {
     }
 
     // Log unknown message formats to file
-    errorLogger.log("Unknown WebSocket message format", {
-      component: "WebSocketManager",
-      method: "handleMessage",
-      message
-    });
+    errorLogger.logError(
+      new Error("Unknown WebSocket message format"),
+      "WebSocketManager.handleMessage",
+      { message }
+    );
   }
 
   // For testing purposes
