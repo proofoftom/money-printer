@@ -33,6 +33,11 @@ class PositionManager extends EventEmitter {
     this.stateManager.on('positionClosed', this.handlePositionClosed.bind(this));
     this.stateManager.on('partialExit', this.handlePartialExit.bind(this));
     
+    // Set up price update handler
+    if (this.priceManager) {
+      this.priceManager.on('priceUpdate', this.handlePriceUpdate.bind(this));
+    }
+
     // Recovery strategy event handlers
     this.stateManager.on('recoveryAccumulation', this.handleRecoveryAccumulation.bind(this));
     this.stateManager.on('recoveryExpansion', this.handleRecoveryExpansion.bind(this));
@@ -40,57 +45,52 @@ class PositionManager extends EventEmitter {
 
     // Periodic position validation
     this._validateInterval = setInterval(() => this.validatePositions(), 60000); // Every minute
+
+    // Set max listeners
+    this.setMaxListeners(20);
   }
 
   handlePositionAdded(position) {
-    this.emit('positionEntered', position);
+    this.positions.set(position.mint, position);
+    this.updateStats();
   }
 
   handlePositionUpdated(position) {
-    this.emit('positionUpdated', position);
+    // Just update internal state
+    this.positions.set(position.mint, position);
+    this.updateStats();
   }
 
   handlePositionClosed(position) {
-    this.emit('positionExited', position);
-  }
-
-  handlePartialExit(position) {
-    this.emit('partialExit', position);
-  }
-
-  handleRecoveryAccumulation({ mint, metrics }) {
-    const position = this.getPosition(mint);
-    if (!position) return;
-
-    // Increase position size during strong accumulation
-    if (metrics.buyPressure > 0.7 && metrics.marketStructure === 'bullish') {
-      const additionalSize = this.calculatePositionSize(position.size * metrics.recoveryStrength);
-      this.increasePosition(mint, additionalSize);
+    this.positions.delete(position.mint);
+    this.closedPositions.push(position);
+    this.updateStats();
+    
+    // Update wallet without re-emitting
+    if (this.wallet) {
+      this.wallet.recordTrade(position.profitLoss);
     }
   }
 
-  handleRecoveryExpansion({ mint, metrics }) {
-    const position = this.getPosition(mint);
-    if (!position) return;
-
-    // Adjust trailing stop based on recovery strength
-    if (metrics.recoveryStrength > 0.4) {
-      const trailPercent = Math.min(
-        config.EXIT_STRATEGIES.MAX_TRAIL_PERCENT,
-        metrics.recoveryStrength * config.EXIT_STRATEGIES.BASE_TRAIL_PERCENT
-      );
-      this.exitStrategies.updateTrailingStop(position, trailPercent);
-    }
+  handlePartialExit(data) {
+    const { position, amount, price } = data;
+    position.remainingSize -= amount;
+    this.updateStats();
   }
 
-  handleRecoveryDistribution({ mint, metrics }) {
-    const position = this.getPosition(mint);
-    if (!position) return;
+  handleRecoveryAccumulation(position) {
+    // Internal handling only
+    position.recoveryPhase = 'accumulation';
+  }
 
-    // Exit position if distribution phase shows weakness
-    if (metrics.buyPressure < 0.3 || metrics.marketStructure === 'bearish') {
-      this.closePosition(mint, position.currentPrice);
-    }
+  handleRecoveryExpansion(position) {
+    // Internal handling only
+    position.recoveryPhase = 'expansion';
+  }
+
+  handleRecoveryDistribution(position) {
+    // Internal handling only
+    position.recoveryPhase = 'distribution';
   }
 
   async enterPosition(token, options = {}) {
@@ -106,7 +106,6 @@ class PositionManager extends EventEmitter {
     this.stateManager.addPosition(position);
     await this.stateManager.saveState();
 
-    this.emit("positionEntered", position);
     return position;
   }
 
@@ -116,7 +115,6 @@ class PositionManager extends EventEmitter {
     this.stateManager.closePosition(position.mint);
     await this.stateManager.saveState();
 
-    this.emit("positionExited", { position, profitLoss, reason });
     return { profitLoss, reason };
   }
 
@@ -166,7 +164,6 @@ class PositionManager extends EventEmitter {
         return null;
       }
 
-      this.emit('positionOpened', position);
       return position;
     } catch (error) {
       console.error('Error opening position:', error);
@@ -194,12 +191,12 @@ class PositionManager extends EventEmitter {
         closedAt: Date.now(),
         reason
       });
-
-      this.emit('positionClosed', { position, data });
     });
 
     position.on('partialExit', (data) => {
-      this.emit('positionPartialExit', { position, data });
+      const { amount, price } = data;
+      position.remainingSize -= amount;
+      this.updateStats();
     });
   }
 
@@ -257,33 +254,10 @@ class PositionManager extends EventEmitter {
         return false;
       }
 
-      // Emit trade event for closing position
-      this.emit('trade', {
-        type: 'SELL',
-        mint,
-        profitLoss: position.getProfitLoss(),
-        symbol: position.symbol,
-        size: sizeToClose,
-        price: executionPrice,
-        timestamp: Date.now()
-      });
-
       return true;
     } else {
       position.recordPartialExit(portion, executionPrice);
       
-      // Emit trade event for partial exit
-      this.emit('trade', {
-        type: 'PARTIAL_SELL',
-        mint,
-        profitLoss: position.getProfitLoss(),
-        symbol: position.symbol,
-        size: sizeToClose,
-        price: executionPrice,
-        portion,
-        timestamp: Date.now()
-      });
-
       return true;
     }
   }
@@ -307,17 +281,6 @@ class PositionManager extends EventEmitter {
     position.size = newTotalSize;
     position.entryPrice = newCostBasis;
     this.wallet.updateBalance(-additionalSize);
-
-    // Emit trade event for position increase
-    this.emit('trade', {
-      type: 'INCREASE',
-      mint,
-      profitLoss: position.getProfitLoss(),
-      symbol: position.symbol,
-      size: additionalSize,
-      price: executionPrice,
-      timestamp: Date.now()
-    });
 
     return true;
   }
@@ -371,7 +334,6 @@ class PositionManager extends EventEmitter {
     const safeSize = Math.min(additionalSize, maxIncrease);
 
     position.increaseSize(safeSize);
-    this.emit('positionIncreased', { mint, additionalSize: safeSize });
   }
 
   validatePositions() {
@@ -431,12 +393,6 @@ class PositionManager extends EventEmitter {
       position.close(exitType);
       this.wallet.updateBalance(position.size * exitPrice);
       
-      this.emit('positionClosed', {
-        token: { mint: position.mint },
-        reason: exitType,
-        profitLoss
-      });
-      
       // Update win/loss counter
       if (profitLoss > 0) {
         this.wins++;
@@ -478,6 +434,44 @@ class PositionManager extends EventEmitter {
     }
 
     return size;
+  }
+
+  handlePriceUpdate({ newPrice, oldPrice, percentChange }) {
+    // Update all position valuations
+    for (const position of this.positions.values()) {
+      const oldValue = position.currentValue;
+      position.currentValue = this.priceManager.solToUSD(position.size * position.currentPrice);
+      
+      // Check if price change triggers any exit conditions
+      if (Math.abs(percentChange) > config.POSITION.PRICE_IMPACT_THRESHOLD) {
+        this.evaluateExitConditions(position, {
+          priceChangePercent: percentChange,
+          valueChange: (position.currentValue - oldValue) / oldValue
+        });
+      }
+    }
+  }
+
+  evaluateExitConditions(position, metrics) {
+    const { priceChangePercent, valueChange } = metrics;
+    
+    // Check stop loss
+    if (valueChange <= -config.POSITION.STOP_LOSS_THRESHOLD) {
+      this.closePosition(position.mint, position.currentPrice, 'stop_loss');
+      return;
+    }
+    
+    // Check trailing stop
+    if (position.highValue && valueChange <= -(position.highValue - position.currentValue) / position.highValue) {
+      this.closePosition(position.mint, position.currentPrice, 'trailing_stop');
+      return;
+    }
+    
+    // Check take profit
+    if (valueChange >= config.POSITION.TAKE_PROFIT_THRESHOLD) {
+      this.closePosition(position.mint, position.currentPrice, 'take_profit');
+      return;
+    }
   }
 
   cleanup() {

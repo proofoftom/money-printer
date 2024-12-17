@@ -27,6 +27,9 @@ class TraderManager extends EventEmitter {
       
       // Recovery pattern analysis
       this.recoveryInterval = setInterval(() => this.analyzeRecoveryPatterns(), config.TRADER.RECOVERY_ANALYSIS_INTERVAL || 60000);
+      
+      // Inactive trader cleanup
+      this.inactiveTraderCleanupInterval = setInterval(() => this.cleanupInactiveTraders(), config.TRADER.INACTIVE_TRADER_CLEANUP_INTERVAL || 3600000); // 1 hour default
     }
     
     // Track top recovery traders
@@ -115,19 +118,23 @@ class TraderManager extends EventEmitter {
   }
 
   setupTraderEventListeners(trader) {
+    // Instead of re-emitting events, just handle them internally
     trader.on('washTradingDetected', (data) => {
-      this.emit('washTradingDetected', data);
       this.updateTraderGroups(data.trader, data.trade.otherParty, 'wash_trading');
     });
 
     trader.on('frequentTraderRelationship', (data) => {
-      this.emit('frequentTraderRelationship', data);
       this.updateTraderGroups(data.trader, data.otherParty, 'frequent_trading');
     });
 
     trader.on('trade', (data) => {
-      this.emit('trade', data);
       this.analyzeTradePatterns(data);
+    });
+
+    // Add cleanup handler
+    trader.on('inactive', () => {
+      trader.removeAllListeners();
+      this.traders.delete(trader.publicKey);
     });
   }
 
@@ -445,6 +452,9 @@ class TraderManager extends EventEmitter {
     if (this.recoveryInterval) {
       clearInterval(this.recoveryInterval);
     }
+    if (this.inactiveTraderCleanupInterval) {
+      clearInterval(this.inactiveTraderCleanupInterval);
+    }
     this.removeAllListeners();
   }
 
@@ -758,6 +768,17 @@ class TraderManager extends EventEmitter {
     
     // Update trader groups
     this.updateTraderGroups(publicKey, token);
+  }
+
+  cleanupInactiveTraders() {
+    const now = Date.now();
+    const inactivityThreshold = config.TRADER.INACTIVITY_THRESHOLD || 24 * 60 * 60 * 1000; // 24 hours default
+
+    for (const [publicKey, trader] of this.traders) {
+      if (now - trader.lastActive > inactivityThreshold) {
+        trader.emit('inactive');
+      }
+    }
   }
 
 }

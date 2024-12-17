@@ -96,30 +96,32 @@ class PositionStateManager extends EventEmitter {
   }
 
   addPosition(position) {
-    if (!(position instanceof Position)) {
-      throw new Error('Position must be an instance of Position class');
-    }
-    
-    // Set up event listeners
-    position.on('updated', (pos) => this.emit('positionUpdated', pos));
-    position.on('partialExit', (pos) => this.emit('partialExit', pos));
-    position.on('closed', (pos) => this.emit('positionClosed', pos));
-    
     this.positions.set(position.mint, position);
     this.emit('positionAdded', position);
     this.savePositions();
-    
-    return position;
+  }
+
+  updatePosition(position) {
+    this.positions.set(position.mint, position);
+    this.emit('positionUpdated', position);
+    this.savePositions();
   }
 
   closePosition(mint) {
     const position = this.positions.get(mint);
-    if (!position) return null;
+    if (position) {
+      this.positions.delete(mint);
+      this.emit('positionClosed', position);
+      this.savePositions();
+    }
+  }
 
-    this.positions.delete(mint);
-    this.savePositions();
-    
-    return position;
+  partialExit(mint, amount, price) {
+    const position = this.positions.get(mint);
+    if (position) {
+      this.emit('partialExit', { position, amount, price });
+      this.savePositions();
+    }
   }
 
   getPosition(mint) {
@@ -169,76 +171,27 @@ class PositionStateManager extends EventEmitter {
   }
 
   monitorRecoveryPatterns() {
-    for (const [mint, position] of this.positions) {
-      const metrics = position.calculateRecoveryMetrics();
-      if (!metrics) continue;
+    for (const position of this.positions.values()) {
+      const metrics = position.getRecoveryMetrics();
       
-      // Detect strong recovery patterns
-      if (metrics.recoveryPhase === 'accumulation' && metrics.buyPressure > 0.7) {
-        this.emit('recoveryAccumulation', { mint, metrics });
+      if (metrics.phase === 'accumulation') {
+        this.emit('recoveryAccumulation', position);
+      } else if (metrics.phase === 'expansion') {
+        this.emit('recoveryExpansion', position);
+      } else if (metrics.phase === 'distribution') {
+        this.emit('recoveryDistribution', position);
       }
-      
-      if (metrics.recoveryPhase === 'expansion' && metrics.recoveryStrength > 0.4) {
-        this.emit('recoveryExpansion', { mint, metrics });
-      }
-      
-      if (metrics.recoveryPhase === 'distribution') {
-        this.emit('recoveryDistribution', { mint, metrics });
-      }
-      
-      // Update position state based on recovery metrics
-      this.updatePositionState(position, metrics);
-    }
-  }
-  
-  updatePositionState(position, metrics) {
-    // Adjust position based on recovery phase
-    switch (metrics.recoveryPhase) {
-      case 'accumulation':
-        if (metrics.buyPressure > 0.7 && metrics.marketStructure === 'bullish') {
-          position.emit('increasePosition', {
-            reason: 'strongAccumulation',
-            metrics
-          });
-        }
-        break;
-        
-      case 'expansion':
-        if (metrics.recoveryStrength > 0.5 && metrics.marketStructure === 'bullish') {
-          position.emit('trailStop', {
-            reason: 'strongExpansion',
-            metrics
-          });
-        }
-        break;
-        
-      case 'distribution':
-        if (metrics.buyPressure < 0.3 || metrics.marketStructure === 'bearish') {
-          position.emit('exitPosition', {
-            reason: 'distributionPhase',
-            metrics
-          });
-        }
-        break;
     }
   }
 
   cleanup() {
-    // Clear save interval
     if (this._saveInterval) {
       clearInterval(this._saveInterval);
     }
-
-    // Remove all event listeners
-    this.removeAllListeners();
-    
-    // Clear all positions
-    this.positions.clear();
-    
-    // Save empty state
-    if (process.env.NODE_ENV !== 'test') {
-      this.savePositions();
+    if (this._recoveryInterval) {
+      clearInterval(this._recoveryInterval);
     }
+    this.removeAllListeners();
   }
 }
 

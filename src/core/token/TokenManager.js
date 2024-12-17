@@ -1,6 +1,7 @@
 const EventEmitter = require("events");
 const Token = require("./Token");
 const config = require("../../utils/config");
+const TokenStateManager = require("./TokenStateManager");
 
 class TokenManager extends EventEmitter {
   constructor(safetyChecker, positionManager, priceManager, webSocketManager, traderManager) {
@@ -11,9 +12,21 @@ class TokenManager extends EventEmitter {
     this.webSocketManager = webSocketManager;
     this.traderManager = traderManager;
     this.tokens = new Map();
+    this.stateManager = new TokenStateManager();
 
     // Set high max listeners as we manage many tokens
     this.setMaxListeners(100);
+
+    // Set up state change handlers
+    this.stateManager.on('stateChanged', this.handleStateChange.bind(this));
+    this.stateManager.on('tokenUnsafe', this.handleUnsafeToken.bind(this));
+    this.stateManager.on('tokenDead', this.handleDeadToken.bind(this));
+    this.stateManager.on('metricsUpdated', this.handleMetricsUpdate.bind(this));
+
+    // Set up price update handler
+    if (this.priceManager) {
+      this.priceManager.on('priceUpdate', this.handlePriceUpdate.bind(this));
+    }
 
     // Recovery monitoring
     this._recoveryInterval = setInterval(
@@ -43,13 +56,73 @@ class TokenManager extends EventEmitter {
       // Add to tokens map
       this.tokens.set(mint, token);
       
-      // Emit new token event
-      this.emit('newToken', token);
+      // Initialize token state
+      this.stateManager.setState(token, 'new', 'Token created');
       
       return token;
     } catch (error) {
       console.error('Error handling new token:', error);
       return null;
+    }
+  }
+
+  handleStateChange({ token, from, to, reason }) {
+    const mint = token.mint;
+    
+    switch (to) {
+      case 'pumping':
+        if (this.positionManager) {
+          this.positionManager.evaluateEntry(token);
+        }
+        break;
+        
+      case 'drawdown':
+        if (this.positionManager) {
+          this.positionManager.evaluateExit(token, 'drawdown');
+        }
+        break;
+        
+      case 'unsafe':
+      case 'dead':
+        if (this.positionManager) {
+          this.positionManager.forceExit(token, to);
+        }
+        break;
+    }
+  }
+
+  handleUnsafeToken({ token, reason }) {
+    // Clean up resources for unsafe token
+    this.cleanupToken(token.mint);
+  }
+
+  handleDeadToken({ token, reason }) {
+    // Clean up resources for dead token
+    this.cleanupToken(token.mint);
+  }
+
+  handleMetricsUpdate({ token, metrics }) {
+    // Update internal metrics
+    if (metrics.marketCapSol > token.highestMarketCap) {
+      token.highestMarketCap = metrics.marketCapSol;
+    }
+  }
+
+  handlePriceUpdate({ newPrice, oldPrice, percentChange }) {
+    // Update token valuations based on new SOL price
+    for (const token of this.tokens.values()) {
+      // Update token's USD valuation
+      const oldMarketCapUSD = token.marketCapUSD;
+      token.marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+      
+      // Check if valuation change triggers any state changes
+      if (Math.abs(percentChange) > config.TOKEN.PRICE_IMPACT_THRESHOLD) {
+        this.stateManager.updateTokenMetrics(token, {
+          priceChangePercent: percentChange,
+          marketCapUSD: token.marketCapUSD,
+          marketCapChange: (token.marketCapUSD - oldMarketCapUSD) / oldMarketCapUSD
+        });
+      }
     }
   }
 
@@ -102,17 +175,27 @@ class TokenManager extends EventEmitter {
         return;
       }
 
-      // Check for position opportunities
-      if (token.state === 'recovery' && !this.positionManager.hasPosition(token.mint)) {
-        const safetyCheck = await this.safetyChecker.runSecurityChecks(token);
-        if (safetyCheck.passed) {
-          token.emit('readyForPosition', token);
-        }
-      }
+      // Update token state
+      this.stateManager.updateState(token, tradeData);
 
     } catch (error) {
       console.error('Error handling token update:', error);
       console.error('TokenManager.handleTokenUpdate', { tradeData });
+    }
+  }
+
+  handleTrade(tradeData) {
+    const { mint, traderPublicKey, type, amount, price, timestamp } = tradeData;
+    const token = this.tokens.get(mint);
+    
+    if (!token) return;
+
+    // Update token state
+    token.updateTrade({ type, amount, price, timestamp });
+
+    // Forward to trader manager without expecting events back
+    if (this.traderManager) {
+      this.traderManager.handleTrade(tradeData);
     }
   }
 
@@ -356,21 +439,30 @@ class TokenManager extends EventEmitter {
     }
   }
 
+  cleanupToken(mint) {
+    const token = this.tokens.get(mint);
+    if (token) {
+      token.removeAllListeners();
+      this.tokens.delete(mint);
+    }
+  }
+
   cleanup() {
-    // Clear intervals
     if (this._recoveryInterval) {
       clearInterval(this._recoveryInterval);
     }
     if (this._cleanupInterval) {
       clearInterval(this._cleanupInterval);
     }
-
+    
     // Clean up all tokens
-    for (const [mint, token] of this.tokens.entries()) {
-      this.removeToken(mint);
+    for (const mint of this.tokens.keys()) {
+      this.cleanupToken(mint);
     }
-
-    // Clear all listeners
+    
+    // Clean up state manager
+    this.stateManager.cleanup();
+    
     this.removeAllListeners();
   }
 }

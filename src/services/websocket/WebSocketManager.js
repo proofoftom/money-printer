@@ -11,6 +11,8 @@ class WebSocketManager extends EventEmitter {
     this.subscriptions = new Set();
     this.isConnected = false;
     this.ws = null;
+    this.messageQueue = [];
+    this.processingMessage = false;
 
     // Get WebSocket configuration
     const wsConfig = config.WEBSOCKET;
@@ -19,16 +21,26 @@ class WebSocketManager extends EventEmitter {
     this.pingInterval = wsConfig.PING_INTERVAL;
     this.pongTimeout = wsConfig.PONG_TIMEOUT;
     this.maxRetries = wsConfig.MAX_RETRIES;
+    this.messageProcessingDelay = wsConfig.MESSAGE_PROCESSING_DELAY || 100;
 
     this.retryCount = 0;
     this.pingTimer = null;
     this.pongTimer = null;
     this.messageHandlers = new Map();
 
+    // Set up message type handlers
+    this.messageHandlers.set('create', this.handleCreateMessage.bind(this));
+    this.messageHandlers.set('trade', this.handleTradeMessage.bind(this));
+
     // Don't auto-connect in test mode
     if (process.env.NODE_ENV !== "test") {
       this.connect();
     }
+
+    // Set up message processing interval
+    this.messageProcessingInterval = setInterval(() => {
+      this.processMessageQueue();
+    }, this.messageProcessingDelay);
 
     // Increase max listeners to prevent warning
     this.setMaxListeners(20);
@@ -36,7 +48,7 @@ class WebSocketManager extends EventEmitter {
     // Store the SIGINT handler reference so we can remove it later
     this.sigintHandler = () => {
       console.log("Shutting down WebSocket connection...");
-      this.close();
+      this.cleanup();
       process.exit(0);
     };
 
@@ -49,101 +61,120 @@ class WebSocketManager extends EventEmitter {
   connect() {
     if (this.ws) {
       this.ws.removeAllListeners();
-      this.ws = null;
+      try {
+        this.ws.close();
+      } catch (error) {
+        console.error("Error closing WebSocket:", error);
+      }
     }
 
     try {
       this.ws = new WebSocket(this.url);
 
       this.ws.on("open", () => {
-        console.info("WebSocket connection established");
+        console.log("WebSocket connected");
         this.isConnected = true;
+        this.retryCount = 0;
         this.emit("connected");
-
-        // Subscribe to new token events
-        this.ws.send(
-          JSON.stringify({
-            method: "subscribeNewToken",
-          })
-        );
-
-        // Resubscribe to existing tokens
-        // this.resubscribeToTokens();
-      });
-
-      this.ws.on("error", (error) => {
-        console.error("WebSocket error:", error);
-        this.emit("error", error);
-      });
-
-      this.ws.on("close", () => {
-        console.warn("WebSocket connection closed");
-        this.isConnected = false;
-        this.emit("disconnected");
-        if (process.env.NODE_ENV !== "test") {
-          setTimeout(() => {
-            console.info("Attempting to reconnect...");
-            this.connect();
-          }, this.reconnectTimeout);
-        }
+        this.resubscribeToTokens();
       });
 
       this.ws.on("message", (data) => {
         try {
-          const message = JSON.parse(data.toString());
-          this.handleMessage(message);
+          const message = JSON.parse(data);
+          this.messageQueue.push(message);
         } catch (error) {
           console.error("Error parsing message:", error);
-          this.emit("error", error);
+          this.emit("error", { type: "parse", error });
         }
       });
+
+      this.ws.on("close", () => {
+        this.handleDisconnect();
+      });
+
+      this.ws.on("error", (error) => {
+        console.error("WebSocket error:", error);
+        this.emit("error", { type: "websocket", error });
+        this.handleDisconnect();
+      });
+
     } catch (error) {
       console.error("Error creating WebSocket:", error);
-      this.emit("error", error);
-      if (process.env.NODE_ENV !== "test") {
-        setTimeout(() => {
-          console.log("Attempting to reconnect...");
-          this.connect();
-        }, this.reconnectTimeout);
-      }
+      this.emit("error", { type: "connection", error });
+      this.handleDisconnect();
     }
   }
 
-  handleMessage(message) {
-    if (!message || typeof message !== "object") {
-      return;
+  handleDisconnect() {
+    this.isConnected = false;
+    this.emit("disconnected");
+    
+    if (this.retryCount < this.maxRetries) {
+      this.retryCount++;
+      setTimeout(() => {
+        console.log("Attempting to reconnect...");
+        this.connect();
+      }, this.reconnectTimeout);
+    } else {
+      this.emit("maxRetriesExceeded");
     }
+  }
+
+  async processMessageQueue() {
+    if (this.processingMessage || this.messageQueue.length === 0) return;
+
+    this.processingMessage = true;
+    const message = this.messageQueue.shift();
+
+    try {
+      await this.handleMessage(message);
+    } catch (error) {
+      console.error("Error processing message:", error);
+      this.emit("error", { type: "processing", error, message });
+    }
+
+    this.processingMessage = false;
+  }
+
+  async handleMessage(message) {
+    if (!message || typeof message !== "object") return;
 
     try {
       // Handle subscription confirmation messages
-      if (
-        message.message &&
-        (message.message ===
-          "Successfully subscribed to token creation events." ||
-          message.message === "Successfully subscribed to keys.")
-      ) {
+      if (message.message && message.message.includes("Successfully subscribed")) {
+        this.emit("subscribed", message);
         return;
       }
 
-      // Validate required fields based on message type
-      if (message.txType === "create") {
-        if (!this.validateCreateMessage(message)) {
-          throw new Error("Invalid create message format");
-        }
-
-        const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
-        if (marketCapUSD >= config.MCAP.MIN) {
-          this.tokenManager.handleNewToken(message);
-        }
+      const handler = this.messageHandlers.get(message.txType);
+      if (handler) {
+        await handler(message);
+      } else {
+        console.warn("Unknown message type:", message.txType);
       }
     } catch (error) {
       console.error("Error handling message:", error);
-      this.emit("error", error);
+      this.emit("error", { type: "handler", error, message });
+    }
+  }
+
+  async handleCreateMessage(message) {
+    if (!this.validateCreateMessage(message)) {
+      throw new Error("Invalid create message format");
+    }
+
+    const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
+    if (marketCapUSD >= config.MCAP.MIN) {
+      await this.tokenManager.handleNewToken(message);
+      this.emit("tokenCreated", message);
     }
   }
 
   validateCreateMessage(message) {
     const requiredFields = [
+      "txType",
+      "signature",
       "mint",
       "traderPublicKey",
       "initialBuy",
@@ -151,14 +182,35 @@ class WebSocketManager extends EventEmitter {
       "vTokensInBondingCurve",
       "vSolInBondingCurve",
       "marketCapSol",
+      "name",
       "symbol",
+      "uri"
     ];
+    return requiredFields.every(field => message[field] !== undefined);
+  }
 
-    return requiredFields.every((field) => message[field] !== undefined);
+  async handleTradeMessage(message) {
+    if (!this.validateTradeMessage(message)) {
+      throw new Error("Invalid trade message format");
+    }
+
+    await this.tokenManager.handleTrade({
+      type: message.txType,
+      mint: message.mint,
+      traderPublicKey: message.traderPublicKey,
+      amount: message.tokenAmount,
+      newBalance: message.newTokenBalance,
+      marketCapSol: message.marketCapSol,
+      vTokensInBondingCurve: message.vTokensInBondingCurve,
+      vSolInBondingCurve: message.vSolInBondingCurve
+    });
+    this.emit("tradeMade", message);
   }
 
   validateTradeMessage(message) {
     const requiredFields = [
+      "txType",
+      "signature",
       "mint",
       "traderPublicKey",
       "tokenAmount",
@@ -166,87 +218,73 @@ class WebSocketManager extends EventEmitter {
       "bondingCurveKey",
       "vTokensInBondingCurve",
       "vSolInBondingCurve",
-      "marketCapSol",
+      "marketCapSol"
     ];
-
-    return requiredFields.every((field) => message[field] !== undefined);
-  }
-
-  // For testing purposes
-  setWebSocket(ws) {
-    this.ws = ws;
-    this.isConnected = true;
+    return message.txType === "buy" || message.txType === "sell" ? 
+      requiredFields.every(field => message[field] !== undefined) : 
+      false;
   }
 
   subscribeToToken(mint) {
-    if (!mint || typeof mint !== "string") {
-      console.error("Invalid mint address:", mint);
+    if (!this.isConnected) {
+      console.warn("Cannot subscribe, WebSocket not connected");
       return;
     }
 
     if (this.subscriptions.has(mint)) {
-      console.log(`Already subscribed to token: ${mint}`);
-      return;
-    }
-
-    if (!this.isConnected || !this.ws) {
-      console.log(
-        `WebSocket not connected. Adding ${mint} to pending subscriptions.`
-      );
-      this.subscriptions.add(mint);
-      return;
-    }
-
-    this.ws.send(
-      JSON.stringify({
-        method: "subscribeTokenTrade",
-        keys: [mint],
-      })
-    );
-    return true;
-  }
-
-  resubscribeToTokens() {
-    if (!this.isConnected || !this.ws) {
-      console.log("WebSocket not connected. Will resubscribe when connected.");
       return;
     }
 
     try {
-      const allMints = Array.from(this.subscriptions);
-      if (allMints.length === 0) return;
-
-      const subscribeMessage = {
-        op: "subscribe",
-        channel: "trades",
-        markets: allMints,
-      };
-
-      this.ws.send(JSON.stringify(subscribeMessage));
-      console.log(`Resubscribed to ${allMints.length} tokens`);
+      this.ws.send(JSON.stringify({
+        action: "subscribe",
+        mint
+      }));
+      this.subscriptions.add(mint);
     } catch (error) {
-      console.error("Error resubscribing to tokens:", error);
-      this.emit("error", error);
+      console.error("Error subscribing to token:", error);
+      this.emit("error", { type: "subscription", error, mint });
     }
   }
 
-  f() {
-    // Remove SIGINT handler
-    if (this.sigintHandler) {
-      process.removeListener("SIGINT", this.sigintHandler);
+  resubscribeToTokens() {
+    for (const mint of this.subscriptions) {
+      this.subscribeToToken(mint);
+    }
+  }
+
+  cleanup() {
+    // Clear intervals
+    if (this.messageProcessingInterval) {
+      clearInterval(this.messageProcessingInterval);
+    }
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+    }
+    if (this.pongTimer) {
+      clearTimeout(this.pongTimer);
     }
 
     // Close WebSocket connection
     if (this.ws) {
       this.ws.removeAllListeners();
-      if (this.ws.readyState === WebSocket.OPEN) {
+      try {
         this.ws.close();
+      } catch (error) {
+        console.error("Error closing WebSocket:", error);
       }
-      this.ws = null;
     }
 
-    this.isConnected = false;
-    this.subscriptions.clear();
+    // Clear message queue
+    this.messageQueue = [];
+    this.processingMessage = false;
+
+    // Remove process listeners
+    if (process.env.NODE_ENV !== "test") {
+      process.removeListener("SIGINT", this.sigintHandler);
+    }
+
+    // Remove all event listeners
     this.removeAllListeners();
   }
 }

@@ -27,19 +27,18 @@ class Token extends EventEmitter {
     this.volume24h = 0;
     this.volumeHistory = [];
 
-    this.state = "new";
+    // Initialize metrics
     this.highestMarketCap = this.marketCapSol;
     this.drawdownLow = null;
     this.unsafeReason = null;
     
-    // Set max listeners to a higher value for active tokens
-    this.setMaxListeners(50);
+    // Initialize state
+    this.state = 'new';
+    this.stateChangedAt = Date.now();
+    this.stateChangeReason = 'Token created';
 
-    // Keep track of registered listeners with their registration time
-    this.registeredListeners = new Map();
-
-    // Store config reference
-    this.config = config;
+    // Set max listeners
+    this.setMaxListeners(20);
 
     // Initialize metrics
     this.initializeMetrics();
@@ -48,16 +47,6 @@ class Token extends EventEmitter {
     this._cleanupInterval = setInterval(() => {
       this.cleanupStaleListeners();
     }, 60000); // Check every minute
-
-    // Forward state change events
-    this.on("stateChanged", ({ from, to }) => {
-      this.emit("stateChanged", { token: this, from, to });
-    });
-
-    // Initialize creator as holder if initial balance provided
-    if (tokenData.newTokenBalance || tokenData.initialBuy) {
-      const balance = tokenData.newTokenBalance || tokenData.initialBuy;
-    }
   }
 
   initializeMetrics() {
@@ -101,6 +90,63 @@ class Token extends EventEmitter {
 
     // Use provided TraderManager instance
     this.stateManager = null; // Initialize state manager to null
+  }
+
+  updateTrade(tradeData) {
+    const { type, amount, price, timestamp } = tradeData;
+    
+    // Add trade to history
+    this.trades.push(tradeData);
+    this.tradeCount++;
+    this.lastTradeTime = timestamp;
+    
+    // Update volume
+    this.updateVolume(amount, price, timestamp);
+    
+    // Update market metrics
+    this.updateMarketMetrics(tradeData);
+  }
+
+  updateVolume(amount, price, timestamp) {
+    const volume = amount * price;
+    
+    // Update 24h volume
+    const oneDayAgo = timestamp - (24 * 60 * 60 * 1000);
+    this.trades = this.trades.filter(t => t.timestamp > oneDayAgo);
+    this.volume24h = this.trades.reduce((sum, t) => sum + (t.amount * t.price), 0);
+    
+    // Update volume history
+    this.volumeHistory.push({ timestamp, volume });
+    this.volumeHistory = this.volumeHistory.filter(v => v.timestamp > oneDayAgo);
+  }
+
+  updateMarketMetrics(tradeData) {
+    const { price } = tradeData;
+    
+    // Update market cap if price changed
+    if (price !== this.currentPrice) {
+      this.currentPrice = price;
+      this.marketCapSol = this.vTokensInBondingCurve * price;
+      
+      // Update highest market cap
+      if (this.marketCapSol > this.highestMarketCap) {
+        this.highestMarketCap = this.marketCapSol;
+      }
+      
+      // Update drawdown tracking
+      if (this.marketCapSol < this.highestMarketCap) {
+        const drawdown = (this.highestMarketCap - this.marketCapSol) / this.highestMarketCap;
+        if (!this.drawdownLow || this.marketCapSol < this.drawdownLow) {
+          this.drawdownLow = this.marketCapSol;
+        }
+      }
+    }
+  }
+
+  cleanup() {
+    this.trades = [];
+    this.volumeHistory = [];
+    this.removeAllListeners();
   }
 
   update(data) {
@@ -360,7 +406,9 @@ class Token extends EventEmitter {
       if (this.marketCapSol < this.drawdownLow) {
         // Only set state to drawdown if we're not already in drawdown
         if (this.state !== "drawdown") {
-          this.setState("drawdown");
+          this.state = "drawdown";
+          this.stateChangedAt = Date.now();
+          this.stateChangeReason = 'Drawdown detected';
         }
         this.drawdownLow = this.marketCapSol;
         return;
@@ -377,11 +425,15 @@ class Token extends EventEmitter {
         const isSecure = await safetyChecker.runSecurityChecks(this);
         if (isSecure) {
           // If safe, immediately emit readyForPosition
-          this.emit("readyForPosition", this);
+          this.state = "open";
+          this.stateChangedAt = Date.now();
+          this.stateChangeReason = 'Recovery complete';
         } else {
           // If unsafe, get failure reason and enter recovery state
           const failureReason = safetyChecker.getFailureReason();
-          this.setState("recovery");
+          this.state = "recovery";
+          this.stateChangedAt = Date.now();
+          this.stateChangeReason = 'Recovery incomplete';
           this.unsafeReason = failureReason;
           this.emit("unsafeRecovery", {
             token: this,
@@ -405,10 +457,14 @@ class Token extends EventEmitter {
           // If gain from bottom is acceptable, enter position
           if (gainFromBottom <= this.config.RECOVERY.SAFE_GAIN) {
             this.unsafeReason = null;
-            this.emit("readyForPosition", this);
+            this.state = "open";
+            this.stateChangedAt = Date.now();
+            this.stateChangeReason = 'Recovery complete';
           } else {
             // If gain too high, go back to drawdown to wait for better entry
-            this.setState("drawdown");
+            this.state = "drawdown";
+            this.stateChangedAt = Date.now();
+            this.stateChangeReason = 'Gain too high';
             this.unsafeReason = null;
             this.emit("recoveryGainTooHigh", {
               token: this,
@@ -426,7 +482,9 @@ class Token extends EventEmitter {
 
           if (drawdownFromRecoveryHigh <= -this.config.DRAWDOWN.THRESHOLD) {
             // We've hit a significant drawdown from recovery high, go back to drawdown state
-            this.setState("drawdown");
+            this.state = "drawdown";
+            this.stateChangedAt = Date.now();
+            this.stateChangeReason = 'New drawdown cycle';
             this.drawdownLow = currentPrice; // Reset drawdown low for new cycle
             this.emit("newDrawdownCycle", {
               token: this,
@@ -457,22 +515,6 @@ class Token extends EventEmitter {
         error: error.message,
       });
       this.emit("recoveryError", { token: this, error: error.message });
-    }
-  }
-
-  setState(newState) {
-    if (this.stateManager) {
-      this.stateManager.setState(this, newState);
-    } else {
-      throw new Error("StateManager not initialized for token");
-    }
-  }
-
-  setStateManager(stateManager) {
-    this.stateManager = stateManager;
-    // Initialize state if not already set
-    if (!this.state) {
-      this.setState("new");
     }
   }
 
@@ -1093,17 +1135,9 @@ class Token extends EventEmitter {
           buyPressure >= this.config.PUMP.MARKET.MIN_BUYS;
 
         if (isPumping) {
-          this.setState("pumping");
-          this.emit("pumpDetected", {
-            token: this,
-            metrics: {
-              marketCapUSD,
-              priceChange1m,
-              priceChange5m,
-              volumeChange5m,
-              buyPressure,
-            },
-          });
+          this.state = "pumping";
+          this.stateChangedAt = Date.now();
+          this.stateChangeReason = 'Pumping detected';
         }
       }
 
@@ -1119,14 +1153,10 @@ class Token extends EventEmitter {
         this.state === "pumping" &&
         drawdownPercentage <= -this.config.DRAWDOWN.THRESHOLD
       ) {
-        this.setState("drawdown");
+        this.state = "drawdown";
+        this.stateChangedAt = Date.now();
+        this.stateChangeReason = 'Drawdown detected';
         this.drawdownLow = currentPrice;
-        this.emit("drawdownStarted", {
-          token: this,
-          drawdownPercentage,
-          fromPrice: this.highestMarketCap,
-          currentPrice,
-        });
       }
 
       // Handle recovery
@@ -1141,19 +1171,16 @@ class Token extends EventEmitter {
         const isSecure = await safetyChecker.runSecurityChecks(this);
         if (isSecure) {
           // If safe, immediately emit readyForPosition
-          this.setState("open");
-          this.emit("readyForPosition", this);
+          this.state = "open";
+          this.stateChangedAt = Date.now();
+          this.stateChangeReason = 'Recovery complete';
         } else {
           // If unsafe, get failure reason and enter recovery state
           const failureReason = safetyChecker.getFailureReason();
-          this.setState("recovery");
+          this.state = "recovery";
+          this.stateChangedAt = Date.now();
+          this.stateChangeReason = 'Recovery incomplete';
           this.unsafeReason = failureReason;
-          this.emit("recoveryStarted", {
-            token: this,
-            marketCap: this.marketCapSol,
-            reason: failureReason.reason,
-            value: failureReason.value,
-          });
         }
         return;
       }
@@ -1170,17 +1197,15 @@ class Token extends EventEmitter {
           // If gain from bottom is acceptable, enter position
           if (gainFromBottom <= this.config.RECOVERY.SAFE_GAIN) {
             this.unsafeReason = null;
-            this.setState("open");
-            this.emit("readyForPosition", this);
+            this.state = "open";
+            this.stateChangedAt = Date.now();
+            this.stateChangeReason = 'Recovery complete';
           } else {
             // If gain too high, go back to drawdown to wait for better entry
-            this.setState("drawdown");
+            this.state = "drawdown";
+            this.stateChangedAt = Date.now();
+            this.stateChangeReason = 'Gain too high';
             this.unsafeReason = null;
-            this.emit("recoveryGainTooHigh", {
-              token: this,
-              gainFromBottom,
-              marketCap: this.marketCapSol,
-            });
           }
         } else {
           // If still unsafe, check if we're in a new drawdown from recovery high
@@ -1192,13 +1217,10 @@ class Token extends EventEmitter {
 
           if (drawdownFromRecoveryHigh <= -this.config.DRAWDOWN.THRESHOLD) {
             // We've hit a significant drawdown from recovery high, go back to drawdown state
-            this.setState("drawdown");
+            this.state = "drawdown";
+            this.stateChangedAt = Date.now();
+            this.stateChangeReason = 'New drawdown cycle';
             this.drawdownLow = currentPrice; // Reset drawdown low for new cycle
-            this.emit("newDrawdownCycle", {
-              token: this,
-              drawdownFromHigh: drawdownFromRecoveryHigh,
-              newDrawdownLow: currentPrice,
-            });
           } else {
             // Still in recovery but unsafe, update reason if changed
             const newReason = safetyChecker.getFailureReason();
@@ -1208,11 +1230,6 @@ class Token extends EventEmitter {
               this.unsafeReason.value !== newReason.value
             ) {
               this.unsafeReason = newReason;
-              this.emit("recoveryUpdate", {
-                token: this,
-                reason: newReason.reason,
-                value: newReason.value,
-              });
             }
           }
         }

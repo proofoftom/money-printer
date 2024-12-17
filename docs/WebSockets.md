@@ -2,10 +2,7 @@
 
 ## Overview
 
-The trading bot uses a dual WebSocket setup:
-
 1. Client connection to pumpportal.fun for receiving real-time trade data
-2. Broadcast server for dashboard updates
 
 ## PumpPortal Connection
 
@@ -80,62 +77,3 @@ The trading bot uses a dual WebSocket setup:
   "keys": ["mint1", "mint2", ...]
 }
 ```
-
-## Dashboard Broadcast Server
-
-### Connection Details
-
-- Port: 8080
-- WebSocket server for dashboard clients
-- Broadcasts token state changes and position updates
-
-### Message Types
-
-#### Token Updates
-
-```javascript
-{
-  "type": "tokenUpdate",
-  "data": {
-    "mint": "...",
-    "state": "new|heatingUp|pumping|drawdown|dead",
-    "marketCap": 1000,
-    "position": {
-      "entryPrice": 900,
-      "size": 20,
-      "timestamp": "..."
-    }
-  }
-}
-```
-
-#### Position Updates
-
-```javascript
-{
-  "type": "positionUpdate",
-  "data": {
-    "mint": "...",
-    "position": {
-      "entryPrice": 900,
-      "exitPrice": 1200,
-      "pnl": 6.67,
-      "isWin": true
-    },
-    "accountBalance": 120,
-    "wins": 1,
-    "losses": 0
-  }
-}
-```
-
-## Error Handling
-
-- Automatic reconnection to pumpportal.fun on disconnect
-- Graceful shutdown on SIGINT
-- Detailed error logging for message parsing issues
-
-## Suggestions for Improvement
-
-- Implement robust error handling and reconnection strategies to ensure reliability.
-- Consider adding authentication mechanisms if sensitive data is being transmitted.

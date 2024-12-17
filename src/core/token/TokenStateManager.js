@@ -36,7 +36,7 @@ class TokenStateManager extends EventEmitter {
     }
   }
 
-  setState(token, newState) {
+  setState(token, newState, reason = '') {
     if (!this.validStates.includes(newState)) {
       throw new Error(`Invalid state: ${newState}`);
     }
@@ -52,15 +52,75 @@ class TokenStateManager extends EventEmitter {
     // Update token state
     const oldState = token.state;
     token.state = newState;
+    token.stateChangedAt = Date.now();
+    token.stateChangeReason = reason;
 
-    // Emit state change event
-    this.emit("stateChanged", { 
+    // Emit state change event with complete context
+    this.emit('stateChanged', {
       token,
-      from: oldState, 
-      to: newState 
+      from: oldState,
+      to: newState,
+      reason,
+      timestamp: token.stateChangedAt
     });
+  }
 
-    return true;
+  markTokenUnsafe(token, reason) {
+    this.setState(token, 'unsafe', reason);
+    token.unsafeReason = reason;
+    this.emit('tokenUnsafe', { token, reason });
+  }
+
+  markTokenDead(token, reason) {
+    this.setState(token, 'dead', reason);
+    this.emit('tokenDead', { token, reason });
+  }
+
+  updateTokenMetrics(token, metrics) {
+    // Update token metrics
+    Object.assign(token, metrics);
+    
+    // Emit metrics update event
+    this.emit('metricsUpdated', { token, metrics });
+    
+    // Check for state transitions based on metrics
+    this.checkStateTransitions(token, metrics);
+  }
+
+  checkStateTransitions(token, metrics) {
+    const { state } = token;
+    
+    switch (state) {
+      case 'new':
+        if (metrics.pumpStrength > config.TOKEN.PUMP_THRESHOLD) {
+          this.setState(token, 'pumping', 'Strong initial pump detected');
+        }
+        break;
+        
+      case 'pumping':
+        if (metrics.drawdown > config.TOKEN.DRAWDOWN_THRESHOLD) {
+          this.setState(token, 'drawdown', 'Significant drawdown detected');
+        }
+        break;
+        
+      case 'drawdown':
+        if (metrics.recoveryStrength > config.TOKEN.RECOVERY_THRESHOLD) {
+          this.setState(token, 'recovery', 'Recovery pattern detected');
+        }
+        break;
+        
+      case 'recovery':
+        if (metrics.drawdown > config.TOKEN.DRAWDOWN_THRESHOLD) {
+          this.setState(token, 'drawdown', 'New drawdown during recovery');
+        } else if (metrics.stability > config.TOKEN.STABILITY_THRESHOLD) {
+          this.setState(token, 'open', 'Stable trading conditions');
+        }
+        break;
+    }
+  }
+
+  cleanup() {
+    this.removeAllListeners();
   }
 
   isHeatingUp(token) {
