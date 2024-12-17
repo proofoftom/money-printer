@@ -14,6 +14,10 @@ class Wallet {
     );
   }
 
+  getBalance() {
+    return this.balance;
+  }
+
   recordTrade(profitLoss) {
     this.totalPnL += profitLoss;
     console.log(`Trade recorded with PnL: ${profitLoss.toFixed(4)}`);
