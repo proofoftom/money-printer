@@ -264,6 +264,122 @@ Partial Exit:
     return this.stateManager.getPosition(mint);
   }
 
+  getPositions() {
+    return this.stateManager.getAllPositions();
+  }
+
+  getTotalValue() {
+    return this.getPositions().reduce((total, position) => {
+      return total + (position.currentPrice * position.size);
+    }, 0);
+  }
+
+  getTotalProfitLoss() {
+    const positions = this.getPositions();
+    if (positions.length === 0) return 0;
+    
+    return positions.reduce((total, position) => {
+      return total + position.getProfitLoss();
+    }, 0) / positions.length; // Average PnL across all positions
+  }
+
+  calculatePositionSize(baseSize) {
+    // Implement dynamic position sizing based on wallet balance and risk
+    const walletBalance = this.wallet.getBalance();
+    const maxRiskPerTrade = config.RISK.MAX_RISK_PER_TRADE;
+    const riskAdjustedSize = Math.min(baseSize, walletBalance * maxRiskPerTrade);
+    
+    return riskAdjustedSize;
+  }
+
+  increasePosition(mint, additionalSize) {
+    const position = this.getPosition(mint);
+    if (!position) return;
+
+    const currentSize = position.size;
+    const maxIncrease = currentSize * config.POSITION.MAX_INCREASE_MULTIPLIER;
+    const safeSize = Math.min(additionalSize, maxIncrease);
+
+    position.increaseSize(safeSize);
+    this.emit('positionIncreased', { mint, additionalSize: safeSize });
+  }
+
+  validatePositions() {
+    const positions = this.getPositions();
+    positions.forEach(position => {
+      try {
+        // Check if position meets current safety criteria
+        if (!this.meetsCurrentCriteria(position)) {
+          console.log(`Position ${position.mint} no longer meets criteria - considering exit`);
+          this.considerExit(position);
+        }
+
+        // Validate position state and recovery metrics
+        if (position.recoveryMetrics) {
+          this.validateRecoveryMetrics(position);
+        }
+      } catch (error) {
+        errorLogger.logError(error, 'Position Validation', { position });
+      }
+    });
+  }
+
+  meetsCurrentCriteria(position) {
+    // Implement position validation logic
+    const minVolume = config.SAFETY.MIN_VOLUME;
+    const minLiquidity = config.SAFETY.MIN_LIQUIDITY;
+    
+    return (
+      position.volume24h >= minVolume &&
+      position.liquidity >= minLiquidity &&
+      !position.isStale()
+    );
+  }
+
+  validateRecoveryMetrics(position) {
+    const metrics = position.recoveryMetrics;
+    if (!metrics) return;
+
+    // Check for deteriorating recovery conditions
+    if (metrics.recoveryStrength < config.RECOVERY.MIN_STRENGTH ||
+        metrics.marketStructure === 'bearish') {
+      console.log(`Recovery conditions deteriorating for ${position.mint}`);
+      this.considerExit(position);
+    }
+  }
+
+  considerExit(position) {
+    const exitType = this.exitStrategies.determineExitType(position);
+    if (exitType) {
+      this.executeExit(position, exitType);
+    }
+  }
+
+  executeExit(position, exitType) {
+    try {
+      const exitPrice = position.currentPrice;
+      const profitLoss = position.getProfitLoss();
+      
+      position.close(exitType);
+      this.wallet.updateBalance(position.size * exitPrice);
+      
+      this.emit('positionClosed', {
+        token: { mint: position.mint },
+        reason: exitType,
+        profitLoss
+      });
+      
+      // Update win/loss counter
+      if (profitLoss > 0) {
+        this.wins++;
+      } else {
+        this.losses++;
+      }
+    } catch (error) {
+      errorLogger.logError(error, 'Position Exit', { position, exitType });
+    }
+  }
+
   getActivePositions() {
     return this.stateManager.getActivePositions();
   }
@@ -294,24 +410,6 @@ Partial Exit:
     }
 
     return size;
-  }
-
-  validatePositions() {
-    const invalidPositions = this.stateManager.validatePositions();
-    
-    if (invalidPositions.length > 0) {
-      console.warn(`Found ${invalidPositions.length} invalid positions:`);
-      
-      for (const { mint, reason, position } of invalidPositions) {
-        console.warn(`- ${mint}: ${reason}`);
-        
-        // Auto-close stale positions
-        if (reason === 'stale') {
-          console.warn(`Auto-closing stale position for ${mint}`);
-          this.closePosition(mint, position.currentPrice);
-        }
-      }
-    }
   }
 
   cleanup() {
