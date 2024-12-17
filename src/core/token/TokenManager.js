@@ -48,9 +48,12 @@ class TokenManager extends EventEmitter {
         return;
       }
 
+      const availableBalance = await this.positionManager.getAvailableBalance();
+      const positionSize = this.calculatePositionSize(token, availableBalance);
       const success = await this.positionManager.openPosition(
         token.mint,
-        token.marketCapSol
+        token.marketCapSol,
+        positionSize
       );
       if (success) {
         token.setState("inPosition");
@@ -184,6 +187,145 @@ class TokenManager extends EventEmitter {
     }
 
     this.emit("tokenUpdated", token);
+  }
+
+  calculatePositionSize(token, availableBalance) {
+    const marketStructure = token.analyzeMarketStructure();
+    const riskLevel = this.calculateRiskLevel(token, marketStructure);
+    
+    // Base position size on confidence and risk
+    let baseSize = availableBalance * (marketStructure.recommendation.confidence / 100);
+    
+    // Adjust for risk level
+    baseSize *= (1 - riskLevel);
+    
+    // Apply position sizing rules
+    const maxPositionSize = availableBalance * 0.1; // Never use more than 10% of balance
+    const minPositionSize = availableBalance * 0.01; // Minimum 1% of balance
+    
+    // Scale based on market structure health
+    const healthAdjustment = marketStructure.overallHealth / 100;
+    baseSize *= healthAdjustment;
+    
+    // Ensure within limits
+    return Math.min(Math.max(baseSize, minPositionSize), maxPositionSize);
+  }
+
+  calculateRiskLevel(token, marketStructure) {
+    const riskFactors = {
+      priceVolatility: token.getPriceVolatility() / 100,
+      volumeConcentration: this.calculateVolumeConcentration(token),
+      patternReliability: (100 - marketStructure.structureScore.patternQuality) / 100,
+      marketDepth: this.calculateMarketDepth(token),
+      recoveryStability: this.calculateRecoveryStability(token)
+    };
+
+    // Weight the risk factors
+    const weightedRisk = (
+      riskFactors.priceVolatility * 0.25 +
+      riskFactors.volumeConcentration * 0.20 +
+      riskFactors.patternReliability * 0.20 +
+      riskFactors.marketDepth * 0.15 +
+      riskFactors.recoveryStability * 0.20
+    );
+
+    return Math.min(Math.max(weightedRisk, 0), 1);
+  }
+
+  calculateVolumeConcentration(token) {
+    const volumeProfile = token.getVolumeProfile();
+    if (!volumeProfile) return 1; // Maximum risk if no volume data
+
+    // Calculate Herfindahl-Hirschman Index for volume concentration
+    const totalVolume = volumeProfile.profile.reduce((sum, level) => sum + level.totalVolume, 0);
+    const hhi = volumeProfile.profile.reduce((sum, level) => {
+      const marketShare = level.totalVolume / totalVolume;
+      return sum + (marketShare * marketShare);
+    }, 0);
+
+    return Math.min(hhi * 10, 1); // Normalize to 0-1 range
+  }
+
+  calculateMarketDepth(token) {
+    const volumeProfile = token.getVolumeProfile();
+    if (!volumeProfile) return 1;
+
+    // Calculate liquidity depth score
+    const totalVolume = volumeProfile.volumeDistribution.buyVolume + 
+                       volumeProfile.volumeDistribution.sellVolume;
+    const avgVolumePerLevel = totalVolume / volumeProfile.profile.length;
+    
+    // Count levels with significant volume
+    const significantLevels = volumeProfile.profile.filter(
+      level => level.totalVolume > avgVolumePerLevel * 0.5
+    ).length;
+
+    return 1 - (significantLevels / volumeProfile.profile.length);
+  }
+
+  calculateRecoveryStability(token) {
+    const strength = token.getRecoveryStrength();
+    const recentPrices = token.priceHistory.slice(-10);
+    
+    if (recentPrices.length < 2) return 1;
+
+    // Calculate price stability
+    const priceChanges = [];
+    for (let i = 1; i < recentPrices.length; i++) {
+      const change = Math.abs(
+        (recentPrices[i].price - recentPrices[i-1].price) / recentPrices[i-1].price
+      );
+      priceChanges.push(change);
+    }
+
+    const avgChange = priceChanges.reduce((a,b) => a + b, 0) / priceChanges.length;
+    const stability = Math.min(avgChange * 5, 1); // Normalize to 0-1
+
+    return (stability * 0.7) + ((100 - strength.total) / 100 * 0.3);
+  }
+
+  getDynamicStopLoss(token) {
+    const marketStructure = token.analyzeMarketStructure();
+    const volumeProfile = token.getVolumeProfile();
+    
+    if (!volumeProfile) return null;
+
+    // Find strongest support level below current price
+    const currentPrice = token.getTokenPrice();
+    const supportLevels = volumeProfile.profile
+      .filter(level => level.priceLevel < currentPrice)
+      .sort((a, b) => {
+        const aStrength = a.buyVolume / a.totalVolume;
+        const bStrength = b.buyVolume / b.totalVolume;
+        return bStrength - aStrength;
+      });
+
+    if (supportLevels.length === 0) return null;
+
+    // Use the strongest support level as base
+    const baseStopLevel = supportLevels[0].priceLevel;
+    
+    // Add buffer based on volatility
+    const volatility = token.getPriceVolatility();
+    const buffer = baseStopLevel * (volatility * 0.01); // 1% buffer per volatility point
+    
+    return Math.max(baseStopLevel - buffer, 0);
+  }
+
+  getDynamicTakeProfit(token) {
+    const marketStructure = token.analyzeMarketStructure();
+    const strength = token.getRecoveryStrength();
+    
+    // Base take profit on recovery strength
+    let takeProfit = 1 + (strength.total / 100); // 100% recovery = 2x target
+    
+    // Adjust based on market structure
+    if (marketStructure.pattern && marketStructure.pattern.confidence > 70) {
+      takeProfit *= 1.2; // 20% higher target for strong patterns
+    }
+    
+    // Cap maximum take profit
+    return Math.min(takeProfit, 3); // Maximum 3x
   }
 
   getToken(mint) {
