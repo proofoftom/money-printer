@@ -168,6 +168,75 @@ class Position extends EventEmitter {
     };
   }
 
+  async open() {
+    const { POSITION, SAFETY } = config;
+    
+    try {
+      // Safety checks before opening
+      if (!this.token.isSafe()) {
+        throw new Error('Token failed safety checks');
+      }
+
+      // Calculate position size
+      const size = Math.min(
+        POSITION.ENTRY.SIZE,
+        this.wallet.getAvailableBalance() * 0.9
+      );
+
+      // Execute entry with slippage protection
+      const tx = await this.executeEntry(size, POSITION.ENTRY.SLIPPAGE);
+      if (!tx) {
+        throw new Error('Entry transaction failed');
+      }
+
+      this.entryPrice = this.token.currentPrice;
+      this.size = size;
+      this.setState('open');
+      
+      // Set up exit conditions
+      this.setStopLoss(POSITION.EXIT.STOP_LOSS);
+      this.setTakeProfit(POSITION.EXIT.PROFIT);
+      this.setTrailingStop(POSITION.EXIT.TRAILING_STOP);
+      this.maxHoldTime = Date.now() + POSITION.EXIT.MAX_HOLD_TIME * 1000;
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to open position:', error);
+      return false;
+    }
+  }
+
+  shouldExit() {
+    const { POSITION } = config;
+    
+    // Check stop loss
+    const currentLoss = this.getCurrentDrawdown();
+    if (currentLoss <= POSITION.EXIT.STOP_LOSS) {
+      return 'Stop loss triggered';
+    }
+
+    // Check take profit
+    const currentGain = this.getCurrentGain();
+    if (currentGain >= POSITION.EXIT.PROFIT) {
+      return 'Take profit reached';
+    }
+
+    // Check trailing stop
+    if (this.highWaterMark && this.trailingStopDistance) {
+      const drawdownFromHigh = ((this.token.currentPrice - this.highWaterMark) / this.highWaterMark) * 100;
+      if (drawdownFromHigh <= -this.trailingStopDistance) {
+        return 'Trailing stop triggered';
+      }
+    }
+
+    // Check max hold time
+    if (Date.now() >= this.maxHoldTime) {
+      return 'Maximum hold time reached';
+    }
+
+    return false;
+  }
+
   update(currentPrice, volumeData = null, candleData = null) {
     // Validate price
     if (typeof currentPrice !== 'number' || currentPrice <= 0) {

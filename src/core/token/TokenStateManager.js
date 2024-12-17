@@ -12,18 +12,20 @@ class TokenStateManager extends EventEmitter {
       "recovery",
       "open",
       "closed",
-      "dead"
+      "dead",
+      "unsafe"
     ];
 
     // Define valid state transitions
     this.stateTransitions = {
-      new: ["pumping", "dead"],
-      pumping: ["drawdown", "dead"],
-      drawdown: ["recovery", "open", "dead"],
-      recovery: ["drawdown", "open", "dead"],
-      open: ["closed", "dead"],
-      closed: ["dead"],
-      dead: []
+      new: ["pumping", "dead", "unsafe"],
+      pumping: ["drawdown", "dead", "unsafe"],
+      drawdown: ["recovery", "open", "dead", "unsafe"],
+      recovery: ["drawdown", "open", "dead", "unsafe"],
+      open: ["closed", "dead", "unsafe"],
+      closed: ["dead", "unsafe"],
+      dead: [],
+      unsafe: []
     };
 
     if (process.env.NODE_ENV === 'test') {
@@ -81,8 +83,8 @@ class TokenStateManager extends EventEmitter {
     return (
       priceChange > 0.2 && // 20% price increase
       volumeSpike && // Strong volume
-      marketStructure.buyPressure > config.THRESHOLDS.MIN_BUY_PRESSURE && // Good buy pressure
-      marketStructure.overallHealth > config.THRESHOLDS.MIN_MARKET_STRUCTURE_SCORE // Healthy market
+      marketStructure.buyPressure > config.SAFETY.MIN_BUY_PRESSURE && // Good buy pressure
+      marketStructure.overallHealth > config.SAFETY.MIN_MARKET_STRUCTURE_SCORE // Healthy market
     );
   }
 
@@ -94,9 +96,9 @@ class TokenStateManager extends EventEmitter {
     
     // Enhanced drawdown detection
     return (
-      drawdown <= -config.THRESHOLDS.PUMP_DRAWDOWN && // Significant drawdown
+      drawdown <= -config.RECOVERY.DRAWDOWN.MIN && // Significant drawdown
       token.hasSignificantVolume() && // Maintain decent volume
-      marketStructure.structureScore.overall > config.THRESHOLDS.MIN_MARKET_STRUCTURE_SCORE * 0.7 // Allow some structure deterioration
+      marketStructure.structureScore.overall > config.SAFETY.MIN_MARKET_STRUCTURE_SCORE * 0.7 // Allow some structure deterioration
     );
   }
 
@@ -108,10 +110,10 @@ class TokenStateManager extends EventEmitter {
     
     // Comprehensive recovery check
     return (
-      recoveryStrength.total >= config.THRESHOLDS.MIN_RECOVERY_STRENGTH && // Strong recovery
-      marketStructure.buyPressure >= config.THRESHOLDS.MIN_BUY_PRESSURE && // Good buy pressure
-      marketStructure.overallHealth >= config.THRESHOLDS.MIN_MARKET_STRUCTURE_SCORE && // Healthy market
-      token.getVolatility() <= config.THRESHOLDS.MAX_RECOVERY_VOLATILITY // Controlled volatility
+      recoveryStrength.total >= config.RECOVERY.MIN_RECOVERY_STRENGTH && // Strong recovery
+      marketStructure.buyPressure >= config.SAFETY.MIN_BUY_PRESSURE && // Good buy pressure
+      marketStructure.overallHealth >= config.SAFETY.MIN_MARKET_STRUCTURE_SCORE && // Healthy market
+      token.getVolatility() <= config.RECOVERY.MAX_RECOVERY_VOLATILITY // Controlled volatility
     );
   }
 
@@ -145,9 +147,9 @@ class TokenStateManager extends EventEmitter {
     const volume = token.getRecentVolume(1800000); // 30-minute volume
 
     return (
-      marketStructure.overallHealth < config.THRESHOLDS.MIN_MARKET_STRUCTURE_SCORE * 0.5 || // Severe structure breakdown
+      marketStructure.overallHealth < config.SAFETY.MIN_MARKET_STRUCTURE_SCORE * 0.5 || // Severe structure breakdown
       volume < token.getAverageVolume(3600000) * 0.2 || // Severe volume decline
-      token.marketCapSol < config.THRESHOLDS.DEAD_USD / token.getCurrentSolPrice() // Below dead threshold
+      token.marketCapSol < config.MCAP.DEAD / token.getCurrentSolPrice() // Below dead threshold
     );
   }
 
@@ -161,6 +163,54 @@ class TokenStateManager extends EventEmitter {
 
   isValidState(state) {
     return this.validStates.includes(state);
+  }
+
+  async evaluateToken(token) {
+    const { MCAP, SAFETY } = config;
+    
+    // Basic market cap checks
+    if (token.marketCap < MCAP.MIN) {
+      return this.moveToState(token, 'dead', 'Market cap too low');
+    }
+
+    // Safety checks
+    if (!token.isSafe()) {
+      return this.moveToState(token, 'unsafe', 'Failed safety checks');
+    }
+
+    // State-specific logic
+    switch (token.state) {
+      case 'new':
+        if (token.isPumping()) {
+          return this.moveToState(token, 'pumping', 'Pump detected');
+        }
+        break;
+
+      case 'pumping':
+        const drawdown = token.getDrawdown();
+        if (drawdown <= -config.RECOVERY.DRAWDOWN.MIN) {
+          return this.moveToState(token, 'drawdown', 'Significant drawdown detected');
+        }
+        break;
+
+      case 'drawdown':
+        if (token.isRecovering()) {
+          return this.moveToState(token, 'recovery', 'Recovery pattern detected');
+        }
+        break;
+
+      case 'recovery':
+        const gainFromBottom = token.getGainFromBottom();
+        if (gainFromBottom <= config.RECOVERY.GAIN.MAX_ENTRY) {
+          return this.moveToState(token, 'open', 'Safe entry point detected');
+        }
+        break;
+
+      default:
+        break;
+    }
+
+    return token.state;
   }
 
   evaluateStateTransition(token) {
@@ -180,7 +230,7 @@ class TokenStateManager extends EventEmitter {
       switch (currentState) {
         case 'pumping':
           // Transition to drawdown if significant price drop
-          if (drawdownDepth > config.DRAWDOWN_THRESHOLD) {
+          if (drawdownDepth > config.RECOVERY.DRAWDOWN.MIN) {
             this.setState(token, 'drawdown');
             token.drawdownLow = token.currentPrice;
           }
@@ -254,6 +304,11 @@ class TokenStateManager extends EventEmitter {
     }
 
     return false;
+  }
+
+  moveToState(token, newState, reason) {
+    this.setState(token, newState);
+    errorLogger.log(`Moved token to state ${newState}: ${reason}`);
   }
 }
 

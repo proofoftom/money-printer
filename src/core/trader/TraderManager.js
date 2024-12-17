@@ -426,6 +426,37 @@ class TraderManager extends EventEmitter {
     this.removeAllListeners();
   }
 
+  async analyzeTrader(trader) {
+    const { SAFETY } = config;
+    
+    try {
+      // Get trader metrics
+      const metrics = await trader.getMetrics();
+      
+      // Check volume and trade count
+      if (metrics.totalVolume < SAFETY.MARKET.MIN_TRADES ||
+          metrics.tradeCount < SAFETY.MARKET.MIN_TRADES) {
+        return false;
+      }
+
+      // Check wash trading
+      const washTradePercent = (metrics.washTrades / metrics.tradeCount) * 100;
+      if (washTradePercent > SAFETY.MARKET.MAX_WASH) {
+        return false;
+      }
+
+      // Check market correlation
+      if (metrics.volumePriceCorrelation < SAFETY.MARKET.MIN_CORRELATION) {
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Failed to analyze trader:', error);
+      return false;
+    }
+  }
+
   analyzeRecoveryPatterns() {
     const recoveryTraders = Array.from(this.traders.values())
       .filter(trader => trader.recoveryMetrics.totalRecoveryTrades > 0);

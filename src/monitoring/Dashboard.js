@@ -7,13 +7,15 @@ class Dashboard {
     tokenTracker,
     positionManager,
     safetyChecker,
-    priceManager
+    priceManager,
+    config
   ) {
     this.wallet = wallet;
     this.tokenTracker = tokenTracker;
     this.positionManager = positionManager;
     this.safetyChecker = safetyChecker;
     this.priceManager = priceManager;
+    this.config = config;
     this.trades = [];
     this.balanceHistory = {
       x: [],
@@ -449,6 +451,65 @@ class Dashboard {
     }
   }
 
+  renderTokenMetrics(token) {
+    const { PUMP, RECOVERY, SAFETY } = this.config;
+    
+    // Common metrics
+    const metrics = {
+      'Market Cap': `$${this.priceManager.solToUSD(token.marketCapSol).toFixed(1)}`,
+      'Volume (SOL)': this.formatVolume(token.volumeSOL),
+      'Holders': token.holders,
+      'Age': this.formatTime(token.age)
+    };
+
+    // State-specific metrics
+    switch (token.state) {
+      case 'new':
+        return {
+          ...metrics,
+          'Price Change (1m)': `${token.getPriceChange(60).toFixed(1)}%`,
+          'Volume Change': `${token.getVolumeSpike().toFixed(0)}%`,
+          'Buy Pressure': `${token.getMarketMetrics().buyPressure.toFixed(0)}%`
+        };
+
+      case 'pumping':
+        return {
+          ...metrics,
+          'Price Change (1m)': `${token.getPriceChange(60).toFixed(1)}%`,
+          'Price Change (5m)': `${token.getPriceChange(300).toFixed(1)}%`,
+          'Volume Spike': `${token.getVolumeSpike().toFixed(0)}%`,
+          'Buy Pressure': `${token.getMarketMetrics().buyPressure.toFixed(0)}%`
+        };
+
+      case 'drawdown':
+        return {
+          ...metrics,
+          'Drawdown': `${((token.marketCapSol - token.highestMarketCap) / token.highestMarketCap * 100).toFixed(1)}%`,
+          'Time in Drawdown': this.formatTime(token.getDrawdownTime()),
+          'Volume vs Peak': `${token.getVolumeVsPeak().toFixed(0)}%`
+        };
+
+      case 'recovery':
+        return {
+          ...metrics,
+          'Gain from Bottom': `${((token.currentPrice - token.drawdownLow) / token.drawdownLow * 100).toFixed(1)}%`,
+          'Buy Pressure': `${token.getMarketMetrics().buyPressure.toFixed(0)}%`,
+          'Market Structure': `${token.getMarketMetrics().volumePriceCorrelation.toFixed(0)}`
+        };
+
+      case 'open':
+        return {
+          ...metrics,
+          'Entry Price': this.priceManager.solToUSD(token.entryPrice).toFixed(1),
+          'Current Gain': `${((token.currentPrice - token.entryPrice) / token.entryPrice * 100).toFixed(1)}%`,
+          'Stop Loss': `${this.config.POSITION.EXIT.STOP_LOSS}%`
+        };
+
+      default:
+        return metrics;
+    }
+  }
+
   updateDashboard() {
     try {
       this.walletBox.setContent(this.getWalletStatus());
@@ -478,59 +539,8 @@ class Dashboard {
       return tokens
         .map((token) => {
           try {
-            // Calculate token age in seconds
-            const now = Date.now();
-            const tokenAge = Math.floor((now - token.minted) / 1000);
-            const ageStr =
-              tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
-
-            // Format market cap in USD with k format
-            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-            const mcFormatted =
-              marketCapUSD >= 1000
-                ? `${(marketCapUSD / 1000).toFixed(1)}k`
-                : marketCapUSD.toFixed(1);
-
-            // Get holder info
-            const holderCount = token.getHolderCount();
-            const topConcentration = token.getTopHolderConcentration(10);
-            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(
-              0
-            )}%`;
-
-            // Format the token info string
-            const symbol = token.symbol || token.mint.slice(0, 8);
-            const rows = [
-              `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-            ];
-
-            // Add state-specific metrics
-            switch (state) {
-              case "pumping":
-                const priceChange1m = token.getPriceChange(60);
-                const priceChange5m = token.getPriceChange(300);
-                const buyPressure = token.getBuyPressure(300);
-                rows.push(
-                  `1m: ${priceChange1m.toFixed(1)}% | 5m: ${priceChange5m.toFixed(1)}% | Buy: ${buyPressure.toFixed(0)}%`
-                );
-                break;
-
-              case "drawdown":
-                const drawdown = ((token.marketCapSol - token.highestMarketCap) / token.highestMarketCap) * 100;
-                rows.push(
-                  `DD: ${Math.abs(drawdown).toFixed(1)}% | Peak: ${this.priceManager.solToUSD(token.highestMarketCap).toFixed(1)}$`
-                );
-                break;
-
-              case "recovery":
-                const gainFromBottom = token.drawdownLow ? 
-                  ((token.currentPrice - token.drawdownLow) / token.drawdownLow) * 100 : 0;
-                rows.push(
-                  `Gain: ${gainFromBottom.toFixed(1)}% | ${token.unsafeReason?.reason || 'Unknown'}`
-                );
-                break;
-            }
-
+            const metrics = this.renderTokenMetrics(token);
+            const rows = Object.keys(metrics).map(key => `${key.padEnd(20)} ${metrics[key]}`);
             rows.push("─".repeat(50)); // Add horizontal rule between tokens
             return rows.join("\n");
           } catch (err) {
@@ -541,6 +551,13 @@ class Dashboard {
     } catch (error) {
       return `Error: ${error.message}`;
     }
+  }
+
+  formatTime(time) {
+    const hours = Math.floor(time / 3600);
+    const minutes = Math.floor((time % 3600) / 60);
+    const seconds = time % 60;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   }
 }
 

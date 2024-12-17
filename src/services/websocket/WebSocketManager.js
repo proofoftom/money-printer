@@ -3,7 +3,7 @@ const EventEmitter = require("events");
 const config = require("../../utils/config");
 
 class WebSocketManager extends EventEmitter {
-  constructor(tokenManager, priceManager) {
+  constructor(tokenManager, priceManager, config) {
     super();
     this.tokenManager = tokenManager;
     this.priceManager = priceManager;
@@ -12,6 +12,17 @@ class WebSocketManager extends EventEmitter {
     this.ws = null;
     this.pendingTraderSubscriptions = new Set(); // Track pending subscriptions
     this.subscribedTraders = new Set(); // Track subscribed traders
+    this.config = config.WEBSOCKET;
+    this.url = this.config.URL;
+    this.reconnectTimeout = this.config.RECONNECT_TIMEOUT;
+    this.pingInterval = this.config.PING_INTERVAL;
+    this.pongTimeout = this.config.PONG_TIMEOUT;
+    this.maxRetries = this.config.MAX_RETRIES;
+    
+    this.retryCount = 0;
+    this.pingTimer = null;
+    this.pongTimer = null;
+    this.messageHandlers = new Map();
 
     // Don't auto-connect in test mode
     if (process.env.NODE_ENV !== "test") {
@@ -49,7 +60,7 @@ class WebSocketManager extends EventEmitter {
     }
 
     try {
-      this.ws = new WebSocket(config.WEBSOCKET.URL);
+      this.ws = new WebSocket(this.url);
 
       this.ws.on("open", () => {
         console.info("WebSocket connection established");
@@ -87,7 +98,7 @@ class WebSocketManager extends EventEmitter {
           setTimeout(() => {
             console.info("Attempting to reconnect...");
             this.connect();
-          }, config.WEBSOCKET.RECONNECT_TIMEOUT);
+          }, this.reconnectTimeout);
         }
       });
 
@@ -107,7 +118,7 @@ class WebSocketManager extends EventEmitter {
         setTimeout(() => {
           console.log("Attempting to reconnect...");
           this.connect();
-        }, config.WEBSOCKET.RECONNECT_TIMEOUT);
+        }, this.reconnectTimeout);
       }
     }
   }

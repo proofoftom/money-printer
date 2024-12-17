@@ -210,8 +210,8 @@ class Token extends EventEmitter {
     this.pumpMetrics.priceAcceleration = acceleration;
     
     // Check for pump conditions
-    const pumpConfig = config.SAFETY.PUMP_DETECTION;
-    if (acceleration >= pumpConfig.MIN_PRICE_ACCELERATION) {
+    const pumpConfig = config.PUMP;
+    if (acceleration >= pumpConfig.PRICE.CHANGE_1M) {
       const timeSinceLastPump = !this.pumpMetrics.lastPumpTime ? Infinity : now - this.pumpMetrics.lastPumpTime;
       if (timeSinceLastPump >= pumpConfig.PUMP_WINDOW_MS) {
         this.pumpMetrics.pumpCount++;
@@ -489,7 +489,7 @@ class Token extends EventEmitter {
       const recoveryPercentage = this.getRecoveryPercentage();
 
       // If we're in drawdown and hit recovery threshold
-      if (this.state === "drawdown" && recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
+      if (this.state === "drawdown" && recoveryPercentage >= config.RECOVERY.THRESHOLD) {
         const isSecure = await safetyChecker.runSecurityChecks(this);
         if (isSecure) {
           // If safe, immediately emit readyForPosition
@@ -517,7 +517,7 @@ class Token extends EventEmitter {
         
         if (isSecure) {
           // If gain from bottom is acceptable, enter position
-          if (gainFromBottom <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
+          if (gainFromBottom <= config.RECOVERY.SAFE_GAIN) {
             this.unsafeReason = null;
             this.emit("readyForPosition", this);
           } else {
@@ -535,7 +535,7 @@ class Token extends EventEmitter {
           const drawdownFromRecoveryHigh = this.highestMarketCap ? 
             ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) * 100 : 0;
             
-          if (drawdownFromRecoveryHigh <= -config.THRESHOLDS.DRAWDOWN) {
+          if (drawdownFromRecoveryHigh <= -config.DRAWDOWN.THRESHOLD) {
             // We've hit a significant drawdown from recovery high, go back to drawdown state
             this.setState("drawdown");
             this.drawdownLow = currentPrice; // Reset drawdown low for new cycle
@@ -1179,6 +1179,89 @@ class Token extends EventEmitter {
     }
   }
 
+  isPumping() {
+    const { PUMP, MCAP } = config;
+    
+    // Check market cap requirement
+    if (this.marketCap < MCAP.PUMP) return false;
+
+    // Price change checks
+    const priceChange1m = this.getPriceChange(60);
+    const priceChange5m = this.getPriceChange(300);
+    if (priceChange1m < PUMP.PRICE.CHANGE_1M || 
+        priceChange5m < PUMP.PRICE.CHANGE_5M || 
+        priceChange1m > PUMP.PRICE.MAX_VOLATILITY) {
+      return false;
+    }
+
+    // Volume checks
+    const volumeSpike = this.getVolumeSpike();
+    if (volumeSpike < PUMP.VOLUME.SPIKE || 
+        this.volumeSOL < PUMP.VOLUME.MIN_SOL || 
+        this.washTradingPercent > PUMP.VOLUME.MAX_WASH) {
+      return false;
+    }
+
+    // Market checks
+    const { buyPressure, tradeCount, uniqueTraders } = this.getMarketMetrics();
+    return buyPressure >= PUMP.MARKET.MIN_BUYS && 
+           tradeCount >= PUMP.MARKET.MIN_TRADES &&
+           uniqueTraders >= PUMP.MARKET.MIN_TRADERS;
+  }
+
+  isRecovering() {
+    const { RECOVERY, SAFETY } = config;
+    
+    // Check drawdown requirements
+    const drawdown = this.getDrawdown();
+    if (drawdown < RECOVERY.DRAWDOWN.MIN || 
+        drawdown > RECOVERY.DRAWDOWN.MAX || 
+        this.getDrawdownTime() > RECOVERY.DRAWDOWN.WINDOW) {
+      return false;
+    }
+
+    // Check recovery gain
+    const gain = this.getGainFromBottom();
+    if (gain < RECOVERY.GAIN.MIN || gain > RECOVERY.GAIN.MAX_ENTRY) {
+      return false;
+    }
+
+    // Check volume requirements
+    if (this.volumeSOL < RECOVERY.VOLUME.MIN_RECOVERY || 
+        this.supplyDilution > RECOVERY.VOLUME.MAX_DILUTION) {
+      return false;
+    }
+
+    // Safety checks
+    return this.isSafe();
+  }
+
+  isSafe() {
+    const { SAFETY } = config;
+    
+    // Token checks
+    if (this.age < SAFETY.TOKEN.MIN_AGE ||
+        this.holders < SAFETY.TOKEN.MIN_HOLDERS ||
+        this.creatorHoldings > SAFETY.TOKEN.MAX_CREATOR ||
+        this.maxWalletConcentration > SAFETY.TOKEN.MAX_WALLET) {
+      return false;
+    }
+
+    // Liquidity checks
+    if (this.liquiditySOL < SAFETY.LIQUIDITY.MIN_SOL ||
+        this.priceImpact > SAFETY.LIQUIDITY.MAX_IMPACT ||
+        this.liquidityDepth < SAFETY.LIQUIDITY.MIN_DEPTH) {
+      return false;
+    }
+
+    // Market checks
+    const { tradeCount, uniqueTraders, spread, volumePriceCorrelation } = this.getMarketMetrics();
+    return tradeCount >= SAFETY.MARKET.MIN_TRADES &&
+           uniqueTraders >= SAFETY.MARKET.MIN_TRADERS &&
+           spread <= SAFETY.MARKET.MAX_SPREAD &&
+           volumePriceCorrelation >= SAFETY.MARKET.MIN_CORRELATION;
+  }
+
   async updateState() {
     try {
       // Skip if token is in a terminal state
@@ -1202,20 +1285,24 @@ class Token extends EventEmitter {
 
       // Detect pumping state
       if (this.state === "new") {
+        const marketCapUSD = this.marketCapSol * this.solPrice;
         const isPumping = 
+          // Market cap threshold
+          marketCapUSD >= config.PUMP.MCAP &&
           // Significant price increase
-          priceChange1m >= config.THRESHOLDS.PUMP.PRICE_CHANGE_1M &&
-          priceChange5m >= config.THRESHOLDS.PUMP.PRICE_CHANGE_5M &&
+          priceChange1m >= config.PUMP.PRICE.CHANGE_1M &&
+          priceChange5m >= config.PUMP.PRICE.CHANGE_5M &&
           // Volume spike
-          volumeChange5m >= config.THRESHOLDS.PUMP.VOLUME_CHANGE &&
+          volumeChange5m >= config.PUMP.VOLUME.CHANGE &&
           // Strong buy pressure
-          buyPressure >= config.THRESHOLDS.PUMP.BUY_PRESSURE;
+          buyPressure >= config.PUMP.MARKET.MIN_BUYS;
 
         if (isPumping) {
           this.setState("pumping");
           this.emit("pumpDetected", {
             token: this,
             metrics: {
+              marketCapUSD,
               priceChange1m,
               priceChange5m,
               volumeChange5m,
@@ -1230,7 +1317,7 @@ class Token extends EventEmitter {
         ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) * 100 : 0;
 
       // Detect drawdown state
-      if (this.state === "pumping" && drawdownPercentage <= -config.THRESHOLDS.DRAWDOWN) {
+      if (this.state === "pumping" && drawdownPercentage <= -config.DRAWDOWN.THRESHOLD) {
         this.setState("drawdown");
         this.drawdownLow = currentPrice;
         this.emit("drawdownStarted", {
@@ -1245,7 +1332,7 @@ class Token extends EventEmitter {
       const recoveryPercentage = this.drawdownLow ? 
         ((currentPrice - this.drawdownLow) / this.drawdownLow) * 100 : 0;
 
-      if (this.state === "drawdown" && recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
+      if (this.state === "drawdown" && recoveryPercentage >= config.RECOVERY.THRESHOLD) {
         const isSecure = await safetyChecker.runSecurityChecks(this);
         if (isSecure) {
           // If safe, immediately emit readyForPosition
@@ -1274,7 +1361,7 @@ class Token extends EventEmitter {
         
         if (isSecure) {
           // If gain from bottom is acceptable, enter position
-          if (gainFromBottom <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
+          if (gainFromBottom <= config.RECOVERY.SAFE_GAIN) {
             this.unsafeReason = null;
             this.setState("open");
             this.emit("readyForPosition", this);
@@ -1293,7 +1380,7 @@ class Token extends EventEmitter {
           const drawdownFromRecoveryHigh = this.highestMarketCap ? 
             ((this.marketCapSol - this.highestMarketCap) / this.highestMarketCap) * 100 : 0;
             
-          if (drawdownFromRecoveryHigh <= -config.THRESHOLDS.DRAWDOWN) {
+          if (drawdownFromRecoveryHigh <= -config.DRAWDOWN.THRESHOLD) {
             // We've hit a significant drawdown from recovery high, go back to drawdown state
             this.setState("drawdown");
             this.drawdownLow = currentPrice; // Reset drawdown low for new cycle

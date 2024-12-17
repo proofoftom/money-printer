@@ -220,6 +220,69 @@ class ExitStrategies {
     this.remainingPosition = 1.0;
     this.triggeredTiers = new Set();
   }
+
+  checkExitConditions(position) {
+    const { POSITION } = this.config;
+    
+    // Check stop loss
+    if (this.checkStopLoss(position)) {
+      return {
+        shouldExit: true,
+        reason: 'Stop loss triggered',
+        type: 'stop_loss'
+      };
+    }
+
+    // Check take profit
+    if (this.checkTakeProfit(position)) {
+      return {
+        shouldExit: true,
+        reason: 'Take profit reached',
+        type: 'take_profit'
+      };
+    }
+
+    // Check trailing stop
+    if (this.checkTrailingStop(position)) {
+      return {
+        shouldExit: true,
+        reason: 'Trailing stop triggered',
+        type: 'trailing_stop'
+      };
+    }
+
+    // Check max hold time
+    if (Date.now() >= position.maxHoldTime) {
+      return {
+        shouldExit: true,
+        reason: 'Maximum hold time reached',
+        type: 'time_exit'
+      };
+    }
+
+    return {
+      shouldExit: false,
+      reason: null,
+      type: null
+    };
+  }
+
+  checkStopLoss(position) {
+    const currentLoss = position.getCurrentDrawdown();
+    return currentLoss <= this.config.POSITION.EXIT.STOP_LOSS;
+  }
+
+  checkTakeProfit(position) {
+    const currentGain = position.getCurrentGain();
+    return currentGain >= this.config.POSITION.EXIT.PROFIT;
+  }
+
+  checkTrailingStop(position) {
+    if (!position.highWaterMark) return false;
+    
+    const drawdownFromHigh = ((position.token.currentPrice - position.highWaterMark) / position.highWaterMark) * 100;
+    return drawdownFromHigh <= -this.config.POSITION.EXIT.TRAILING_STOP;
+  }
 }
 
 module.exports = ExitStrategies;
