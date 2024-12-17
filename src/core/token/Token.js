@@ -448,6 +448,7 @@ class Token extends EventEmitter {
       if (!safetyChecker) {
         const error = new Error('SafetyChecker is required for evaluateRecovery');
         errorLogger.logError(error, 'Token.evaluateRecovery');
+        this.emit('recoveryError', { token: this, error: error.message });
         return;
       }
 
@@ -463,7 +464,10 @@ class Token extends EventEmitter {
 
       // Check for new drawdown in either state
       if (this.marketCapSol < this.drawdownLow) {
-        this.setState("drawdown");
+        // Only set state to drawdown if we're not already in drawdown
+        if (this.state !== "drawdown") {
+          this.setState("drawdown");
+        }
         this.drawdownLow = this.marketCapSol;
         return;
       }
@@ -507,6 +511,7 @@ class Token extends EventEmitter {
           } else {
             // If gain is too high, go back to drawdown to wait for better entry
             this.setState("drawdown");
+            this.unsafeReason = null; // Clear unsafe reason when going back to drawdown
             this.emit("recoveryGainTooHigh", {
               token: this,
               gainPercentage,
