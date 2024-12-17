@@ -1,4 +1,3 @@
-const config = require("../../utils/config");
 const MissedOpportunityLogger = require("../../monitoring/MissedOpportunityLogger");
 
 class SafetyChecker {
@@ -12,88 +11,58 @@ class SafetyChecker {
   }
 
   getFailureReason() {
-    return this.lastFailReason || { reason: 'Unknown failure', value: null };
-  }
-
-  async runSecurityChecks(token) {
-    const { SAFETY } = config;
-    
-    try {
-      // Token checks
-      if (!this.checkTokenAge(token, SAFETY.TOKEN.MIN_AGE)) {
-        return this.fail('Token too new');
-      }
-
-      if (!this.checkHolderDistribution(token, SAFETY.TOKEN)) {
-        return this.fail('Poor holder distribution');
-      }
-
-      // Liquidity checks
-      if (!this.checkLiquidity(token, SAFETY.LIQUIDITY)) {
-        return this.fail('Insufficient liquidity');
-      }
-
-      // Market checks
-      if (!this.checkMarketHealth(token, SAFETY.MARKET)) {
-        return this.fail('Unhealthy market conditions');
-      }
-
-      return true;
-    } catch (error) {
-      console.error('Safety check failed:', error);
-      return false;
-    }
-  }
-
-  checkTokenAge(token, minAge) {
-    return token.age >= minAge;
-  }
-
-  checkHolderDistribution(token, config) {
-    return token.holders >= config.MIN_HOLDERS &&
-           token.creatorHoldings <= config.MAX_CREATOR &&
-           token.maxWalletConcentration <= config.MAX_WALLET;
-  }
-
-  checkLiquidity(token, config) {
-    return token.liquiditySOL >= config.MIN_SOL &&
-           token.priceImpact <= config.MAX_IMPACT &&
-           token.liquidityDepth >= config.MIN_DEPTH;
-  }
-
-  checkMarketHealth(token, config) {
-    const metrics = token.getMarketMetrics();
-    return metrics.tradeCount >= config.MIN_TRADES &&
-           metrics.uniqueTraders >= config.MIN_TRADERS &&
-           metrics.spread <= config.MAX_SPREAD &&
-           metrics.volumePriceCorrelation >= config.MIN_CORRELATION;
+    return this.lastFailReason;
   }
 
   fail(reason) {
-    this.lastFailReason = reason;
-    return false;
+    this.lastFailReason = { reason, passed: false };
+    return this.lastFailReason;
   }
 
-  updateTrackedTokens(tokens) {
-    tokens.forEach(token => {
-      if (!this.trackedTokens.has(token.address)) {
-        this.trackedTokens.set(token.address, {
-          firstSeen: Date.now(),
-          checks: []
-        });
+  async runSecurityChecks(token) {
+    try {
+      // Liquidity checks
+      const liquidity = token.getLiquidity();
+      if (liquidity < this.safetyConfig.MIN_LIQUIDITY_SOL) {
+        return this.fail('Insufficient liquidity');
       }
-    });
-  }
 
-  cleanup() {
-    const now = Date.now();
-    const MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
-    
-    for (const [address, data] of this.trackedTokens.entries()) {
-      if (now - data.firstSeen > MAX_AGE) {
-        this.trackedTokens.delete(address);
+      // Volume checks
+      const volume24h = token.getVolume24h();
+      if (volume24h < this.safetyConfig.MIN_VOLUME_24H) {
+        return this.fail('Insufficient volume');
       }
+
+      // Holder checks
+      const holderCount = token.getHolderCount();
+      if (holderCount < this.safetyConfig.MIN_HOLDERS) {
+        return this.fail('Insufficient holders');
+      }
+
+      // Concentration checks
+      const maxConcentration = token.getMaxWalletConcentration();
+      if (maxConcentration > this.safetyConfig.MAX_WALLET_CONCENTRATION) {
+        return this.fail('High wallet concentration');
+      }
+
+      return { passed: true };
+    } catch (error) {
+      console.error('Safety check failed:', error);
+      return this.fail(error.message);
     }
+  }
+
+  updateTrackedTokens(token) {
+    if (!token || !token.mint) return;
+    
+    // Update or add token to tracked tokens
+    this.trackedTokens.set(token.mint, {
+      lastUpdate: Date.now(),
+      token
+    });
+
+    // Log missed opportunities if applicable
+    this.missedOpportunityLogger.checkAndLog(token);
   }
 }
 

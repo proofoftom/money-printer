@@ -402,6 +402,23 @@ class Position extends EventEmitter {
     });
   }
 
+  addPriceToHistory(price) {
+    this.priceHistory.push(price);
+    this.currentPrice = price;
+    if (price > this.highestPrice) {
+      this.highestPrice = price;
+    }
+    if (price < this.lowestPrice) {
+      this.lowestPrice = price;
+    }
+  }
+
+  calculateProfitLoss() {
+    if (this.priceHistory.length < 2) return 0;
+    const latestPrice = this.priceHistory[this.priceHistory.length - 1];
+    return (latestPrice - this.entryPrice) / this.entryPrice;
+  }
+
   recordPartialExit(portion, exitPrice) {
     // Validate portion
     if (typeof portion !== 'number' || portion <= 0 || portion > 1) {
