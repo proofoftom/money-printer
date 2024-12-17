@@ -228,11 +228,19 @@ class Token extends EventEmitter {
     const cutoff = now - timeWindow;
     let volume = 0;
     
-    const traders = this.traderManager.getTraders();
+    // Get all trades from all traders
+    const traders = Array.from(this.traderManager.traders.values());
     for (const trader of traders) {
-      const recentTrades = trader.getTradesForToken(this.mint, cutoff);
+      // Get trades within time window
+      const recentTrades = trader.tradeHistory.all.filter(trade => 
+        trade.mint === this.mint && trade.timestamp > cutoff
+      );
+      
+      // Sum up the volume in SOL
       volume += recentTrades.reduce((sum, trade) => {
-        return sum + Math.abs(trade.volumeInSol || 0);
+        // Calculate volume as amount * price
+        const tradeVolume = Math.abs(trade.amount * trade.price);
+        return sum + tradeVolume;
       }, 0);
     }
     
@@ -243,6 +251,9 @@ class Token extends EventEmitter {
     const now = tradeData.timestamp;
     const trader = this.traderManager.getOrCreateTrader(publicKey);
 
+    // Calculate volume in SOL
+    const volumeInSol = Math.abs(tradeData.amount * this.currentPrice);
+
     // Update trader data for this token
     trader.updateTokenBalance(this.mint, tradeData.newBalance);
     trader.recordTrade({
@@ -251,7 +262,7 @@ class Token extends EventEmitter {
       price: this.currentPrice,
       type: tradeData.amount > 0 ? 'buy' : 'sell',
       timestamp: now,
-      volumeInSol: tradeData.volumeInSol
+      volumeInSol
     });
 
     // Cleanup old trades periodically
