@@ -99,112 +99,58 @@ class Dashboard {
     this.walletBox = this.grid.set(0, 0, 3, 3, blessed.box, {
       label: " Wallet Status ",
       content: "Initializing...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      style: {
-        label: { bold: true },
-      },
+      border: { type: "line" },
+      style: { border: { fg: "cyan" } },
     });
 
-    // Create balance history (1 col)
-    this.balanceChart = this.grid.set(0, 3, 3, 3, contrib.line, {
-      style: {
-        line: "yellow",
-        text: "green",
-        baseline: "black",
-      },
-      xLabelPadding: 3,
-      xPadding: 5,
-      label: " Balance History ",
-      showLegend: false,
-      wholeNumbersOnly: false,
+    // Create recovery metrics box
+    this.recoveryBox = this.grid.set(0, 3, 3, 6, blessed.box, {
+      label: " Recovery Metrics ",
+      content: "Analyzing...",
+      border: { type: "line" },
+      style: { border: { fg: "yellow" } },
     });
 
-    // Create trade history box (1 col)
-    this.tradeBox = this.grid.set(0, 6, 3, 3, blessed.box, {
-      label: " Trade History ",
-      content: "Waiting for trades...",
-      border: "line",
-      tags: true,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
+    // Create market structure box
+    this.marketStructureBox = this.grid.set(0, 9, 3, 6, blessed.box, {
+      label: " Market Structure ",
+      content: "Analyzing...",
+      border: { type: "line" },
+      style: { border: { fg: "green" } },
     });
 
-    // Create status log
-    this.statusBox = this.grid.set(0, 9, 3, 6, blessed.log, {
-      label: " System Status ",
+    // Create active positions table
+    this.positionsTable = this.grid.set(3, 0, 4, 15, contrib.table, {
+      label: " Active Positions ",
+      keys: true,
+      interactive: true,
+      columnSpacing: 2,
+      columnWidth: [8, 10, 10, 10, 8, 10, 12, 12, 12],
+      border: { type: "line" },
+      style: { border: { fg: "cyan" } },
+    });
+
+    // Create token table with recovery metrics
+    this.tokenTable = this.grid.set(7, 0, 3, 15, contrib.table, {
+      label: " Token Recovery Analysis ",
+      keys: true,
+      interactive: true,
+      columnSpacing: 2,
+      columnWidth: [8, 10, 12, 12, 12, 12, 12, 12],
+      border: { type: "line" },
+      style: { border: { fg: "yellow" } },
+    });
+
+    // Create status box
+    this.statusBox = this.grid.set(10, 0, 2, 15, blessed.log, {
+      label: " Status Log ",
+      border: { type: "line" },
+      style: { border: { fg: "cyan" } },
       scrollable: true,
       alwaysScroll: true,
-      border: "line",
-      tags: true,
-      padding: 1,
-      style: {
-        label: { bold: true },
-      },
-    });
-
-    // Token state boxes in second row, extending to bottom
-    this.heatingUpBox = this.grid.set(3, 0, 9, 3, blessed.box, {
-      label: " Heating Up ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
-
-    this.firstPumpBox = this.grid.set(3, 3, 9, 3, blessed.box, {
-      label: " First Pump ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
-
-    this.drawdownBox = this.grid.set(3, 6, 9, 3, blessed.box, {
-      label: " Drawdown ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
-
-    this.supplyRecoveryBox = this.grid.set(3, 9, 9, 3, blessed.box, {
-      label: " Unsafe Recovery ",
-      content: "Waiting...",
-      border: "line",
-      tags: false,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
-      },
-    });
-
-    this.activePositionsBox = this.grid.set(3, 12, 9, 3, blessed.box, {
-      label: " Active Positions ",
-      content: "Waiting...",
-      border: "line",
-      tags: true,
-      padding: 1,
-      scrollable: true,
-      style: {
-        label: { bold: true },
+      scrollbar: {
+        ch: " ",
+        style: { bg: "cyan" },
       },
     });
   }
@@ -443,176 +389,125 @@ class Dashboard {
   }
 
   updateDashboard() {
-    try {
-      // Update wallet status
-      if (this.walletBox && this.wallet) {
-        try {
-          this.walletBox.setContent(this.getWalletStatus());
-        } catch (error) {
-          this.logStatus(`Error updating wallet status: ${error.message}`, "error");
-          errorLogger.logError(error, 'Dashboard.updateWalletStatus');
-        }
-      }
-
-      // Update balance history
-      if (this.balanceChart && this.wallet) {
-        try {
-          this.updateBalanceHistory();
-        } catch (error) {
-          this.logStatus(`Error updating balance history: ${error.message}`, "error");
-          errorLogger.logError(error, 'Dashboard.updateBalanceHistory');
-        }
-      }
-
-      // Update token states
-      if (this.heatingUpBox && this.tokenTracker) {
-        try {
-          this.heatingUpBox.setContent(this.getTokensByState("heatingUp"));
-        } catch (error) {
-          this.logStatus(`Error updating heating up tokens: ${error.message}`, "error");
-          errorLogger.logError(error, 'Dashboard.updateHeatingUpTokens');
-        }
-      }
-
-      if (this.firstPumpBox && this.tokenTracker) {
-        try {
-          this.firstPumpBox.setContent(this.getTokensByState("firstPump"));
-        } catch (error) {
-          this.logStatus(`Error updating first pump tokens: ${error.message}`, "error");
-          errorLogger.logError(error, 'Dashboard.updateFirstPumpTokens');
-        }
-      }
-
-      if (this.drawdownBox && this.tokenTracker) {
-        try {
-          this.drawdownBox.setContent(this.getTokensByState("drawdown"));
-        } catch (error) {
-          this.logStatus(`Error updating drawdown tokens: ${error.message}`, "error");
-          errorLogger.logError(error, 'Dashboard.updateDrawdownTokens');
-        }
-      }
-
-      if (this.supplyRecoveryBox && this.tokenTracker) {
-        try {
-          this.supplyRecoveryBox.setContent(this.getTokensByState("unsafeRecovery"));
-        } catch (error) {
-          this.logStatus(`Error updating supply recovery tokens: ${error.message}`, "error");
-          errorLogger.logError(error, 'Dashboard.updateSupplyRecoveryTokens');
-        }
-      }
-
-      // Update active positions
-      if (this.activePositionsBox && this.positionManager) {
-        try {
-          this.activePositionsBox.setContent(this.getActivePositions());
-        } catch (error) {
-          this.logStatus(`Error updating active positions: ${error.message}`, "error");
-          errorLogger.logError(error, 'Dashboard.updateActivePositions');
-        }
-      }
-
-      // Update trade history
-      if (this.tradeBox) {
-        try {
-          this.tradeBox.setContent(this.getTradeHistory());
-        } catch (error) {
-          this.logStatus(`Error updating trade history: ${error.message}`, "error");
-          errorLogger.logError(error, 'Dashboard.updateTradeHistory');
-        }
-      }
-
-      // Render screen
-      if (this.screen) {
-        this.screen.render();
-      }
-    } catch (error) {
-      this.logStatus(`Dashboard update error: ${error.message}`, "error");
-      errorLogger.logError(error, 'Dashboard.updateDashboard');
-    }
+    this.updateWalletStatus();
+    this.updateRecoveryMetrics();
+    this.updateMarketStructure();
+    this.updatePositionsTable();
+    this.updateTokenTable();
+    this.screen.render();
   }
 
-  getTokensByState(state) {
-    try {
-      const tokens = Array.from(this.tokenTracker.tokens.values()).filter(
-        (token) => token.state === state
-      );
+  updateRecoveryMetrics() {
+    const activeTokens = Array.from(this.tokenTracker.tokens.values())
+      .filter(token => token.state === "drawdown" || token.state === "recovery");
 
-      if (tokens.length === 0) {
-        return "No tokens in this state";
-      }
-
-      return tokens
-        .map((token) => {
-          try {
-            // Calculate token age in seconds
-            const now = Date.now();
-            const tokenAge = Math.floor((now - token.minted) / 1000);
-            const ageStr = tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
-
-            // Format market cap in USD with k format
-            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-            const mcFormatted = marketCapUSD >= 1000
-              ? `${(marketCapUSD / 1000).toFixed(1)}k`
-              : marketCapUSD.toFixed(1);
-
-            // Get holder info
-            const holderCount = token.getHolderCount();
-            const topConcentration = token.getTopHolderConcentration(10);
-            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
-
-            // Get volume data in USD with k format for ≥1000, whole numbers for <1000
-            const formatVolume = (vol) => {
-              const volUSD = this.priceManager.solToUSD(vol);
-              return volUSD >= 1000
-                ? `${(volUSD / 1000).toFixed(1)}k`
-                : Math.round(volUSD).toString();
-            };
-
-            // Get volume from token's volume metrics
-            const vol1m = formatVolume(token.volume1m || 0);
-            const vol5m = formatVolume(token.volume5m || 0);
-            const vol30m = formatVolume(token.volume30m || 0);
-
-            // Format the token info string
-            const symbol = token.symbol || token.mint.slice(0, 8);
-            const rows = [
-              `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(5)} | 30m: $${vol30m}`,
-            ];
-
-            // Add safety failure reason for unsafe recovery state
-            if (state === "unsafeRecovery" && token.unsafeReason) {
-              const { reason, value } = token.unsafeReason;
-              let valueStr = value;
-              switch (reason) {
-                case "High holder concentration":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "Token too young":
-                  valueStr = `${Math.floor(value)}s`;
-                  break;
-                case "Creator holdings too high":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "volatilityTooHigh":
-                  valueStr = `${value.toFixed(2)}`;
-                  break;
-                default:
-                  valueStr = value ? value.toString() : "N/A";
-              }
-              rows.push(`UNSAFE: ${reason} (${valueStr})`);
-            }
-
-            rows.push("─".repeat(50)); // Add horizontal rule between tokens
-            return rows.join("\n");
-          } catch (err) {
-            throw err;
-          }
-        })
-        .join("\n");
-    } catch (error) {
-      throw error;
+    if (activeTokens.length === 0) {
+      this.recoveryBox.setContent("No tokens in recovery phase");
+      return;
     }
+
+    const content = activeTokens.map(token => {
+      const strength = token.getRecoveryStrength();
+      const drawdown = token.getDrawdownPercentage();
+      return [
+        `${token.symbol}:`,
+        `Strength: ${strength.total.toFixed(1)}%`,
+        `Buy Press: ${strength.breakdown.buyPressure.buyRatio.toFixed(2)}`,
+        `Drawdown: ${drawdown.toFixed(1)}%`
+      ].join("\n");
+    }).join("\n\n");
+
+    this.recoveryBox.setContent(content);
+  }
+
+  updateMarketStructure() {
+    const activeTokens = Array.from(this.tokenTracker.tokens.values())
+      .filter(token => token.state === "drawdown" || token.state === "recovery");
+
+    if (activeTokens.length === 0) {
+      this.marketStructureBox.setContent("No active tokens");
+      return;
+    }
+
+    const content = activeTokens.map(token => {
+      const structure = token.analyzeMarketStructure();
+      return [
+        `${token.symbol}:`,
+        `Health: ${structure.overallHealth.toFixed(1)}%`,
+        `Pattern: ${structure.pattern?.type || 'None'}`,
+        `Confidence: ${structure.pattern?.confidence.toFixed(1) || 0}%`
+      ].join("\n");
+    }).join("\n\n");
+
+    this.marketStructureBox.setContent(content);
+  }
+
+  updatePositionsTable() {
+    const positions = this.positionManager.getPositions();
+    const data = {
+      headers: ["Symbol", "Entry", "Current", "Size", "PnL%", "Strength", "Structure", "Volume", "Status"],
+      data: positions.map(pos => {
+        const token = this.tokenTracker.getToken(pos.mint);
+        const strength = token.getRecoveryStrength();
+        const structure = token.analyzeMarketStructure();
+        const pnl = ((pos.currentPrice - pos.entryPrice) / pos.entryPrice * 100);
+        
+        return [
+          pos.symbol,
+          pos.entryPrice.toFixed(8),
+          pos.currentPrice.toFixed(8),
+          pos.remainingSize.toFixed(2),
+          pnl.toFixed(1) + "%",
+          strength.total.toFixed(1) + "%",
+          structure.overallHealth.toFixed(1) + "%",
+          (pos.volume5m / pos.volume30m).toFixed(2),
+          this.getPositionStatus(pos, token)
+        ];
+      }),
+    };
+
+    this.positionsTable.setData(data);
+  }
+
+  updateTokenTable() {
+    const tokens = Array.from(this.tokenTracker.tokens.values())
+      .filter(token => ["drawdown", "recovery"].includes(token.state));
+
+    const data = {
+      headers: ["Symbol", "State", "Drawdown%", "Recovery%", "Strength", "Structure", "Buy Press", "Volume"],
+      data: tokens.map(token => {
+        const strength = token.getRecoveryStrength();
+        const structure = token.analyzeMarketStructure();
+        const drawdown = token.getDrawdownPercentage();
+        const recovery = token.getRecoveryPercentage();
+        
+        return [
+          token.symbol,
+          token.state,
+          drawdown.toFixed(1) + "%",
+          recovery.toFixed(1) + "%",
+          strength.total.toFixed(1) + "%",
+          structure.overallHealth.toFixed(1) + "%",
+          strength.breakdown.buyPressure.buyRatio.toFixed(2),
+          (token.volume5m / token.volume30m).toFixed(2)
+        ];
+      }),
+    };
+
+    this.tokenTable.setData(data);
+  }
+
+  getPositionStatus(position, token) {
+    const strength = token.getRecoveryStrength();
+    const structure = token.analyzeMarketStructure();
+    
+    if (strength.total < config.EXIT_STRATEGIES.RECOVERY.MIN_STRENGTH) {
+      return "WEAK";
+    }
+    if (structure.overallHealth < config.EXIT_STRATEGIES.RECOVERY.MIN_STRUCTURE_SCORE) {
+      return "UNSTABLE";
+    }
+    return "HEALTHY";
   }
 }
 
