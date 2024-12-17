@@ -9,6 +9,18 @@ const PriceManager = require("./services/price/PriceManager");
 const Wallet = require("./utils/Wallet");
 const errorLogger = require("./monitoring/errorLoggerInstance");
 const Dashboard = require("./monitoring/Dashboard");
+const DataManager = require("./utils/dataManager");
+
+console.log('Initializing Money Printer...');
+
+// Clear all data if in testing mode
+if (config.TESTING.CLEAR_DATA_ON_START) {
+  console.log('Testing mode: Clearing all saved data...');
+  DataManager.clearAllData();
+}
+
+// Ensure data directory exists
+DataManager.ensureDataDirectory();
 
 // Initialize error logger first
 

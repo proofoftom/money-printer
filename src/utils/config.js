@@ -75,6 +75,12 @@ module.exports = {
     },
   },
 
+  // Testing and Data Management
+  TESTING: {
+    CLEAR_DATA_ON_START: process.env.CLEAR_DATA_ON_START === 'true' || false,
+    DATA_DIR: 'data'
+  },
+
   // Position sizing
   POSITION: {
     MAX_POSITION_SIZE_SOL: 2.5, // Increased maximum position
