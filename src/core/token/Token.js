@@ -477,6 +477,7 @@ class Token extends EventEmitter {
       if (this.state === "drawdown" && recoveryPercentage >= config.THRESHOLDS.RECOVERY) {
         const isSecure = await safetyChecker.runSecurityChecks(this);
         if (isSecure) {
+          // Emit readyForPosition event to signal that we can open a position
           this.emit("readyForPosition", this);
         } else {
           this.setState("unsafeRecovery");
@@ -499,7 +500,7 @@ class Token extends EventEmitter {
         if (isSecure) {
           // Only enter position if gain is less than threshold
           if (gainPercentage <= config.THRESHOLDS.SAFE_RECOVERY_GAIN) {
-            this.setState("inPosition");
+            // Emit readyForPosition event to signal that we can open a position
             this.emit("readyForPosition", this);
           } else {
             // If gain is too high, go back to drawdown to wait for better entry

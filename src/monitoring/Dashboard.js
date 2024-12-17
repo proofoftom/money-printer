@@ -47,6 +47,26 @@ class Dashboard {
       this.logTrade(tradeData);
     });
 
+    // Listen for token price and volume updates
+    this.tokenTracker.tokens.forEach(token => {
+      token.on('priceUpdate', ({ price, acceleration, pumpMetrics, volume1m, volume5m, volume30m }) => {
+        // Store volume data on token for use in display
+        token.volume1m = volume1m;
+        token.volume5m = volume5m;
+        token.volume30m = volume30m;
+      });
+    });
+
+    // Listen for new tokens
+    this.tokenTracker.on('tokenAdded', (token) => {
+      token.on('priceUpdate', ({ price, acceleration, pumpMetrics, volume1m, volume5m, volume30m }) => {
+        // Store volume data on token for use in display
+        token.volume1m = volume1m;
+        token.volume5m = volume5m;
+        token.volume30m = volume30m;
+      });
+    });
+
     this.initializeDashboard();
   }
 
