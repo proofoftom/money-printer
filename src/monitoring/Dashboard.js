@@ -820,23 +820,38 @@ class Dashboard extends EventEmitter {
   }
 
   setupPeriodicUpdates() {
+    // Skip periodic updates in test environment
+    if (process.env.NODE_ENV === 'test') {
+      return;
+    }
+
     // Update dashboard components every second
-    setInterval(() => {
+    this.updateInterval = setInterval(() => {
       // Update wallet status
       this.updateWalletStatus();
       
-      // Update token metrics
-      this.refreshTokenGrid();
+      // Update position table
+      this.updatePositionTable();
       
       // Update trade history
       this.updateTradeHistory();
       
-      // Update balance chart
-      this.updateBalanceChart();
-      
       // Render screen
       this.screen.render();
     }, 1000);
+  }
+
+  cleanup() {
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+      this.updateInterval = null;
+    }
+
+    if (this.screen) {
+      this.screen.destroy();
+    }
+
+    this.removeAllListeners();
   }
 
   updateWalletStatus() {

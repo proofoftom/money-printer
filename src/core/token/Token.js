@@ -40,13 +40,18 @@ class Token extends EventEmitter {
     // Set max listeners
     this.setMaxListeners(20);
 
+    // Initialize listener tracking
+    this.registeredListeners = new Map();
+
     // Initialize metrics
     this.initializeMetrics();
 
     // Set up automatic listener cleanup
-    this._cleanupInterval = setInterval(() => {
-      this.cleanupStaleListeners();
-    }, 60000); // Check every minute
+    if (process.env.NODE_ENV !== 'test') {
+      this._cleanupInterval = setInterval(() => {
+        this.cleanupStaleListeners();
+      }, 60000); // Check every minute
+    }
   }
 
   initializeMetrics() {
@@ -144,9 +149,20 @@ class Token extends EventEmitter {
   }
 
   cleanup() {
+    // Clear the cleanup interval if it exists
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
+      this._cleanupInterval = null;
+    }
+
+    // Remove all listeners
+    this.removeAllListeners();
+    this.registeredListeners.clear();
+
+    // Clear any other resources
     this.trades = [];
     this.volumeHistory = [];
-    this.removeAllListeners();
+    this.priceBuffer = null;
   }
 
   update(data) {
@@ -1206,6 +1222,11 @@ class Token extends EventEmitter {
             this.stateChangedAt = Date.now();
             this.stateChangeReason = 'Gain too high';
             this.unsafeReason = null;
+            this.emit("recoveryGainTooHigh", {
+              token: this,
+              gainFromBottom,
+              marketCap: this.marketCapSol,
+            });
           }
         } else {
           // If still unsafe, check if we're in a new drawdown from recovery high
@@ -1221,6 +1242,11 @@ class Token extends EventEmitter {
             this.stateChangedAt = Date.now();
             this.stateChangeReason = 'New drawdown cycle';
             this.drawdownLow = currentPrice; // Reset drawdown low for new cycle
+            this.emit("newDrawdownCycle", {
+              token: this,
+              drawdownFromHigh: drawdownFromRecoveryHigh,
+              newDrawdownLow: currentPrice,
+            });
           } else {
             // Still in recovery but unsafe, update reason if changed
             const newReason = safetyChecker.getFailureReason();
@@ -1230,6 +1256,11 @@ class Token extends EventEmitter {
               this.unsafeReason.value !== newReason.value
             ) {
               this.unsafeReason = newReason;
+              this.emit("recoveryUpdate", {
+                token: this,
+                reason: newReason.reason,
+                value: newReason.value,
+              });
             }
           }
         }

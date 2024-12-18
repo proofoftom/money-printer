@@ -53,7 +53,7 @@ class TokenManager extends EventEmitter {
     
     // Skip if token already exists
     if (this.tokens.has(mint)) {
-      return;
+      return this.tokens.get(mint);
     }
 
     try {
@@ -64,12 +64,17 @@ class TokenManager extends EventEmitter {
       this.tokens.set(mint, token);
       
       // Initialize token state
-      this.stateManager.setState(token, 'new', 'Token created');
+      this.stateManager.setState(token, 'new');
+
+      // Subscribe to token updates
+      if (this.webSocketManager) {
+        this.webSocketManager.subscribeToToken(mint);
+      }
       
       return token;
     } catch (error) {
       console.error('Error handling new token:', error);
-      return null;
+      throw error; // Propagate error for proper handling
     }
   }
 
@@ -133,6 +138,43 @@ class TokenManager extends EventEmitter {
     }
   }
 
+  async handleTokenTrade(tradeData) {
+    try {
+      const { mint, type, amount, price, timestamp } = tradeData;
+      const token = this.tokens.get(mint);
+      
+      if (!token) {
+        console.warn(`No token found for mint: ${mint}`);
+        return;
+      }
+
+      // Record trade and get updated metrics
+      const success = await token.recordTrade({
+        type,
+        amount,
+        price,
+        timestamp: timestamp || Date.now()
+      });
+
+      if (!success) {
+        throw new Error(`Failed to record trade for token ${token.symbol}`);
+      }
+
+      // Update token state
+      await this.stateManager.evaluateToken(token);
+
+      // Notify trader manager
+      if (this.traderManager) {
+        await this.traderManager.handleTrade(tradeData);
+      }
+
+      return success;
+    } catch (error) {
+      console.error('Error handling token trade:', error);
+      throw error; // Propagate error for proper handling
+    }
+  }
+
   removeToken(mint) {
     const token = this.tokens.get(mint);
     if (!token) return;
@@ -148,66 +190,6 @@ class TokenManager extends EventEmitter {
       console.log(`Token ${token.symbol} (${mint}) removed and cleaned up`);
     } catch (error) {
       console.error(`Error removing token ${mint}:`, error);
-    }
-  }
-
-  async handleTokenUpdate(tradeData) {
-    try {
-      const token = this.tokens.get(tradeData.mint);
-      if (!token) {
-        console.warn(`No token found for mint: ${tradeData.mint}`);
-        return;
-      }
-
-      // Update token state with trade data
-      token.vTokensInBondingCurve = tradeData.vTokensInBondingCurve;
-      token.vSolInBondingCurve = tradeData.vSolInBondingCurve;
-      token.marketCapSol = tradeData.marketCap;
-
-      // Record the trade in token history
-      const trade = {
-        type: tradeData.type,
-        tokenAmount: tradeData.tokenAmount,
-        newTokenBalance: tradeData.newTokenBalance,
-        traderPublicKey: tradeData.traderPublicKey,
-        timestamp: tradeData.timestamp,
-        price: tradeData.price,
-        marketCap: tradeData.marketCap
-      };
-
-      // Record trade and get updated metrics
-      const success = await token.recordTrade(trade);
-      if (!success) {
-        console.error(`Failed to record trade for token ${token.symbol}`);
-        return;
-      }
-
-      // Update token state
-      this.stateManager.updateState(token, tradeData);
-
-    } catch (error) {
-      console.error('Error handling token update:', error);
-      console.error('TokenManager.handleTokenUpdate', { tradeData });
-    }
-  }
-
-  handleTrade(tradeData) {
-    try {
-      const { mint, traderPublicKey, type, amount, price, timestamp } = tradeData;
-      const token = this.tokens.get(mint);
-      
-      if (!token) return;
-
-      // Update token state
-      token.updateTrade({ type, amount, price, timestamp });
-
-      // Forward to trader manager without expecting events back
-      if (this.traderManager) {
-        this.traderManager.handleTrade(tradeData);
-      }
-    } catch (error) {
-      console.error('Error handling trade:', error);
-      // Don't rethrow to ensure graceful error handling
     }
   }
 

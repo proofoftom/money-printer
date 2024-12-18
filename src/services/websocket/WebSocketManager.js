@@ -141,12 +141,11 @@ class WebSocketManager extends EventEmitter {
   }
 
   async handleMessage(message) {
-    if (typeof message === 'string') {
+    if (typeof message === "string") {
       try {
         message = JSON.parse(message);
-      } catch (error) {
-        console.error("Error parsing message:", error);
-        this.emit("error", { type: "parse", error });
+      } catch (e) {
+        console.error("Failed to parse message:", e);
         return;
       }
     }
@@ -162,6 +161,15 @@ class WebSocketManager extends EventEmitter {
 
       const handler = this.messageHandlers.get(message.txType);
       if (handler) {
+        // Always validate messages
+        if (message.txType === 'create' && !this.validateCreateMessage(message)) {
+          console.warn("Invalid create message format:", message);
+          return;
+        }
+        if ((message.txType === 'buy' || message.txType === 'sell') && !this.validateTradeMessage(message)) {
+          console.warn("Invalid trade message format:", message);
+          return;
+        }
         await handler(message);
       } else {
         console.warn("Unknown message type:", message.txType);
@@ -173,7 +181,7 @@ class WebSocketManager extends EventEmitter {
   }
 
   async handleCreateMessage(message) {
-    // In test environment, skip validation and price checks
+    // Skip price checks in test environment but still validate message format
     if (process.env.NODE_ENV === 'test') {
       await this.tokenManager.handleNewToken(message);
       this.emit("tokenCreated", message);
@@ -192,7 +200,7 @@ class WebSocketManager extends EventEmitter {
   }
 
   async handleTradeMessage(message) {
-    // In test environment, skip validation
+    // Skip validation in test environment
     if (process.env.NODE_ENV === 'test') {
       await this.tokenManager.handleTokenTrade({
         type: message.txType,
