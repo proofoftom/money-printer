@@ -1,6 +1,6 @@
 const EventEmitter = require("events");
 const config = require("./config");
-const { TokenStateManager, PricePoint } = require("./TokenStateManager");
+const { TokenStateManager, PricePoint, STATES } = require("./TokenStateManager");
 
 class Token extends EventEmitter {
   constructor(tokenData) {
@@ -136,8 +136,18 @@ class Token extends EventEmitter {
       Date.now()
     );
 
+    // First check if token should be marked as dead
+    const marketCapUSD = this.priceManager.solToUSD(this.marketCapSol);
+    if (marketCapUSD <= config.THRESHOLDS.DEAD_USD && 
+        this.state !== STATES.DEAD && 
+        this.state !== STATES.NEW) { // Don't mark new tokens as dead
+      this.stateManager.setState(STATES.DEAD);
+      this.emit("stateChanged", { token: this, from: this.state, to: STATES.DEAD });
+      return;
+    }
+
     // Check for pump conditions in NEW state
-    if (this.state === 'new') {
+    if (this.state === STATES.NEW) {
       const metrics = {
         priceIncrease1m: this.getPriceIncrease(60),
         priceIncrease5m: this.getPriceIncrease(300),
@@ -147,11 +157,11 @@ class Token extends EventEmitter {
 
       if (this.stateManager.isPumpDetected(metrics)) {
         this.stateManager.transitionToPumping(currentPrice);
-        this.emit("stateChanged", { token: this, from: 'new', to: 'pumping' });
+        this.emit("stateChanged", { token: this, from: STATES.NEW, to: STATES.PUMPING });
       }
     }
     // Check for drawdown in PUMPING state
-    else if (this.state === 'pumping') {
+    else if (this.state === STATES.PUMPING) {
       if (!this.stateManager.priceHistory.peak) {
         this.stateManager.priceHistory.peak = currentPrice;
       } else if (currentPrice.bodyPrice > this.stateManager.priceHistory.peak.bodyPrice) {
@@ -160,11 +170,11 @@ class Token extends EventEmitter {
 
       if (this.stateManager.isDrawdownTriggered(currentPrice, this.stateManager.priceHistory.peak)) {
         this.stateManager.transitionToDrawdown(currentPrice);
-        this.emit("stateChanged", { token: this, from: 'pumping', to: 'drawdown' });
+        this.emit("stateChanged", { token: this, from: STATES.PUMPING, to: STATES.DRAWDOWN });
       }
     }
     // Handle drawdown confirmation and recovery
-    else if (this.state === 'drawdown') {
+    else if (this.state === STATES.DRAWDOWN) {
       // Initialize or update confirmation candle
       if (!this.stateManager.confirmationCandle) {
         this.stateManager.confirmationCandle = currentPrice;
@@ -181,12 +191,12 @@ class Token extends EventEmitter {
         // Check if we've recovered enough from our current bottom
         if (this.stateManager.isRecoveryTriggered(currentPrice, this.stateManager.priceHistory.bottom)) {
           this.stateManager.transitionToRecovery(currentPrice);
-          this.emit("stateChanged", { token: this, from: 'drawdown', to: 'recovery' });
+          this.emit("stateChanged", { token: this, from: STATES.DRAWDOWN, to: STATES.RECOVERY });
         }
       }
     }
     // Handle recovery state
-    else if (this.state === 'recovery') {
+    else if (this.state === STATES.RECOVERY) {
       // Update recovery price point if higher
       if (!this.stateManager.priceHistory.recovery || 
           currentPrice.bodyPrice > this.stateManager.priceHistory.recovery.bodyPrice) {
@@ -203,7 +213,7 @@ class Token extends EventEmitter {
         // Reset bottom for new drawdown cycle
         this.stateManager.priceHistory.bottom = null;
         this.stateManager.transitionToDrawdown(currentPrice);
-        this.emit("stateChanged", { token: this, from: 'recovery', to: 'drawdown' });
+        this.emit("stateChanged", { token: this, from: STATES.RECOVERY, to: STATES.DRAWDOWN });
       }
     }
   }
@@ -245,7 +255,7 @@ class Token extends EventEmitter {
 
   async evaluateRecovery(safetyChecker) {
     try {
-      if (this.state !== 'recovery') return;
+      if (this.state !== STATES.RECOVERY) return;
 
       const isSecure = await safetyChecker.runSecurityChecks(this);
       if (!isSecure) {
