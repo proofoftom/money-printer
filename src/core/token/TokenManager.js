@@ -17,8 +17,11 @@ class TokenManager extends EventEmitter {
     // Set high max listeners as we manage many tokens
     this.setMaxListeners(100);
 
-    // Set up event handlers
-    this.setupEventHandlers();
+    // Initialize state manager if provided
+    if (this.stateManager) {
+      // Set up event handlers
+      this.setupEventHandlers();
+    }
 
     // Recovery monitoring
     if (process.env.NODE_ENV !== 'test') {
