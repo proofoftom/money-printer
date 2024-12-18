@@ -7,15 +7,22 @@ class TokenCard {
     this.traderManager = traderManager;
     this.metrics = {
       marketCap: 0,
-      holders: 0,
-      top10Concentration: 0,
-      devHoldings: 0,
+      price: 0,
       volume: {
         '1m': 0,
         '5m': 0,
         '30m': 0
       },
-      transactions: 0
+      holders: 0,
+      top10Concentration: 0,
+      devHoldings: 0,
+      transactions: 0,
+      recovery: {
+        phase: '',
+        strength: 0,
+        buyPressure: 0,
+        marketStructure: ''
+      }
     };
 
     // Create the card box
@@ -44,9 +51,8 @@ class TokenCard {
   }
 
   setupEventListeners() {
-    // Listen for token updates
-    this.token.on('trade', this.handleTrade.bind(this));
-    this.token.on('metricsUpdated', this.handleMetricsUpdate.bind(this));
+    // Listen for token state updates
+    this.token.on('stateUpdate', this.handleStateUpdate.bind(this));
     
     // Listen for trader group updates
     this.traderManager.on('highConcentration', ({ mint, concentration }) => {
@@ -56,29 +62,60 @@ class TokenCard {
     });
   }
 
-  handleTrade(tradeData) {
+  handleStateUpdate({ type, data }) {
+    switch (type) {
+      case 'trade':
+        if (data.trade) {
+          this.handleTrade(data.trade);
+        }
+        if (data.metrics) {
+          this.handleMetricsUpdate(data.metrics);
+        }
+        break;
+
+      case 'metrics':
+        this.handleMetricsUpdate(data);
+        break;
+
+      case 'recovery':
+        this.handleRecoveryUpdate(data);
+        break;
+    }
+
+    this.refresh();
+  }
+
+  handleTrade(trade) {
     // Update volume metrics
     const now = Date.now();
-    const trade = tradeData.trade;
     
     // Update volumes
     this.updateVolume(trade);
     
     // Update transaction count
     this.metrics.transactions++;
-    
-    // Refresh display
-    this.refresh();
   }
 
   handleMetricsUpdate(metrics) {
     // Update token metrics
-    this.metrics.marketCap = metrics.marketCap;
-    this.metrics.holders = metrics.holders;
-    this.metrics.devHoldings = metrics.devHoldings;
-    
-    // Refresh display
-    this.refresh();
+    this.metrics = {
+      ...this.metrics,
+      marketCap: metrics.marketCap,
+      price: metrics.price,
+      volume: metrics.volume || this.metrics.volume,
+      holders: metrics.holders,
+      top10Concentration: metrics.top10Concentration,
+      devHoldings: metrics.devHoldings,
+    };
+  }
+
+  handleRecoveryUpdate(data) {
+    this.metrics.recovery = {
+      phase: data.phase,
+      strength: data.recoveryStrength,
+      buyPressure: data.buyPressure,
+      marketStructure: data.marketStructure,
+    };
   }
 
   updateVolume(trade) {
@@ -108,21 +145,16 @@ class TokenCard {
 
   formatMetrics() {
     const formatNumber = (num) => {
-      if (num >= 1000000) return `${(num/1000000).toFixed(1)}M`;
-      if (num >= 1000) return `${(num/1000).toFixed(1)}k`;
-      return num.toFixed(2);
+      if (num === undefined || num === null) return '';
+      if (num >= 1e6) return (num / 1e6).toFixed(1) + 'M';
+      if (num >= 1e3) return (num / 1e3).toFixed(1) + 'K';
+      if (num >= 1) return num.toFixed(1);
+      if (num > 0) return num.toFixed(4);
+      return '0';
     };
 
-    const formatTrend = (current, previous) => {
-      if (!previous) return '';
-      const change = ((current - previous) / previous) * 100;
-      if (change > 0) return '{green-fg}↑{/}';
-      if (change < 0) return '{red-fg}↓{/}';
-      return '';
-    };
-
-    return `${this.token.symbol}  MC: $${formatNumber(this.metrics.marketCap)} | H: ${formatNumber(this.metrics.holders)} | T10: ${this.metrics.top10Concentration.toFixed(1)}% | D: ${this.metrics.devHoldings.toFixed(2)}%
-AGE      V: ${formatNumber(this.metrics.volume['1m'])} | 5m ${formatNumber(this.metrics.volume['5m'])} | 30m ${formatNumber(this.metrics.volume['30m'])} | Txs: ${this.metrics.transactions}`;
+    return `${this.token.symbol}  MC: $${formatNumber(this.metrics.marketCap)} | H: ${formatNumber(this.metrics.holders)} | T10: ${this.metrics.top10Concentration?.toFixed(1)}% | D: ${this.metrics.devHoldings?.toFixed(2)}%
+V: ${formatNumber(this.metrics.volume['1m'])} | 5m ${formatNumber(this.metrics.volume['5m'])} | 30m ${formatNumber(this.metrics.volume['30m'])} | Txs: ${this.metrics.transactions}`;
   }
 
   refresh() {
@@ -154,8 +186,7 @@ AGE      V: ${formatNumber(this.metrics.volume['1m'])} | 5m ${formatNumber(this.
   cleanup() {
     try {
       // Remove all event listeners
-      this.token.removeListener('trade', this.handleTrade);
-      this.token.removeListener('metricsUpdated', this.handleMetricsUpdate);
+      this.token.removeListener('stateUpdate', this.handleStateUpdate);
       
       // Remove the box from its parent
       if (this.box && this.box.parent) {

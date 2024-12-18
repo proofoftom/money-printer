@@ -1114,6 +1114,71 @@ class Token extends EventEmitter {
     }
   }
 
+  getTopHolders(limit = 10) {
+    const holders = Array.from(this.balanceLedger.entries())
+      .map(([address, data]) => ({
+        address,
+        balance: data.balance,
+        percentage: Number(
+          data.balance * BigInt(100) / (this.circulatingSupply + this.vTokensInBondingCurve)
+        ),
+      }))
+      .sort((a, b) => b.balance - a.balance)
+      .slice(0, limit);
+
+    return holders;
+  }
+
+  getConcentrationMetrics() {
+    const holders = this.getTopHolders();
+    const totalSupply = this.circulatingSupply + this.vTokensInBondingCurve;
+
+    // Calculate top 10 concentration (sum of percentages)
+    const top10Concentration = holders.reduce((sum, holder) => {
+      return sum + Number(holder.balance * BigInt(100) / totalSupply);
+    }, 0);
+
+    return {
+      top10Concentration,
+      holders: this.balanceLedger.size,
+      totalSupply,
+    };
+  }
+
+  updateMetrics(trade) {
+    try {
+      // Update trade metrics
+      if (trade) {
+        this.recordTrade(trade);
+      }
+
+      // Get concentration metrics
+      const concentrationMetrics = this.getConcentrationMetrics();
+
+      // Emit consolidated state update
+      this.emit("stateUpdate", {
+        type: "metrics",
+        token: this,
+        data: {
+          price: this.currentPrice,
+          marketCap: this.marketCapSol,
+          volume: {
+            "1m": this.volume1m,
+            "5m": this.volume5m,
+            "30m": this.volume30m,
+            "24h": this.volume24h,
+          },
+          top10Concentration: concentrationMetrics.top10Concentration,
+          holders: concentrationMetrics.holders,
+          totalSupply: concentrationMetrics.totalSupply,
+          recoveryMetrics: this.recoveryMetrics,
+        },
+      });
+    } catch (error) {
+      console.error("Error updating metrics:", error);
+    }
+  }
+
   // Override the standard emit to track active listeners
   emit(event, ...args) {
     if (this.listenerCount(event) === 0) {

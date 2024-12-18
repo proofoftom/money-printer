@@ -1,8 +1,8 @@
 const blessed = require("blessed");
 const contrib = require("blessed-contrib");
-const TokenCard = require('./TokenCard');
-const TokenDetailModal = require('./TokenDetailModal');
-const EventEmitter = require('events');
+const TokenCard = require("./TokenCard");
+const TokenDetailModal = require("./TokenDetailModal");
+const EventEmitter = require("events");
 
 class Dashboard extends EventEmitter {
   constructor(
@@ -16,7 +16,7 @@ class Dashboard extends EventEmitter {
   ) {
     // Initialize EventEmitter first
     super();
-    
+
     try {
       // Store dependencies
       this.wallet = wallet;
@@ -35,7 +35,7 @@ class Dashboard extends EventEmitter {
       };
       this.tokenCards = new Map();
       this.selectedTokenIndex = 0;
-      this.sortMetric = 'marketCap';
+      this.sortMetric = "marketCap";
 
       // Store original console methods
       this.originalConsoleLog = console.log;
@@ -50,7 +50,7 @@ class Dashboard extends EventEmitter {
       // Set up event handlers
       this.setupEventHandling();
     } catch (error) {
-      console.error('Error initializing Dashboard:', error);
+      console.error("Error initializing Dashboard:", error);
       throw error;
     }
   }
@@ -59,9 +59,11 @@ class Dashboard extends EventEmitter {
     // Override console.log to write to status box
     console.log = (...args) => {
       if (this.statusBox) {
-        const message = args.map(arg => 
-          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-        ).join(' ');
+        const message = args
+          .map((arg) =>
+            typeof arg === "object" ? JSON.stringify(arg) : String(arg)
+          )
+          .join(" ");
         this.statusBox.log(message);
         this.screen.render();
       }
@@ -72,9 +74,11 @@ class Dashboard extends EventEmitter {
     // Override console.error to write to status box in red
     console.error = (...args) => {
       if (this.statusBox) {
-        const message = args.map(arg => 
-          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-        ).join(' ');
+        const message = args
+          .map((arg) =>
+            typeof arg === "object" ? JSON.stringify(arg) : String(arg)
+          )
+          .join(" ");
         this.statusBox.log(`{red-fg}${message}{/red-fg}`);
         this.screen.render();
       }
@@ -88,7 +92,7 @@ class Dashboard extends EventEmitter {
       // Create blessed screen
       this.screen = blessed.screen({
         smartCSR: true,
-        title: 'Token Trading Dashboard'
+        title: "Token Trading Dashboard",
       });
 
       // Create status box for logging
@@ -96,24 +100,24 @@ class Dashboard extends EventEmitter {
         parent: this.screen,
         bottom: 0,
         left: 0,
-        height: '25%',
-        width: '100%',
-        border: { type: 'line' },
-        label: ' System Status ',
+        height: "25%",
+        width: "100%",
+        border: { type: "line" },
+        label: " System Status ",
         tags: true,
         keys: true,
         vi: true,
         mouse: true,
         scrollback: 100,
         scrollbar: {
-          ch: ' ',
+          ch: " ",
           track: {
-            bg: 'yellow'
+            bg: "yellow",
           },
           style: {
-            inverse: true
-          }
-        }
+            inverse: true,
+          },
+        },
       });
 
       // Create layout grid
@@ -132,7 +136,7 @@ class Dashboard extends EventEmitter {
       // Initial render
       this.screen.render();
     } catch (error) {
-      console.error('Error initializing dashboard:', error);
+      console.error("Error initializing dashboard:", error);
       throw error;
     }
   }
@@ -142,18 +146,18 @@ class Dashboard extends EventEmitter {
       // Set max listeners to avoid memory leak warnings
       this.setMaxListeners(50);
       this.tokenManager.setMaxListeners(50);
-      
+
       // Handle token events
-      this.tokenManager.on('tokenAdded', (token) => {
+      this.tokenManager.on("tokenAdded", (token) => {
         try {
           this.logStatus(`New token added: ${token.symbol}`);
           this.refreshTokenGrid();
         } catch (error) {
-          console.error('Error handling tokenAdded event:', error);
+          console.error("Error handling tokenAdded event:", error);
         }
       });
 
-      this.tokenManager.on('tokenRemoved', (token) => {
+      this.tokenManager.on("tokenRemoved", (token) => {
         try {
           this.logStatus(`Token removed: ${token.symbol}`);
           // Clean up token card if it exists
@@ -164,89 +168,132 @@ class Dashboard extends EventEmitter {
           }
           this.refreshTokenGrid();
         } catch (error) {
-          console.error('Error handling tokenRemoved event:', error);
+          console.error("Error handling tokenRemoved event:", error);
         }
       });
 
-      // Handle trade events
-      this.tokenManager.on('trade', (token, trade) => {
+      // Handle consolidated state updates
+      this.tokenManager.on("stateUpdate", ({ type, token, data }) => {
         try {
-          if (!token || !trade) {
-            console.error('Invalid trade event data:', { token, trade });
+          if (!token) {
+            console.error("Invalid state update: missing token");
             return;
           }
 
-          // Update token card
           const card = this.tokenCards.get(token.mint);
-          if (card) {
-            card.updateMetrics(token);
+
+          switch (type) {
+            case "trade":
+              if (data.trade) {
+                // Log trade
+                this.logTrade({
+                  type: data.trade.type,
+                  mint: token.mint,
+                  symbol: token.symbol,
+                  amount: data.trade.amount,
+                  price: data.trade.price,
+                });
+              }
+              // Update metrics after trade
+              if (data.metrics) {
+                this.handleMetricsUpdate(token, data.metrics);
+              }
+              break;
+
+            case "metrics":
+              this.handleMetricsUpdate(token, data);
+              break;
+
+            case "recovery":
+              if (card) {
+                card.updateRecoveryMetrics(data);
+              }
+              break;
+
+            default:
+              console.log(`Unhandled state update type: ${type}`);
           }
 
-          // Log trade
-          this.logTrade({
-            type: trade.type,
-            mint: token.mint,
-            symbol: token.symbol,
-            amount: trade.amount,
-            price: trade.price
-          });
+          // Update card if it exists
+          if (card) {
+            card.updateState(type, data);
+          }
 
-          // Update metrics
-          this.handleMetricsUpdate(token);
         } catch (error) {
-          console.error('Error handling trade event:', error);
+          console.error("Error handling state update:", error);
         }
       });
 
       // Handle wallet balance updates
       if (this.wallet) {
-        this.wallet.on('balanceUpdate', ({ newBalance, change }) => {
+        this.wallet.on("balanceUpdate", ({ newBalance, change }) => {
           try {
             this.updateBalanceHistory();
             this.updateWalletStatus();
-            this.logStatus(`Wallet balance updated: ${change > 0 ? '+' : ''}${change.toFixed(4)} SOL`);
+            this.logStatus(
+              `Wallet balance updated: ${change > 0 ? "+" : ""}${change.toFixed(
+                4
+              )} SOL`
+            );
           } catch (error) {
-            console.error('Error handling balance update:', error);
+            console.error("Error handling balance update:", error);
           }
         });
 
-        this.wallet.on('trade', ({ profitLoss }) => {
+        this.wallet.on("trade", ({ profitLoss }) => {
           try {
-            this.logStatus(`Trade completed: ${profitLoss > 0 ? '+' : ''}${profitLoss.toFixed(4)} SOL`);
+            this.logStatus(
+              `Trade completed: ${
+                profitLoss > 0 ? "+" : ""
+              }${profitLoss.toFixed(4)} SOL`
+            );
             this.updateBalanceHistory();
           } catch (error) {
-            console.error('Error handling trade event:', error);
+            console.error("Error handling trade event:", error);
           }
         });
       }
 
       // Handle error events
-      this.tokenManager.on('error', (error) => {
-        this.logStatus(`Error: ${error.message}`, 'error');
+      this.tokenManager.on("error", (error) => {
+        this.logStatus(`Error: ${error.message}`, "error");
       });
 
-      this.logStatus('Event handlers initialized');
+      this.logStatus("Event handlers initialized");
     } catch (error) {
-      console.error('Error setting up event handlers:', error);
+      console.error("Error setting up event handlers:", error);
       throw error;
     }
   }
 
-  handleMetricsUpdate(token) {
+  handleMetricsUpdate(token, metrics) {
     try {
-      if (!token) return;
+      if (!token || !metrics) return;
 
-      const metrics = {
-        price: token.currentPrice,
-        marketCap: token.marketCapSol,
-        volume: token.volume24h,
-        holders: token.uniqueHolders
-      };
+      // Update metrics boxes with the new consolidated metrics
+      this.updateMetricsBoxes({
+        price: metrics.price,
+        marketCap: metrics.marketCap,
+        volume: metrics.volume || {
+          "1m": token.volume1m,
+          "5m": token.volume5m,
+          "30m": token.volume30m,
+          "24h": token.volume24h,
+        },
+        recovery: {
+          phase: metrics.recoveryMetrics?.phase || "none",
+          strength: metrics.recoveryMetrics?.recoveryStrength || 0,
+          buyPressure: metrics.recoveryMetrics?.buyPressure || 0,
+        },
+      });
 
-      this.updateMetricsBoxes(metrics);
-      this.screen.render();
+      // Update token state boxes if market structure changed
+      if (metrics.recoveryMetrics?.marketStructure) {
+        this.updateTokenStateBoxes();
+      }
+
     } catch (error) {
-      console.error('Error updating metrics:', error);
+      console.error("Error updating metrics:", error);
     }
   }
 
@@ -287,20 +334,20 @@ class Dashboard extends EventEmitter {
         style: {
           label: { bold: true },
         },
-        border: { type: 'line' },
+        border: { type: "line" },
         keys: true,
         vi: true,
         mouse: true,
         scrollback: 100,
         scrollbar: {
-          ch: ' ',
+          ch: " ",
           track: {
-            bg: 'yellow'
+            bg: "yellow",
           },
           style: {
-            inverse: true
-          }
-        }
+            inverse: true,
+          },
+        },
       });
 
       // Create trade history box (top row)
@@ -319,14 +366,14 @@ class Dashboard extends EventEmitter {
       // Create token grid
       this.tokenGrid = blessed.box({
         parent: this.screen,
-        top: '30%',
+        top: "30%",
         left: 0,
-        width: '100%',
-        height: '70%',
+        width: "100%",
+        height: "70%",
         scrollable: true,
         mouse: true,
         keys: true,
-        vi: true
+        vi: true,
       });
 
       // Token state boxes in second row, extending to bottom
@@ -429,7 +476,7 @@ class Dashboard extends EventEmitter {
       // Setup keyboard handlers
       this.setupKeyboardHandlers();
     } catch (error) {
-      console.error('Error creating layout:', error);
+      console.error("Error creating layout:", error);
       throw error;
     }
   }
@@ -454,35 +501,42 @@ class Dashboard extends EventEmitter {
     //   );
     // });
 
-    this.screen.key(['up', 'down'], (ch, key) => {
+    this.screen.key(["up", "down"], (ch, key) => {
       const tokens = Array.from(this.tokenCards.values());
       tokens[this.selectedTokenIndex]?.blur();
-      
-      if (key.name === 'up') {
+
+      if (key.name === "up") {
         this.selectedTokenIndex = Math.max(0, this.selectedTokenIndex - 1);
       } else {
-        this.selectedTokenIndex = Math.min(tokens.length - 1, this.selectedTokenIndex + 1);
+        this.selectedTokenIndex = Math.min(
+          tokens.length - 1,
+          this.selectedTokenIndex + 1
+        );
       }
-      
+
       tokens[this.selectedTokenIndex]?.focus();
       this.screen.render();
     });
 
-    this.screen.key('enter', () => {
+    this.screen.key("enter", () => {
       const tokens = Array.from(this.tokenCards.values());
       const selectedToken = tokens[this.selectedTokenIndex];
       if (selectedToken) {
-        const modal = new TokenDetailModal(this.screen, selectedToken.token, this.traderManager);
+        const modal = new TokenDetailModal(
+          this.screen,
+          selectedToken.token,
+          this.traderManager
+        );
         modal.show();
       }
     });
 
     // Sorting shortcuts
-    this.screen.key('m', () => this.sortTokens('marketCap'));
-    this.screen.key('v', () => this.sortTokens('volume'));
-    this.screen.key('h', () => this.sortTokens('holders'));
-    this.screen.key('t', () => this.sortTokens('transactions'));
-    this.screen.key('c', () => this.sortTokens('concentration'));
+    this.screen.key("m", () => this.sortTokens("marketCap"));
+    this.screen.key("v", () => this.sortTokens("volume"));
+    this.screen.key("h", () => this.sortTokens("holders"));
+    this.screen.key("t", () => this.sortTokens("transactions"));
+    this.screen.key("c", () => this.sortTokens("concentration"));
   }
 
   sortTokens(metric) {
@@ -492,40 +546,36 @@ class Dashboard extends EventEmitter {
 
   refreshTokenGrid() {
     // Clear existing cards
-    this.tokenCards.forEach(card => card.destroy());
+    this.tokenCards.forEach((card) => card.destroy());
     this.tokenCards.clear();
 
     // Get sorted tokens
-    const tokens = Array.from(this.tokenManager.tokens.values())
-      .sort((a, b) => {
-        switch(this.sortMetric) {
-          case 'marketCap':
+    const tokens = Array.from(this.tokenManager.tokens.values()).sort(
+      (a, b) => {
+        switch (this.sortMetric) {
+          case "marketCap":
             return b.marketCap - a.marketCap;
-          case 'volume':
-            return b.volume['5m'] - a.volume['5m'];
-          case 'holders':
+          case "volume":
+            return b.volume["5m"] - a.volume["5m"];
+          case "holders":
             return b.holders - a.holders;
-          case 'transactions':
+          case "transactions":
             return b.transactions - a.transactions;
-          case 'concentration':
+          case "concentration":
             return b.top10Concentration - a.top10Concentration;
           default:
             return 0;
         }
-      });
+      }
+    );
 
     // Create new cards
     tokens.forEach((token, index) => {
       const card = new TokenCard(this.tokenGrid, token, this.traderManager);
       const row = Math.floor(index / 2);
       const col = index % 2;
-      
-      card.setPosition(
-        row * 3,
-        col * '50%',
-        '50%',
-        3
-      );
+
+      card.setPosition(row * 3, col * "50%", "50%", 3);
 
       this.tokenCards.set(token.mint, card);
     });
@@ -603,8 +653,8 @@ class Dashboard extends EventEmitter {
       const holdTimeStr = this.formatTime(holdTime);
 
       // Get market structure and recovery metrics
-      const marketStructure = pos.marketStructure || 'unknown';
-      const recoveryPhase = pos.recoveryPhase || 'none';
+      const marketStructure = pos.marketStructure || "unknown";
+      const recoveryPhase = pos.recoveryPhase || "none";
       const recoveryStrength = pos.recoveryStrength || 0;
       const buyPressure = pos.buyPressure || 0;
 
@@ -614,24 +664,41 @@ class Dashboard extends EventEmitter {
       const maxUpside = pos.maxUpside || 0;
 
       // Format indicators
-      const structureColor = 
-        marketStructure === 'bullish' ? 'green' :
-        marketStructure === 'bearish' ? 'red' : 'white';
-      
+      const structureColor =
+        marketStructure === "bullish"
+          ? "green"
+          : marketStructure === "bearish"
+          ? "red"
+          : "white";
+
       const phaseColor =
-        recoveryPhase === 'accumulation' ? 'yellow' :
-        recoveryPhase === 'expansion' ? 'green' :
-        recoveryPhase === 'distribution' ? 'red' : 'white';
+        recoveryPhase === "accumulation"
+          ? "yellow"
+          : recoveryPhase === "expansion"
+          ? "green"
+          : recoveryPhase === "distribution"
+          ? "red"
+          : "white";
 
       // Build the display string with dynamic data
       return [
         `${pos.symbol} | ${holdTimeStr} | Size: ${remainingSize.toFixed(0)}%`,
-        `P/L: ${pnl >= 0 ? '{green-fg}+' : '{red-fg}'}${Math.abs(pnl).toFixed(1)}%{/${pnl >= 0 ? 'green' : 'red'}-fg}`,
-        `Entry: ${pos.entryPrice.toFixed(4)} | Current: ${pos.currentPrice.toFixed(4)}`,
-        `High: ${pos.highestPrice.toFixed(4)} | Low: ${pos.lowestPrice.toFixed(4)}`,
-        `Max Up: ${maxUpside.toFixed(1)}% | Max Down: ${maxDrawdown.toFixed(1)}%`,
+        `P/L: ${pnl >= 0 ? "{green-fg}+" : "{red-fg}"}${Math.abs(pnl).toFixed(
+          1
+        )}%{/${pnl >= 0 ? "green" : "red"}-fg}`,
+        `Entry: ${pos.entryPrice.toFixed(
+          4
+        )} | Current: ${pos.currentPrice.toFixed(4)}`,
+        `High: ${pos.highestPrice.toFixed(4)} | Low: ${pos.lowestPrice.toFixed(
+          4
+        )}`,
+        `Max Up: ${maxUpside.toFixed(1)}% | Max Down: ${maxDrawdown.toFixed(
+          1
+        )}%`,
         `Structure: {${structureColor}-fg}${marketStructure}{/${structureColor}-fg} | Phase: {${phaseColor}-fg}${recoveryPhase}{/${phaseColor}-fg}`,
-        `Recovery: ${recoveryStrength.toFixed(0)}% | Buy Pressure: ${buyPressure.toFixed(0)}%`,
+        `Recovery: ${recoveryStrength.toFixed(
+          0
+        )}% | Buy Pressure: ${buyPressure.toFixed(0)}%`,
         "─".repeat(50), // Separator
       ].join("\n");
     });
@@ -672,7 +739,9 @@ class Dashboard extends EventEmitter {
           try {
             const profitLossStr =
               trade.profitLoss !== undefined && trade.profitLoss !== null
-                ? `${trade.profitLoss >= 0 ? "+" : ""}${trade.profitLoss.toFixed(1)}%`
+                ? `${
+                    trade.profitLoss >= 0 ? "+" : ""
+                  }${trade.profitLoss.toFixed(1)}%`
                 : "N/A";
 
             const symbol = trade.symbol || trade.mint?.slice(0, 8) || "Unknown";
@@ -692,10 +761,16 @@ class Dashboard extends EventEmitter {
             }
 
             // Format trade size and reputation indicators
-            const sizeIndicator = tradeSize > 1000 ? "🔥" : tradeSize > 100 ? "+" : "";
-            const reputationIndicator = score > 90 ? "⭐" : score < 50 ? "⚠️" : "";
+            const sizeIndicator =
+              tradeSize > 1000 ? "🔥" : tradeSize > 100 ? "+" : "";
+            const reputationIndicator =
+              score > 90 ? "⭐" : score < 50 ? "⚠️" : "";
 
-            return `{${tradeColor}-fg}[${trade.timestamp}] ${trade.type.padEnd(5)} ${symbol.padEnd(12)} ${profitLossStr.padEnd(8)} ${sizeIndicator}${reputationIndicator}{/${tradeColor}-fg}`;
+            return `{${tradeColor}-fg}[${trade.timestamp}] ${trade.type.padEnd(
+              5
+            )} ${symbol.padEnd(12)} ${profitLossStr.padEnd(
+              8
+            )} ${sizeIndicator}${reputationIndicator}{/${tradeColor}-fg}`;
           } catch (err) {
             return `Error formatting trade: ${err.message}`;
           }
@@ -755,14 +830,14 @@ class Dashboard extends EventEmitter {
     // Update trader metrics
     if (this.traderMetricsBox) {
       const traderContent = [
-        'Volume (24h):',
-        `1m: ${this.formatVolume(metrics.volume['1m'])}`,
-        `5m: ${this.formatVolume(metrics.volume['5m'])}`,
-        `30m: ${this.formatVolume(metrics.volume['30m'])}`,
-        '',
+        "Volume (24h):",
+        `1m: ${this.formatVolume(metrics.volume["1m"])}`,
+        `5m: ${this.formatVolume(metrics.volume["5m"])}`,
+        `30m: ${this.formatVolume(metrics.volume["30m"])}`,
+        "",
         `Price: ${metrics.price.toFixed(4)} SOL`,
-        `Market Cap: ${metrics.marketCap.toFixed(2)} SOL`
-      ].join('\n');
+        `Market Cap: ${metrics.marketCap.toFixed(2)} SOL`,
+      ].join("\n");
       this.traderMetricsBox.setContent(traderContent);
     }
 
@@ -771,18 +846,18 @@ class Dashboard extends EventEmitter {
       const patternsContent = [
         `Recovery Phase: ${metrics.recovery.phase}`,
         `Recovery Strength: ${(metrics.recovery.strength * 100).toFixed(1)}%`,
-        `Buy Pressure: ${(metrics.recovery.buyPressure * 100).toFixed(1)}%`
-      ].join('\n');
+        `Buy Pressure: ${(metrics.recovery.buyPressure * 100).toFixed(1)}%`,
+      ].join("\n");
       this.tradingPatternsBox.setContent(patternsContent);
     }
   }
 
   updateTokenStateBoxes() {
     const tokens = {
-      new: this.getTokensByState('new'),
-      pumping: this.getTokensByState('pumping'),
-      drawdown: this.getTokensByState('drawdown'),
-      recovery: this.getTokensByState('recovery')
+      new: this.getTokensByState("new"),
+      pumping: this.getTokensByState("pumping"),
+      drawdown: this.getTokensByState("drawdown"),
+      recovery: this.getTokensByState("recovery"),
     };
 
     // Update each state box
@@ -803,25 +878,27 @@ class Dashboard extends EventEmitter {
   }
 
   formatTokenList(tokens) {
-    if (!tokens.length) return 'No tokens';
-    
-    return tokens.map(token => {
-      const price = token.currentPrice.toFixed(4);
-      const change = token.getPriceChange(300).toFixed(1); // 5-minute change
-      const volume = this.formatVolume(token.volume5m);
-      
-      return [
-        token.symbol,
-        `${price} SOL`,
-        `${change}%`,
-        `Vol: ${volume}`
-      ].join(' | ');
-    }).join('\n');
+    if (!tokens.length) return "No tokens";
+
+    return tokens
+      .map((token) => {
+        const price = token.currentPrice.toFixed(4);
+        const change = token.getPriceChange(300).toFixed(1); // 5-minute change
+        const volume = this.formatVolume(token.volume5m);
+
+        return [
+          token.symbol,
+          `${price} SOL`,
+          `${change}%`,
+          `Vol: ${volume}`,
+        ].join(" | ");
+      })
+      .join("\n");
   }
 
   setupPeriodicUpdates() {
     // Skip periodic updates in test environment
-    if (process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === "test") {
       return;
     }
 
@@ -829,13 +906,13 @@ class Dashboard extends EventEmitter {
     this.updateInterval = setInterval(() => {
       // Update wallet status
       this.updateWalletStatus();
-      
+
       // Update position table
       this.updatePositionTable();
-      
+
       // Update trade history
       this.updateTradeHistory();
-      
+
       // Render screen
       this.screen.render();
     }, 1000);
