@@ -6,7 +6,7 @@ const errorLogger = require("../../monitoring/errorLoggerInstance");
 class Token extends EventEmitter {
   constructor(tokenData) {
     super();
-    
+
     this.mint = tokenData.mint;
     this.name = tokenData.name;
     this.symbol = tokenData.symbol;
@@ -21,12 +21,32 @@ class Token extends EventEmitter {
     this.bondingCurveKey = tokenData.bondingCurveKey;
 
     // Initialize balance ledger
-    this.balanceLedger = new Map(); // address -> { balance, history }
-    
+    this.balanceLedger = new Map(); // address -> { balance, history, isDev }
+
     // Initialize supply tracking (convert to BigInt with 9 decimals)
     this.vTokensInBondingCurve = tokenData.vTokensInBondingCurve;
     const bondingCurveTokens = BigInt(Math.floor(this.vTokensInBondingCurve * 1e9));
     this.totalSupply = bondingCurveTokens; // Initially, all tokens are in the bonding curve
+
+    // Initialize creator balance
+    if (tokenData.traderPublicKey && tokenData.initialBuy) {
+      const creatorAddress = tokenData.traderPublicKey.toLowerCase();
+      const initialBalance = BigInt(Math.floor(tokenData.initialBuy * 1e9));
+      
+      this.balanceLedger.set(creatorAddress, {
+        balance: initialBalance,
+        history: [{
+          timestamp: Date.now(),
+          change: initialBalance,
+          balance: initialBalance,
+          type: 'mint'
+        }],
+        isDev: true
+      });
+
+      // Update total supply to include creator's initial balance
+      this.totalSupply += initialBalance;
+    }
 
     // Initialize trade tracking
     this.trades = [];
@@ -39,11 +59,11 @@ class Token extends EventEmitter {
     this.highestMarketCap = this.marketCapSol;
     this.drawdownLow = null;
     this.unsafeReason = null;
-    
+
     // Initialize state
-    this.state = 'new';
+    this.state = "new";
     this.stateChangedAt = Date.now();
-    this.stateChangeReason = 'Token created';
+    this.stateChangeReason = "Token created";
 
     // Set max listeners
     this.setMaxListeners(20);
@@ -55,7 +75,7 @@ class Token extends EventEmitter {
     this.initializeMetrics();
 
     // Set up automatic listener cleanup
-    if (process.env.NODE_ENV !== 'test') {
+    if (process.env.NODE_ENV !== "test") {
       this._cleanupInterval = setInterval(() => {
         this.cleanupStaleListeners();
       }, 60000); // Check every minute
@@ -85,9 +105,9 @@ class Token extends EventEmitter {
     this.recoveryMetrics = {
       drawdownDepth: 0,
       recoveryStrength: 0,
-      recoveryPhase: 'none',
+      recoveryPhase: "none",
       accumulationScore: 0,
-      marketStructure: 'neutral'
+      marketStructure: "neutral",
     };
 
     // Price tracking
@@ -106,16 +126,23 @@ class Token extends EventEmitter {
   }
 
   updateTrade(tradeData) {
-    const { type, amount, price, timestamp, traderAddress, vTokensInBondingCurve } = tradeData;
-    
+    const {
+      type,
+      amount,
+      price,
+      timestamp,
+      traderAddress,
+      vTokensInBondingCurve,
+    } = tradeData;
+
     // Add trade to history
     this.trades.push(tradeData);
     this.tradeCount++;
     this.lastTradeTime = timestamp;
-    
+
     // Update volume
     this.updateVolume(amount, price, timestamp);
-    
+
     // Update market metrics
     this.updateMarketMetrics(tradeData);
 
@@ -126,7 +153,7 @@ class Token extends EventEmitter {
         amount: BigInt(Math.floor(Number(amount) * 1e9)), // Convert to BigInt with 9 decimals
         type,
         timestamp,
-        vTokensInBondingCurve
+        vTokensInBondingCurve,
       });
     }
 
@@ -134,38 +161,48 @@ class Token extends EventEmitter {
     this.updatePriceMetrics(price);
 
     // Emit trade event
-    this.emit('trade', tradeData);
+    this.emit("trade", tradeData);
   }
 
   updateVolume(amount, price, timestamp) {
+    // Calculate volume in SOL
     const volume = amount * price;
-    
+
+    // Update total volume
+    this.totalVolume = (this.totalVolume || 0) + volume;
+
     // Update 24h volume
-    const oneDayAgo = timestamp - (24 * 60 * 60 * 1000);
-    this.trades = this.trades.filter(t => t.timestamp > oneDayAgo);
-    this.volume24h = this.trades.reduce((sum, t) => sum + (t.amount * t.price), 0);
-    
+    const oneDayAgo = timestamp - 24 * 60 * 60 * 1000;
+    this.trades = this.trades.filter((t) => t.timestamp > oneDayAgo);
+    this.volume24h = this.trades.reduce(
+      (sum, t) => sum + (t.volumeInSol || 0),
+      0
+    );
+
     // Update volume history
     this.volumeHistory.push({ timestamp, volume });
-    this.volumeHistory = this.volumeHistory.filter(v => v.timestamp > oneDayAgo);
+    this.volumeHistory = this.volumeHistory.filter(
+      (v) => v.timestamp > oneDayAgo
+    );
   }
 
   updateMarketMetrics(tradeData) {
     const { price } = tradeData;
-    
+
     // Update market cap if price changed
     if (price !== this.currentPrice) {
       this.currentPrice = price;
       this.marketCapSol = this.vTokensInBondingCurve * price;
-      
+
       // Update highest market cap
       if (this.marketCapSol > this.highestMarketCap) {
         this.highestMarketCap = this.marketCapSol;
       }
-      
+
       // Update drawdown tracking
       if (this.marketCapSol < this.highestMarketCap) {
-        const drawdown = (this.highestMarketCap - this.marketCapSol) / this.highestMarketCap;
+        const drawdown =
+          (this.highestMarketCap - this.marketCapSol) / this.highestMarketCap;
         if (!this.drawdownLow || this.marketCapSol < this.drawdownLow) {
           this.drawdownLow = this.marketCapSol;
         }
@@ -176,11 +213,11 @@ class Token extends EventEmitter {
   updatePriceMetrics(newPrice) {
     // Update current price
     this.currentPrice = newPrice;
-    
+
     // Add to price history
     this.priceHistory.push({
       price: newPrice,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     // Update price buffer
@@ -193,27 +230,41 @@ class Token extends EventEmitter {
     // Calculate price volatility
     if (this.priceBuffer.count > 1) {
       const prices = this.priceBuffer.data.slice(0, this.priceBuffer.count);
-      const mean = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+      const mean =
+        prices.reduce((sum, price) => sum + price, 0) / prices.length;
       this.priceVolatility = Math.sqrt(
-        prices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / (prices.length - 1)
+        prices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) /
+          (prices.length - 1)
       );
     }
 
     // Update market cap
-    this.marketCapSol = this.circulatingSupply * BigInt(Math.floor(newPrice * 1e9)) / BigInt(1e9);
-    
+    this.marketCapSol =
+      (this.circulatingSupply * BigInt(Math.floor(newPrice * 1e9))) /
+      BigInt(1e9);
+
     // Update highest market cap if needed
     if (this.marketCapSol > this.highestMarketCap) {
       this.highestMarketCap = this.marketCapSol;
       this.drawdownLow = null; // Reset drawdown tracking on new high
     }
-    
+
     // Update drawdown if we're below ATH
     if (this.marketCapSol < this.highestMarketCap) {
       if (!this.drawdownLow || this.marketCapSol < this.drawdownLow) {
         this.drawdownLow = this.marketCapSol;
       }
     }
+  }
+
+  getRecentVolume(timeWindow) {
+    const now = Date.now();
+    const cutoff = now - timeWindow;
+
+    // Get volume from price history
+    return this.priceHistory
+      .filter((p) => p.timestamp > cutoff)
+      .reduce((sum, p) => sum + (p.volume || 0), 0);
   }
 
   cleanup() {
@@ -240,7 +291,7 @@ class Token extends EventEmitter {
     }
 
     // Handle trade data
-    if (data.txType === 'buy' || data.txType === 'sell') {
+    if (data.txType === "buy" || data.txType === "sell") {
       const trade = {
         mint: this.mint,
         amount: data.tokenAmount,
@@ -249,14 +300,34 @@ class Token extends EventEmitter {
         timestamp: data.timestamp || Date.now(),
         traderPublicKey: data.traderPublicKey,
         otherParty: data.otherParty,
-        signature: data.signature
+        signature: data.signature,
+        vTokensInBondingCurve: data.vTokensInBondingCurve,
+        newTokenBalance: data.newTokenBalance
       };
 
-      // Update price history
+      // Calculate volume in SOL (tokenAmount is already in base units)
+      const volumeInSol = trade.amount * trade.price;
+
+      // Update price history with volume
       this.priceHistory.push({
         price: trade.price,
         timestamp: trade.timestamp,
-        volume: trade.amount * trade.price // Track volume in SOL
+        volume: volumeInSol,
+        tokenAmount: trade.amount // Store original token amount for reference
+      });
+
+      // Update trade history
+      this.trades.push({
+        ...trade,
+        volumeInSol
+      });
+
+      // Update balances based on trade
+      this.updateBalances({
+        traderAddress: trade.traderPublicKey,
+        amount: trade.newTokenBalance,
+        type: trade.type,
+        vTokensInBondingCurve: trade.vTokensInBondingCurve
       });
 
       // Update market cap
@@ -268,7 +339,7 @@ class Token extends EventEmitter {
     this.updateRecoveryMetrics();
 
     // Emit update event
-    this.emit('updated', this);
+    this.emit("updated", this);
   }
 
   updateMetrics() {
@@ -409,7 +480,7 @@ class Token extends EventEmitter {
         if (this.state !== "drawdown") {
           this.state = "drawdown";
           this.stateChangedAt = Date.now();
-          this.stateChangeReason = 'Drawdown detected';
+          this.stateChangeReason = "Drawdown detected";
         }
         this.drawdownLow = this.marketCapSol;
         return;
@@ -428,13 +499,13 @@ class Token extends EventEmitter {
           // If safe, immediately emit readyForPosition
           this.state = "open";
           this.stateChangedAt = Date.now();
-          this.stateChangeReason = 'Recovery complete';
+          this.stateChangeReason = "Recovery complete";
         } else {
           // If unsafe, get failure reason and enter recovery state
           const failureReason = safetyChecker.getFailureReason();
           this.state = "recovery";
           this.stateChangedAt = Date.now();
-          this.stateChangeReason = 'Recovery incomplete';
+          this.stateChangeReason = "Recovery incomplete";
           this.unsafeReason = failureReason;
           this.emit("unsafeRecovery", {
             token: this,
@@ -460,12 +531,12 @@ class Token extends EventEmitter {
             this.unsafeReason = null;
             this.state = "open";
             this.stateChangedAt = Date.now();
-            this.stateChangeReason = 'Recovery complete';
+            this.stateChangeReason = "Recovery complete";
           } else {
             // If gain too high, go back to drawdown to wait for better entry
             this.state = "drawdown";
             this.stateChangedAt = Date.now();
-            this.stateChangeReason = 'Gain too high';
+            this.stateChangeReason = "Gain too high";
             this.unsafeReason = null;
             this.emit("recoveryGainTooHigh", {
               token: this,
@@ -485,7 +556,7 @@ class Token extends EventEmitter {
             // We've hit a significant drawdown from recovery high, go back to drawdown state
             this.state = "drawdown";
             this.stateChangedAt = Date.now();
-            this.stateChangeReason = 'New drawdown cycle';
+            this.stateChangeReason = "New drawdown cycle";
             this.drawdownLow = currentPrice; // Reset drawdown low for new cycle
             this.emit("newDrawdownCycle", {
               token: this,
@@ -546,15 +617,13 @@ class Token extends EventEmitter {
     return this.vSolInBondingCurve / this.vTokensInBondingCurve;
   }
 
-  analyzeHolders() {
-    return null;
-  }
-
   getPriceMomentum() {
     // Get the last 5 minutes of price data
     const now = Date.now();
     const fiveMinutesAgo = now - 5 * 60 * 1000;
-    const recentPrices = this.priceHistory.filter(p => p.timestamp > fiveMinutesAgo);
+    const recentPrices = this.priceHistory.filter(
+      (p) => p.timestamp > fiveMinutesAgo
+    );
 
     if (recentPrices.length < 2) return 0;
 
@@ -586,7 +655,7 @@ class Token extends EventEmitter {
 
     // Get volume from price history
     return this.priceHistory
-      .filter(p => p.timestamp > cutoff)
+      .filter((p) => p.timestamp > cutoff)
       .reduce((sum, p) => sum + (p.volume || 0), 0);
   }
 
@@ -1138,7 +1207,7 @@ class Token extends EventEmitter {
         if (isPumping) {
           this.state = "pumping";
           this.stateChangedAt = Date.now();
-          this.stateChangeReason = 'Pumping detected';
+          this.stateChangeReason = "Pumping detected";
         }
       }
 
@@ -1156,7 +1225,7 @@ class Token extends EventEmitter {
       ) {
         this.state = "drawdown";
         this.stateChangedAt = Date.now();
-        this.stateChangeReason = 'Drawdown detected';
+        this.stateChangeReason = "Drawdown detected";
         this.drawdownLow = currentPrice;
       }
 
@@ -1174,13 +1243,13 @@ class Token extends EventEmitter {
           // If safe, immediately emit readyForPosition
           this.state = "open";
           this.stateChangedAt = Date.now();
-          this.stateChangeReason = 'Recovery complete';
+          this.stateChangeReason = "Recovery complete";
         } else {
           // If unsafe, get failure reason and enter recovery state
           const failureReason = safetyChecker.getFailureReason();
           this.state = "recovery";
           this.stateChangedAt = Date.now();
-          this.stateChangeReason = 'Recovery incomplete';
+          this.stateChangeReason = "Recovery incomplete";
           this.unsafeReason = failureReason;
         }
         return;
@@ -1200,12 +1269,12 @@ class Token extends EventEmitter {
             this.unsafeReason = null;
             this.state = "open";
             this.stateChangedAt = Date.now();
-            this.stateChangeReason = 'Recovery complete';
+            this.stateChangeReason = "Recovery complete";
           } else {
             // If gain too high, go back to drawdown to wait for better entry
             this.state = "drawdown";
             this.stateChangedAt = Date.now();
-            this.stateChangeReason = 'Gain too high';
+            this.stateChangeReason = "Gain too high";
             this.unsafeReason = null;
             this.emit("recoveryGainTooHigh", {
               token: this,
@@ -1225,7 +1294,7 @@ class Token extends EventEmitter {
             // We've hit a significant drawdown from recovery high, go back to drawdown state
             this.state = "drawdown";
             this.stateChangedAt = Date.now();
-            this.stateChangeReason = 'New drawdown cycle';
+            this.stateChangeReason = "New drawdown cycle";
             this.drawdownLow = currentPrice; // Reset drawdown low for new cycle
             this.emit("newDrawdownCycle", {
               token: this,
@@ -1256,17 +1325,17 @@ class Token extends EventEmitter {
   }
 
   getBuyPressure(timeWindowSeconds) {
-    const cutoffTime = Date.now() - (timeWindowSeconds * 1000);
+    const cutoffTime = Date.now() - timeWindowSeconds * 1000;
     const recentTrades = [];
 
     if (recentTrades.length === 0) return 0;
 
     const buyVolume = recentTrades
       .filter((t) => t.type === "buy")
-      .reduce((sum, t) => sum + (t.amount * t.price), 0);
+      .reduce((sum, t) => sum + t.amount * t.price, 0);
 
     const totalVolume = recentTrades.reduce(
-      (sum, t) => sum + (t.amount * t.price),
+      (sum, t) => sum + t.amount * t.price,
       0
     );
 
@@ -1293,7 +1362,7 @@ class Token extends EventEmitter {
     // Calculate current window volume
     const currentWindow = this.trades
       .filter((t) => now - t.timestamp <= timeWindow)
-      .reduce((sum, t) => sum + (t.price * t.size), 0);
+      .reduce((sum, t) => sum + t.price * t.size, 0);
 
     // Calculate previous window volume
     const previousWindow = this.trades
@@ -1301,7 +1370,7 @@ class Token extends EventEmitter {
         (t) =>
           now - t.timestamp <= timeWindow * 2 && now - t.timestamp > timeWindow
       )
-      .reduce((sum, t) => sum + (t.price * t.size), 0);
+      .reduce((sum, t) => sum + t.price * t.size, 0);
 
     // Calculate percentage change, handling edge cases
     if (previousWindow <= 0) {
@@ -1319,28 +1388,33 @@ class Token extends EventEmitter {
         marketCap: trade.marketCapSol,
         lastTradeTime: Date.now(),
         tradeCount: (this.metrics.tradeCount || 0) + 1,
-        volume: trade.tokenAmount ? (this.metrics.volume || 0) + trade.tokenAmount : this.metrics.volume
+        volume: trade.tokenAmount
+          ? (this.metrics.volume || 0) + trade.tokenAmount
+          : this.metrics.volume,
       };
 
       // Add trade to history
       this.trades.push({
         ...trade,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
       // Emit trade event
-      this.emit('trade', {
+      this.emit("trade", {
         token: this,
         trade: trade,
-        metrics: this.metrics
+        metrics: this.metrics,
       });
 
       // Emit metrics update
-      this.emit('metricsUpdated', this);
+      this.emit("metricsUpdated", this);
 
       return true;
     } catch (error) {
-      console.error(`Failed to record trade for token ${this.symbol}:`, error.message);
+      console.error(
+        `Failed to record trade for token ${this.symbol}:`,
+        error.message
+      );
       return false;
     }
   }
@@ -1360,12 +1434,16 @@ class Token extends EventEmitter {
       // Calculate price change
       if (this.trades.length > 0) {
         const previousPrice = this.trades[this.trades.length - 1].price;
-        this.metrics.priceChange = ((trade.price - previousPrice) / previousPrice) * 100;
+        this.metrics.priceChange =
+          ((trade.price - previousPrice) / previousPrice) * 100;
       }
 
       return true;
     } catch (error) {
-      console.error(`Failed to update metrics for token ${this.symbol}:`, error.message);
+      console.error(
+        `Failed to update metrics for token ${this.symbol}:`,
+        error.message
+      );
       return false;
     }
   }
@@ -1383,7 +1461,7 @@ class Token extends EventEmitter {
     super.addListener(event, listener);
     this.registeredListeners.set(listener, {
       event,
-      time: Date.now()
+      time: Date.now(),
     });
     return this;
   }
@@ -1403,7 +1481,9 @@ class Token extends EventEmitter {
     for (const [listener, info] of this.registeredListeners.entries()) {
       if (now - info.time > staleThreshold) {
         this.removeListener(info.event, listener);
-        console.log(`Removed stale listener for event ${info.event} on token ${this.symbol}`);
+        console.log(
+          `Removed stale listener for event ${info.event} on token ${this.symbol}`
+        );
       }
     }
   }
@@ -1414,28 +1494,32 @@ class Token extends EventEmitter {
    */
   validateSupply() {
     // Convert vTokensInBondingCurve to BigInt (multiply by 1e9 to handle decimals)
-    const bondingCurveTokens = BigInt(Math.floor(this.vTokensInBondingCurve * 1e9));
-    
+    const bondingCurveTokens = BigInt(
+      Math.floor(this.vTokensInBondingCurve * 1e9)
+    );
+
     // Calculate total tokens held by all addresses
-    const totalHeldTokens = Array.from(this.balanceLedger.values())
-      .reduce((sum, { balance }) => sum + balance, BigInt(0));
-    
+    const totalHeldTokens = Array.from(this.balanceLedger.values()).reduce(
+      (sum, { balance }) => sum + balance,
+      BigInt(0)
+    );
+
     // Total supply should equal tokens in bonding curve + tokens held by addresses
     const calculatedTotalSupply = bondingCurveTokens + totalHeldTokens;
-    
+
     if (calculatedTotalSupply !== this.totalSupply) {
-      console.error('Supply mismatch detected:', {
+      console.error("Supply mismatch detected:", {
         calculatedSupply: calculatedTotalSupply.toString(),
         recordedSupply: this.totalSupply.toString(),
         bondingCurveTokens: bondingCurveTokens.toString(),
-        heldTokens: totalHeldTokens.toString()
+        heldTokens: totalHeldTokens.toString(),
       });
-      
+
       // Update total supply to correct value
       this.totalSupply = calculatedTotalSupply;
       return false;
     }
-    
+
     return true;
   }
 
@@ -1446,11 +1530,13 @@ class Token extends EventEmitter {
   updateSupply(trade) {
     // Convert amounts to BigInt (multiply by 1e9 to handle decimals)
     const amount = BigInt(Math.floor(Number(trade.amount) * 1e9));
-    const newBondingCurveTokens = BigInt(Math.floor(trade.vTokensInBondingCurve * 1e9));
-    
+    const newBondingCurveTokens = BigInt(
+      Math.floor(trade.vTokensInBondingCurve * 1e9)
+    );
+
     // Update bonding curve token count
     this.vTokensInBondingCurve = trade.vTokensInBondingCurve;
-    
+
     // Validate and update total supply
     this.validateSupply();
   }
@@ -1470,13 +1556,14 @@ class Token extends EventEmitter {
     if (!this.balanceLedger.has(normalizedAddress)) {
       this.balanceLedger.set(normalizedAddress, {
         balance: BigInt(0),
-        history: []
+        history: [],
+        isDev: normalizedAddress === this.traderPublicKey?.toLowerCase()
       });
     }
 
     const record = this.balanceLedger.get(normalizedAddress);
-    const change = type === 'buy' ? amount : -amount;
-    const newBalance = record.balance + change;
+    const newBalance = BigInt(Math.floor(amount * 1e9)); // Convert to BigInt with 9 decimals
+    const change = newBalance - record.balance;
 
     // Update balance and history
     record.balance = newBalance;
@@ -1489,12 +1576,11 @@ class Token extends EventEmitter {
 
     // Update bonding curve token count and validate supply
     if (vTokensInBondingCurve !== undefined) {
-      this.vTokensInBondingCurve = vTokensInBondingCurve;
-      this.validateSupply();
+      this.updateSupply({ vTokensInBondingCurve });
     }
 
     // Emit balance update event
-    this.emit('balanceUpdate', {
+    this.emit("balanceUpdate", {
       address: normalizedAddress,
       balance: newBalance,
       change,
@@ -1510,13 +1596,14 @@ class Token extends EventEmitter {
   getBalanceMetrics(address) {
     const normalizedAddress = address.toLowerCase();
     const record = this.balanceLedger.get(normalizedAddress);
-    
+
     if (!record) {
       return {
         balance: BigInt(0),
         percentageOfSupply: 0,
         trades: 0,
-        averageHoldTime: 0
+        averageHoldTime: 0,
+        isDev: false
       };
     }
 
@@ -1539,9 +1626,12 @@ class Token extends EventEmitter {
 
     return {
       balance: record.balance,
-      percentageOfSupply: Number((record.balance * BigInt(100)) / this.circulatingSupply),
+      percentageOfSupply: Number(
+        (record.balance * BigInt(100)) / this.circulatingSupply
+      ),
       trades: history.length,
-      averageHoldTime: history.length > 0 ? totalHoldTime / history.length : 0
+      averageHoldTime: history.length > 0 ? totalHoldTime / history.length : 0,
+      isDev: record.isDev || false
     };
   }
 
@@ -1554,9 +1644,9 @@ class Token extends EventEmitter {
     const holders = Array.from(this.balanceLedger.entries())
       .map(([address, record]) => ({
         address,
-        ...this.getBalanceMetrics(address)
+        ...this.getBalanceMetrics(address),
       }))
-      .filter(holder => holder.balance > BigInt(0))
+      .filter((holder) => holder.balance > BigInt(0))
       .sort((a, b) => Number(b.balance - a.balance))
       .slice(0, limit);
 
@@ -1569,12 +1659,18 @@ class Token extends EventEmitter {
    */
   getConcentrationMetrics() {
     const holders = this.getTopHolders();
-    const totalHoldings = holders.reduce((sum, holder) => sum + holder.balance, BigInt(0));
-    
+    const totalHoldings = holders.reduce(
+      (sum, holder) => sum + holder.balance,
+      BigInt(0)
+    );
+
     return {
       topHolderCount: holders.length,
-      topHolderConcentration: Number((totalHoldings * BigInt(100)) / this.circulatingSupply),
-      averageBalance: this.circulatingSupply / BigInt(Math.max(1, holders.length))
+      topHolderConcentration: Number(
+        (totalHoldings * BigInt(100)) / this.circulatingSupply
+      ),
+      averageBalance:
+        this.circulatingSupply / BigInt(Math.max(1, holders.length)),
     };
   }
 }
