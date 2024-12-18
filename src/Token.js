@@ -165,13 +165,20 @@ class Token extends EventEmitter {
     }
     // Handle drawdown confirmation and recovery
     else if (this.state === 'drawdown') {
+      // Initialize or update confirmation candle
       if (!this.stateManager.confirmationCandle) {
         this.stateManager.confirmationCandle = currentPrice;
       }
       
-      // If we have a confirmation candle, check if drawdown is confirmed
+      // If drawdown is confirmed, update bottom and check for recovery
       if (this.stateManager.confirmDrawdown(currentPrice)) {
-        // Check for recovery conditions
+        // Update bottom if price is lower
+        if (!this.stateManager.priceHistory.bottom || 
+            currentPrice.bodyPrice < this.stateManager.priceHistory.bottom.bodyPrice) {
+          this.stateManager.priceHistory.bottom = currentPrice;
+        }
+
+        // Check if we've recovered enough from our current bottom
         if (this.stateManager.isRecoveryTriggered(currentPrice, this.stateManager.priceHistory.bottom)) {
           this.stateManager.transitionToRecovery(currentPrice);
           this.emit("stateChanged", { token: this, from: 'drawdown', to: 'recovery' });
@@ -190,9 +197,11 @@ class Token extends EventEmitter {
       if (this.stateManager.shouldEnterPosition(currentPrice)) {
         this.emit("readyForPosition", this);
       }
-      // Check for new drawdown cycle
+      // Check for new drawdown cycle if we drop below our previous bottom
       else if (this.stateManager.priceHistory.bottom && 
                currentPrice.bodyPrice < this.stateManager.priceHistory.bottom.bodyPrice) {
+        // Reset bottom for new drawdown cycle
+        this.stateManager.priceHistory.bottom = null;
         this.stateManager.transitionToDrawdown(currentPrice);
         this.emit("stateChanged", { token: this, from: 'recovery', to: 'drawdown' });
       }

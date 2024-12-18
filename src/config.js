@@ -8,8 +8,7 @@ module.exports = {
   THRESHOLDS: {
     // Market Cap Thresholds (in USD)
     MAX_ENTRY_CAP_USD: 50000, // Increased to catch larger pumps ($50k)
-    DEAD_USD: 6500, // Lower threshold for considering token dead ($5k)
-    FIRST_PUMP_USD: 10000, // Lower threshold for first pump ($10k)
+    DEAD_USD: 6000, // Lower threshold for considering token dead ($5k)
     PUMP_DRAWDOWN: 15, // Reduced drawdown for quicker recovery entry
     RECOVERY: 8, // Lower recovery threshold for faster reentry
     SAFE_RECOVERY_GAIN: 12, // Lower safe recovery threshold

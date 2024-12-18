@@ -91,7 +91,10 @@ class TokenStateManager {
 
   confirmDrawdown(pricePoint) {
     if (this.isDrawdownTriggered(pricePoint, this.confirmationCandle)) {
-      this.priceHistory.bottom = pricePoint;
+      // Update bottom if it's null or if new price is lower
+      if (!this.priceHistory.bottom || pricePoint.bodyPrice < this.priceHistory.bottom.bodyPrice) {
+        this.priceHistory.bottom = pricePoint;
+      }
       return true;
     }
     return false;
