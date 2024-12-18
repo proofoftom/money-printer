@@ -118,21 +118,12 @@ class PositionManager extends EventEmitter {
     return { profitLoss, reason };
   }
 
-  async updatePosition(mint, marketCapSol, volumeData) {
-    const position = this.getPosition(mint);
+  async updatePosition(mint, price, volumeData = null, marketCapSol = null) {
+    const position = this.positions.get(mint);
     if (!position) return null;
 
-    // Check if position no longer meets criteria
-    if (!await this.meetsHoldingCriteria(position, marketCapSol, volumeData)) {
-      return this.exitPosition(position, "criteria_not_met");
-    }
-
-    // Check recovery conditions
-    if (position.isRecoveryPosition && !this.checkRecoveryConditions(position)) {
-      return this.exitPosition(position, "recovery_failed");
-    }
-
-    return null;
+    position.update(price, volumeData, marketCapSol);
+    return position;
   }
 
   async openPosition(token, size) {
@@ -218,125 +209,19 @@ class PositionManager extends EventEmitter {
     this.avgProfitPerTrade = totalProfit / totalTrades;
   }
 
-  async closePosition(mint, exitPrice, portion = 1.0) {
-    const position = this.stateManager.getPosition(mint);
-    if (!position) {
-      const error = new Error(`Cannot close position: Position not found for ${mint}`);
-      errorLogger.logError(error, 'PositionManager.closePosition');
-      return false;
-    }
+  async closePosition(mint, exitPrice = null, portion = 1.0) {
+    const position = this.positions.get(mint);
+    if (!position) return false;
 
-    // Use current price from position if no exit price provided
-    exitPrice = exitPrice || position.currentPrice;
-
-    // Simulate transaction delay and price impact for closing
-    const sizeToClose = position.size * position.remainingSize * portion;
-    const delay = await this.transactionSimulator.simulateTransactionDelay();
-    const executionPrice = this.transactionSimulator.calculatePriceImpact(
-      sizeToClose,
-      exitPrice,
-      position.volume
-    );
-
-    const profitLossAmount = (position.getProfitLoss() / 100) * sizeToClose;
-    this.wallet.updateBalance(sizeToClose + profitLossAmount);
-    this.wallet.recordTrade(profitLossAmount > 0 ? 1 : -1);
-
-    if (portion === 1.0) {
-      if (profitLossAmount > 0) this.wins++;
-      else if (profitLossAmount < 0) this.losses++;
-      
-      position.close(executionPrice);
-      const closedPosition = this.stateManager.closePosition(mint);
-      if (!closedPosition) {
-        const error = new Error(`Failed to close position for ${mint}`);
-        errorLogger.logError(error, 'PositionManager.closePosition');
-        return false;
-      }
-
-      return true;
-    } else {
-      position.recordPartialExit(portion, executionPrice);
-      
+    const success = await position.close();
+    if (success) {
+      this.positions.delete(mint);
       return true;
     }
+    return false;
   }
 
-  async increasePosition(mint, additionalSize) {
-    const position = this.getPosition(mint);
-    if (!position || this.wallet.balance < additionalSize) return false;
-
-    // Simulate transaction for position increase
-    const delay = await this.transactionSimulator.simulateTransactionDelay();
-    const executionPrice = this.transactionSimulator.calculatePriceImpact(
-      additionalSize,
-      position.currentPrice * (position.size + additionalSize),
-      position.volume
-    );
-
-    // Update position size and cost basis
-    const newTotalSize = position.size + additionalSize;
-    const newCostBasis = ((position.size * position.entryPrice) + (additionalSize * executionPrice)) / newTotalSize;
-    
-    position.size = newTotalSize;
-    position.entryPrice = newCostBasis;
-    this.wallet.updateBalance(-additionalSize);
-
-    return true;
-  }
-
-  updatePosition(mint, currentPrice, volumeData = null, candleData = null) {
-    const position = this.getPosition(mint);
-    if (!position) return null;
-
-    position.update(currentPrice, volumeData, candleData);
-    return position;
-  }
-
-  getPosition(mint) {
-    return this.stateManager.getPosition(mint);
-  }
-
-  getPositions() {
-    return this.stateManager.getAllPositions();
-  }
-
-  getTotalValue() {
-    return this.getPositions().reduce((total, position) => {
-      return total + (position.currentPrice * position.size);
-    }, 0);
-  }
-
-  getTotalProfitLoss() {
-    const positions = this.getPositions();
-    if (positions.length === 0) return 0;
-    
-    return positions.reduce((total, position) => {
-      return total + position.getProfitLoss();
-    }, 0) / positions.length; // Average PnL across all positions
-  }
-
-  calculatePositionSize(baseSize) {
-    // Implement dynamic position sizing based on wallet balance and risk
-    const walletBalance = this.wallet.getBalance();
-    const maxRiskPerTrade = config.RISK.MAX_RISK_PER_TRADE;
-    const riskAdjustedSize = Math.min(baseSize, walletBalance * maxRiskPerTrade);
-    
-    return riskAdjustedSize;
-  }
-
-  increasePosition(mint, additionalSize) {
-    const position = this.getPosition(mint);
-    if (!position) return;
-
-    const currentSize = position.size;
-    const maxIncrease = currentSize * config.POSITION.MAX_INCREASE_MULTIPLIER;
-    const safeSize = Math.min(additionalSize, maxIncrease);
-
-    position.increaseSize(safeSize);
-  }
-
-  validatePositions() {
+  async validatePositions() {
     const positions = this.getPositions();
     positions.forEach(position => {
       try {
@@ -434,6 +319,40 @@ class PositionManager extends EventEmitter {
     }
 
     return size;
+  }
+
+  increasePosition(mint, additionalSize) {
+    const position = this.getPosition(mint);
+    if (!position) return;
+
+    const currentSize = position.size;
+    const maxIncrease = currentSize * config.POSITION.MAX_INCREASE_MULTIPLIER;
+    const safeSize = Math.min(additionalSize, maxIncrease);
+
+    position.increaseSize(safeSize);
+  }
+
+  getPosition(mint) {
+    return this.stateManager.getPosition(mint);
+  }
+
+  getPositions() {
+    return this.stateManager.getAllPositions();
+  }
+
+  getTotalValue() {
+    return this.getPositions().reduce((total, position) => {
+      return total + (position.currentPrice * position.size);
+    }, 0);
+  }
+
+  getTotalProfitLoss() {
+    const positions = this.getPositions();
+    if (positions.length === 0) return 0;
+    
+    return positions.reduce((total, position) => {
+      return total + position.getProfitLoss();
+    }, 0) / positions.length; // Average PnL across all positions
   }
 
   handlePriceUpdate({ newPrice, oldPrice, percentChange }) {
