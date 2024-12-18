@@ -13,6 +13,9 @@ jest.mock('../../src/utils/config', () => ({
     MIN: 10,
     MAX: 1000
   },
+  TOKEN: {
+    PRICE_IMPACT_THRESHOLD: 0.1
+  },
   RECOVERY_MONITOR_INTERVAL: 1000,
   SAFETY: {
     THRESHOLD: 0.1
@@ -57,7 +60,8 @@ describe('TokenManager', () => {
       isSafe: jest.fn().mockReturnValue(true),
       getMarketCap: jest.fn().mockReturnValue(mockTokenData.marketCapSol),
       getTokensInBondingCurve: jest.fn().mockReturnValue(mockTokenData.vTokensInBondingCurve),
-      getSolInBondingCurve: jest.fn().mockReturnValue(mockTokenData.vSolInBondingCurve)
+      getSolInBondingCurve: jest.fn().mockReturnValue(mockTokenData.vSolInBondingCurve),
+      removeAllListeners: jest.fn()
     };
     Token.mockImplementation(() => mockToken);
 
@@ -66,6 +70,7 @@ describe('TokenManager', () => {
     mockStateManager.setState = jest.fn();
     mockStateManager.updateState = jest.fn();
     mockStateManager.evaluateToken = jest.fn();
+    mockStateManager.updateTokenMetrics = jest.fn();
     mockStateManager.cleanup = jest.fn();
     TokenStateManager.mockImplementation(() => mockStateManager);
 
@@ -245,6 +250,47 @@ describe('TokenManager', () => {
       await tokenManager.handleTokenTrade(buyTrade);
 
       expect(mockStateManager.evaluateToken).toHaveBeenCalledWith(mockToken);
+    });
+  });
+
+  describe('Price Updates', () => {
+    beforeEach(async () => {
+      await tokenManager.handleNewToken(mockTokenData);
+    });
+
+    it('should handle price updates', async () => {
+      const priceUpdate = {
+        newPrice: 0.15,
+        oldPrice: 0.10,
+        percentChange: 50
+      };
+
+      await tokenManager.handlePriceUpdate(priceUpdate);
+      expect(mockStateManager.updateTokenMetrics).toHaveBeenCalled();
+    });
+
+    it('should ignore price updates for unknown tokens', async () => {
+      const priceUpdate = {
+        newPrice: 0.15,
+        oldPrice: 0.10,
+        percentChange: 50
+      };
+
+      // Clear tokens map
+      tokenManager.tokens.clear();
+      await tokenManager.handlePriceUpdate(priceUpdate);
+      expect(mockStateManager.updateTokenMetrics).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Safety Checks', () => {
+    it('should handle unsafe tokens', () => {
+      const eventSpy = jest.spyOn(tokenManager, 'emit');
+      const reason = 'market_cap_too_low';
+      
+      tokenManager.handleUnsafeToken({ token: mockToken, reason });
+      
+      expect(eventSpy).toHaveBeenCalledWith('token:unsafe', { token: mockToken, reason });
     });
   });
 

@@ -104,8 +104,8 @@ class TokenManager extends EventEmitter {
   }
 
   handleUnsafeToken({ token, reason }) {
-    // Clean up resources for unsafe token
-    this.cleanupToken(token.mint);
+    // Emit event for monitoring/logging purposes
+    this.emit('token:unsafe', { token, reason });
   }
 
   handleDeadToken({ token, reason }) {
