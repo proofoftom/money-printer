@@ -1,16 +1,20 @@
 // Wallet class to track balance and trading statistics
 
 class Wallet {
-  constructor(initialBalance = 1) {
+  constructor(initialBalance = 3) {
     this.balance = initialBalance;
     this.totalPnL = 0;
-    console.log(`Wallet initialized with balance: ${this.balance.toFixed(4)} SOL`);
+    console.log(
+      `Wallet initialized with balance: ${this.balance.toFixed(4)} SOL`
+    );
   }
 
   updateBalance(amount) {
     this.balance += amount;
     console.log(
-      `Balance updated by ${amount.toFixed(4)} SOL, new balance: ${this.balance.toFixed(4)} SOL`
+      `Balance updated by ${amount.toFixed(
+        4
+      )} SOL, new balance: ${this.balance.toFixed(4)} SOL`
     );
   }
 

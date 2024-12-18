@@ -53,7 +53,6 @@ class TokenTracker extends EventEmitter {
         token.marketCapSol
       );
       if (success) {
-        token.setState("inPosition");
         this.emit("positionOpened", token);
       }
     });
@@ -97,7 +96,11 @@ class TokenTracker extends EventEmitter {
     // Get current position if exists
     const position = this.positionManager.getPosition(token.mint);
     if (position && token.state !== "inPosition") {
+      // Only set state to inPosition if we're not already in that state
       token.setState("inPosition");
+    } else if (!position && token.state === "inPosition") {
+      // Handle case where position was closed but token state wasn't updated
+      token.setState("closed");
     }
 
     switch (token.state) {

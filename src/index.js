@@ -220,12 +220,6 @@ tokenTracker.on("positionOpened", (token) => {
   global.dashboard.logStatus(`Opened position for ${token.symbol}`, "info");
   global.dashboard.logStatus(`Entry price: ${position.entryPrice} SOL`, "info");
   global.dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
-  global.dashboard.logTrade({
-    type: "BUY",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: 0,
-  });
 });
 
 tokenTracker.on("takeProfitExecuted", ({ token, percentage, portion }) => {
@@ -235,24 +229,12 @@ tokenTracker.on("takeProfitExecuted", ({ token, percentage, portion }) => {
     "info"
   );
   global.dashboard.logStatus(`Current market cap: ${token.marketCapSol} SOL`, "info");
-  global.dashboard.logTrade({
-    type: "SELL",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: percentage,
-  });
 });
 
 tokenTracker.on("positionClosed", ({ token, reason }) => {
   global.dashboard.logStatus(`Position closed for ${token.symbol}`, "info");
   global.dashboard.logStatus(`Reason: ${reason}`, "info");
   global.dashboard.logStatus(`Final market cap: ${token.marketCapSol} SOL`, "info");
-  global.dashboard.logTrade({
-    type: "CLOSE",
-    mint: token.mint,
-    symbol: token.symbol,
-    profitLoss: token.profitLoss,
-  });
 });
 
 tokenTracker.on("error", ({ token, error }) => {
