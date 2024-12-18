@@ -3,7 +3,7 @@ const config = require("./config");
 const { TokenStateManager, PricePoint, STATES } = require("./TokenStateManager");
 
 class Token extends EventEmitter {
-  constructor(tokenData) {
+  constructor(tokenData, priceManager) {
     super();
     this.mint = tokenData.mint;
     this.name = tokenData.name;
@@ -17,6 +17,7 @@ class Token extends EventEmitter {
     this.marketCapSol = tokenData.marketCapSol;
     this.signature = tokenData.signature;
     this.bondingCurveKey = tokenData.bondingCurveKey;
+    this.priceManager = priceManager;
 
     // Initialize state manager
     this.stateManager = new TokenStateManager();
