@@ -46,6 +46,16 @@ class Dashboard {
       this.logTrade(tradeData);
     });
 
+    // Listen for balance updates from Wallet
+    this.wallet.on('balanceUpdate', () => {
+      this.updateBalanceHistory();
+    });
+
+    // Update dashboard every second
+    setInterval(() => {
+      this.updateDashboard();
+    }, 1000);
+
     this.initializeDashboard();
   }
 
@@ -65,9 +75,6 @@ class Dashboard {
 
     this.initializeComponents();
     this.setupEventHandlers();
-
-    // Set up periodic updates
-    setInterval(() => this.updateDashboard(), 1000);
 
     // Initial render
     this.screen.render();
@@ -240,10 +247,11 @@ class Dashboard {
           this.balanceHistory.y.shift();
         }
 
-        // Only show every 60th point on x-axis for readability
+        // Filter both x and y data to show only every 60th point for readability
+        const filteredIndices = this.balanceHistory.x.map((_, i) => i).filter(i => i % 60 === 0);
         const displayData = {
-          x: this.balanceHistory.x.filter((_, i) => i % 60 === 0),
-          y: this.balanceHistory.y,
+          x: filteredIndices.map(i => this.balanceHistory.x[i]),
+          y: filteredIndices.map(i => this.balanceHistory.y[i]),
           style: {
             line: "yellow",
           },
