@@ -1,6 +1,8 @@
 const EventEmitter = require("events");
 const config = require("../../utils/config");
 const errorLogger = require("../../monitoring/errorLoggerInstance");
+const fs = require('fs').promises;
+const path = require('path');
 
 class TokenStateManager extends EventEmitter {
   constructor() {
@@ -34,6 +36,8 @@ class TokenStateManager extends EventEmitter {
         );
       });
     }
+
+    this.stateDir = './token-states';
   }
 
   setState(token, newState, reason = "") {
@@ -409,6 +413,93 @@ class TokenStateManager extends EventEmitter {
       }
     } catch (error) {
       this.errorLogger.logError(error, "TokenStateManager.loadState");
+    }
+  }
+
+  async saveTokenState(token) {
+    try {
+      const state = {
+        mint: token.mint,
+        name: token.name,
+        symbol: token.symbol,
+        minted: token.minted,
+        uri: token.uri,
+        traderPublicKey: token.traderPublicKey,
+        initialBuy: token.initialBuy,
+        vTokensInBondingCurve: token.vTokensInBondingCurve,
+        vSolInBondingCurve: token.vSolInBondingCurve,
+        marketCapSol: token.marketCapSol,
+        signature: token.signature,
+        bondingCurveKey: token.bondingCurveKey,
+        
+        // Balance data
+        totalSupply: token.totalSupply.toString(),
+        circulatingSupply: token.circulatingSupply.toString(),
+        balanceLedger: Array.from(token.balanceLedger.entries()).map(([address, data]) => ({
+          address,
+          balance: data.balance.toString(),
+          history: data.history.map(h => ({
+            ...h,
+            balance: h.balance.toString(),
+            change: h.change.toString()
+          }))
+        })),
+
+        // Trade data
+        trades: token.trades,
+        tradeCount: token.tradeCount,
+        lastTradeTime: token.lastTradeTime,
+        volume24h: token.volume24h,
+        volumeHistory: token.volumeHistory,
+
+        // Market metrics
+        highestMarketCap: token.highestMarketCap,
+        drawdownLow: token.drawdownLow,
+        currentPrice: token.currentPrice,
+        priceHistory: token.priceHistory,
+        priceVolatility: token.priceVolatility
+      };
+
+      const filePath = path.join(this.stateDir, `${token.mint}.json`);
+      await fs.promises.writeFile(filePath, JSON.stringify(state, null, 2));
+    } catch (error) {
+      console.error(`Error saving state for token ${token.mint}:`, error);
+      throw error;
+    }
+  }
+
+  async loadTokenState(mint) {
+    try {
+      const filePath = path.join(this.stateDir, `${mint}.json`);
+      const data = await fs.promises.readFile(filePath, 'utf8');
+      const state = JSON.parse(data);
+
+      // Convert balance data back to BigInt
+      state.totalSupply = BigInt(state.totalSupply);
+      state.circulatingSupply = BigInt(state.circulatingSupply);
+      
+      // Reconstruct balance ledger
+      state.balanceLedger = new Map(
+        state.balanceLedger.map(({ address, balance, history }) => [
+          address,
+          {
+            balance: BigInt(balance),
+            history: history.map(h => ({
+              ...h,
+              balance: BigInt(h.balance),
+              change: BigInt(h.change)
+            }))
+          }
+        ])
+      );
+
+      return state;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return null;
+      }
+      console.error(`Error loading state for token ${mint}:`, error);
+      throw error;
     }
   }
 }

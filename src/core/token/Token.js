@@ -20,6 +20,11 @@ class Token extends EventEmitter {
     this.signature = tokenData.signature;
     this.bondingCurveKey = tokenData.bondingCurveKey;
 
+    // Initialize balance ledger
+    this.balanceLedger = new Map(); // address -> { balance, history }
+    this.totalSupply = BigInt(tokenData.totalSupply || '0');
+    this.circulatingSupply = BigInt(tokenData.circulatingSupply || '0');
+
     // Initialize trade tracking
     this.trades = [];
     this.tradeCount = 0;
@@ -98,7 +103,7 @@ class Token extends EventEmitter {
   }
 
   updateTrade(tradeData) {
-    const { type, amount, price, timestamp } = tradeData;
+    const { type, amount, price, timestamp, traderAddress } = tradeData;
     
     // Add trade to history
     this.trades.push(tradeData);
@@ -110,6 +115,22 @@ class Token extends EventEmitter {
     
     // Update market metrics
     this.updateMarketMetrics(tradeData);
+
+    // Update balances
+    if (traderAddress) {
+      this.updateBalances({
+        traderAddress,
+        amount: BigInt(amount),
+        type,
+        timestamp
+      });
+    }
+
+    // Update price metrics
+    this.updatePriceMetrics(price);
+
+    // Emit trade event
+    this.emit('trade', tradeData);
   }
 
   updateVolume(amount, price, timestamp) {
@@ -144,6 +165,49 @@ class Token extends EventEmitter {
         if (!this.drawdownLow || this.marketCapSol < this.drawdownLow) {
           this.drawdownLow = this.marketCapSol;
         }
+      }
+    }
+  }
+
+  updatePriceMetrics(newPrice) {
+    // Update current price
+    this.currentPrice = newPrice;
+    
+    // Add to price history
+    this.priceHistory.push({
+      price: newPrice,
+      timestamp: Date.now()
+    });
+
+    // Update price buffer
+    this.priceBuffer.data[this.priceBuffer.head] = newPrice;
+    this.priceBuffer.head = (this.priceBuffer.head + 1) % this.priceBuffer.size;
+    if (this.priceBuffer.count < this.priceBuffer.size) {
+      this.priceBuffer.count++;
+    }
+
+    // Calculate price volatility
+    if (this.priceBuffer.count > 1) {
+      const prices = this.priceBuffer.data.slice(0, this.priceBuffer.count);
+      const mean = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+      this.priceVolatility = Math.sqrt(
+        prices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / (prices.length - 1)
+      );
+    }
+
+    // Update market cap
+    this.marketCapSol = this.circulatingSupply * BigInt(Math.floor(newPrice * 1e9)) / BigInt(1e9);
+    
+    // Update highest market cap if needed
+    if (this.marketCapSol > this.highestMarketCap) {
+      this.highestMarketCap = this.marketCapSol;
+      this.drawdownLow = null; // Reset drawdown tracking on new high
+    }
+    
+    // Update drawdown if we're below ATH
+    if (this.marketCapSol < this.highestMarketCap) {
+      if (!this.drawdownLow || this.marketCapSol < this.drawdownLow) {
+        this.drawdownLow = this.marketCapSol;
       }
     }
   }
@@ -201,89 +265,6 @@ class Token extends EventEmitter {
 
     // Emit update event
     this.emit('updated', this);
-  }
-
-  updatePriceMetrics(newPrice) {
-    // Update current price
-    this.currentPrice = newPrice;
-
-    // Add to price history
-    this.priceHistory.push({
-      price: newPrice,
-      timestamp: Date.now()
-    });
-
-    // Calculate volumes
-    this.volume1m = this.getRecentVolume(60 * 1000);
-    this.volume5m = this.getRecentVolume(5 * 60 * 1000);
-    this.volume30m = this.getRecentVolume(30 * 60 * 1000);
-
-    // Update pump metrics
-    const priceChange5m = this.getPriceChange(300);
-    if (priceChange5m > 0) {
-      this.pumpMetrics.highestGainRate = Math.max(
-        this.pumpMetrics.highestGainRate,
-        priceChange5m / 5 // %/min
-      );
-    }
-
-    // Calculate price acceleration
-    const oldestPrice = this.priceHistory[0]?.price || newPrice;
-    const priceAcceleration = ((newPrice - oldestPrice) / oldestPrice) * 100;
-    this.pumpMetrics.priceAcceleration = priceAcceleration;
-
-    // Update recovery metrics
-    this.updateRecoveryMetrics();
-
-    // Emit price update
-    this.emit('priceUpdate', {
-      price: this.currentPrice,
-      acceleration: this.pumpMetrics.priceAcceleration,
-      pumpMetrics: this.pumpMetrics,
-      volume1m: this.volume1m,
-      volume5m: this.volume5m,
-      volume30m: this.volume30m
-    });
-  }
-
-  getRecentVolume(timeWindow) {
-    const now = Date.now();
-    const cutoff = now - timeWindow;
-
-    // Get volume from price history
-    return this.priceHistory
-      .filter(p => p.timestamp > cutoff)
-      .reduce((sum, p) => sum + (p.volume || 0), 0);
-  }
-
-  updateWalletActivity(publicKey, tradeData) {
-    const now = tradeData.timestamp;
-    const volumeInSol = Math.abs(tradeData.amount * this.currentPrice);
-  }
-
-  updateWalletBalance(publicKey, newBalance, timestamp) {
-  }
-
-  getHolderCount() {
-    return 0;
-  }
-
-  getTotalTokensHeld() {
-    return 0;
-  }
-
-  getTopHolderConcentration(topN = 10) {
-    return 0;
-  }
-
-  getTraderStats(interval = "5m") {
-    return {
-      totalVolume: 0,
-      uniqueTraders: 0,
-      maxWalletVolumePercentage: 0,
-      suspectedWashTradePercentage: 0,
-      suspiciousTraders: {}
-    };
   }
 
   updateMetrics() {
@@ -1421,6 +1402,130 @@ class Token extends EventEmitter {
         console.log(`Removed stale listener for event ${info.event} on token ${this.symbol}`);
       }
     }
+  }
+
+  /**
+   * Update balances based on a trade
+   * @param {Object} trade Trade data
+   * @param {string} trade.traderAddress Trader's address
+   * @param {BigInt} trade.amount Amount of tokens
+   * @param {string} trade.type Trade type ('buy' or 'sell')
+   */
+  updateBalances(trade) {
+    const { traderAddress, amount, type } = trade;
+    const normalizedAddress = traderAddress.toLowerCase();
+
+    // Initialize balance record if it doesn't exist
+    if (!this.balanceLedger.has(normalizedAddress)) {
+      this.balanceLedger.set(normalizedAddress, {
+        balance: BigInt(0),
+        history: []
+      });
+    }
+
+    const record = this.balanceLedger.get(normalizedAddress);
+    const change = type === 'buy' ? amount : -amount;
+    const newBalance = record.balance + change;
+
+    // Update balance and history
+    record.balance = newBalance;
+    record.history.push({
+      timestamp: Date.now(),
+      change,
+      balance: newBalance,
+      type
+    });
+
+    // Update circulating supply
+    if (type === 'buy') {
+      this.circulatingSupply += amount;
+    } else {
+      this.circulatingSupply -= amount;
+    }
+
+    // Emit balance update event
+    this.emit('balanceUpdate', {
+      address: normalizedAddress,
+      balance: newBalance,
+      change,
+      type
+    });
+  }
+
+  /**
+   * Get balance metrics for an address
+   * @param {string} address Wallet address
+   * @returns {Object} Balance metrics
+   */
+  getBalanceMetrics(address) {
+    const normalizedAddress = address.toLowerCase();
+    const record = this.balanceLedger.get(normalizedAddress);
+    
+    if (!record) {
+      return {
+        balance: BigInt(0),
+        percentageOfSupply: 0,
+        trades: 0,
+        averageHoldTime: 0
+      };
+    }
+
+    const now = Date.now();
+    const history = record.history;
+    let totalHoldTime = 0;
+    let lastTradeTime = null;
+
+    for (let i = 0; i < history.length; i++) {
+      const trade = history[i];
+      if (lastTradeTime) {
+        totalHoldTime += trade.timestamp - lastTradeTime;
+      }
+      lastTradeTime = trade.timestamp;
+    }
+
+    if (lastTradeTime) {
+      totalHoldTime += now - lastTradeTime;
+    }
+
+    return {
+      balance: record.balance,
+      percentageOfSupply: Number((record.balance * BigInt(100)) / this.circulatingSupply),
+      trades: history.length,
+      averageHoldTime: history.length > 0 ? totalHoldTime / history.length : 0
+    };
+  }
+
+  /**
+   * Get top token holders
+   * @param {number} limit Number of holders to return
+   * @returns {Array} Top holders with their metrics
+   */
+  getTopHolders(limit = 10) {
+    const holders = Array.from(this.balanceLedger.entries())
+      .map(([address, record]) => ({
+        address,
+        ...this.getBalanceMetrics(address)
+      }))
+      .filter(holder => holder.balance > BigInt(0))
+      .sort((a, b) => Number(b.balance - a.balance))
+      .slice(0, limit);
+
+    return holders;
+  }
+
+  /**
+   * Calculate concentration metrics
+   * @returns {Object} Concentration metrics
+   */
+  getConcentrationMetrics() {
+    const holders = this.getTopHolders();
+    const totalHoldings = holders.reduce((sum, holder) => sum + holder.balance, BigInt(0));
+    
+    return {
+      topHolderCount: holders.length,
+      topHolderConcentration: Number((totalHoldings * BigInt(100)) / this.circulatingSupply),
+      averageBalance: this.circulatingSupply / BigInt(Math.max(1, holders.length))
+    };
   }
 }
 
