@@ -22,8 +22,11 @@ class Token extends EventEmitter {
 
     // Initialize balance ledger
     this.balanceLedger = new Map(); // address -> { balance, history }
-    this.totalSupply = BigInt(tokenData.totalSupply || '0');
-    this.circulatingSupply = BigInt(tokenData.circulatingSupply || '0');
+    
+    // Initialize supply tracking (convert to BigInt with 9 decimals)
+    this.vTokensInBondingCurve = tokenData.vTokensInBondingCurve;
+    const bondingCurveTokens = BigInt(Math.floor(this.vTokensInBondingCurve * 1e9));
+    this.totalSupply = bondingCurveTokens; // Initially, all tokens are in the bonding curve
 
     // Initialize trade tracking
     this.trades = [];
@@ -103,7 +106,7 @@ class Token extends EventEmitter {
   }
 
   updateTrade(tradeData) {
-    const { type, amount, price, timestamp, traderAddress } = tradeData;
+    const { type, amount, price, timestamp, traderAddress, vTokensInBondingCurve } = tradeData;
     
     // Add trade to history
     this.trades.push(tradeData);
@@ -116,13 +119,14 @@ class Token extends EventEmitter {
     // Update market metrics
     this.updateMarketMetrics(tradeData);
 
-    // Update balances
+    // Update balances and supply
     if (traderAddress) {
       this.updateBalances({
         traderAddress,
-        amount: BigInt(amount),
+        amount: BigInt(Math.floor(Number(amount) * 1e9)), // Convert to BigInt with 9 decimals
         type,
-        timestamp
+        timestamp,
+        vTokensInBondingCurve
       });
     }
 
@@ -1405,6 +1409,53 @@ class Token extends EventEmitter {
   }
 
   /**
+   * Validate and update total supply
+   * @returns {boolean} True if supply is valid, false otherwise
+   */
+  validateSupply() {
+    // Convert vTokensInBondingCurve to BigInt (multiply by 1e9 to handle decimals)
+    const bondingCurveTokens = BigInt(Math.floor(this.vTokensInBondingCurve * 1e9));
+    
+    // Calculate total tokens held by all addresses
+    const totalHeldTokens = Array.from(this.balanceLedger.values())
+      .reduce((sum, { balance }) => sum + balance, BigInt(0));
+    
+    // Total supply should equal tokens in bonding curve + tokens held by addresses
+    const calculatedTotalSupply = bondingCurveTokens + totalHeldTokens;
+    
+    if (calculatedTotalSupply !== this.totalSupply) {
+      console.error('Supply mismatch detected:', {
+        calculatedSupply: calculatedTotalSupply.toString(),
+        recordedSupply: this.totalSupply.toString(),
+        bondingCurveTokens: bondingCurveTokens.toString(),
+        heldTokens: totalHeldTokens.toString()
+      });
+      
+      // Update total supply to correct value
+      this.totalSupply = calculatedTotalSupply;
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * Update token supply based on trade
+   * @param {Object} trade Trade data
+   */
+  updateSupply(trade) {
+    // Convert amounts to BigInt (multiply by 1e9 to handle decimals)
+    const amount = BigInt(Math.floor(Number(trade.amount) * 1e9));
+    const newBondingCurveTokens = BigInt(Math.floor(trade.vTokensInBondingCurve * 1e9));
+    
+    // Update bonding curve token count
+    this.vTokensInBondingCurve = trade.vTokensInBondingCurve;
+    
+    // Validate and update total supply
+    this.validateSupply();
+  }
+
+  /**
    * Update balances based on a trade
    * @param {Object} trade Trade data
    * @param {string} trade.traderAddress Trader's address
@@ -1412,7 +1463,7 @@ class Token extends EventEmitter {
    * @param {string} trade.type Trade type ('buy' or 'sell')
    */
   updateBalances(trade) {
-    const { traderAddress, amount, type } = trade;
+    const { traderAddress, amount, type, vTokensInBondingCurve } = trade;
     const normalizedAddress = traderAddress.toLowerCase();
 
     // Initialize balance record if it doesn't exist
@@ -1436,11 +1487,10 @@ class Token extends EventEmitter {
       type
     });
 
-    // Update circulating supply
-    if (type === 'buy') {
-      this.circulatingSupply += amount;
-    } else {
-      this.circulatingSupply -= amount;
+    // Update bonding curve token count and validate supply
+    if (vTokensInBondingCurve !== undefined) {
+      this.vTokensInBondingCurve = vTokensInBondingCurve;
+      this.validateSupply();
     }
 
     // Emit balance update event
