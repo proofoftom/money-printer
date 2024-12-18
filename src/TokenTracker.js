@@ -1,6 +1,7 @@
 const EventEmitter = require("events");
 const Token = require("./Token");
 const config = require("./config");
+const { STATES } = require("./TokenStateManager");
 
 class TokenTracker extends EventEmitter {
   constructor(
@@ -22,7 +23,7 @@ class TokenTracker extends EventEmitter {
 
     // Check market cap threshold before processing
     const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-    if (marketCapUSD >= config.THRESHOLDS.MAX_MARKET_CAP_USD) {
+    if (marketCapUSD >= config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
       console.info(
         `Ignoring new token ${token.symbol || token.mint.slice(0, 8)} - Market cap too high: $${marketCapUSD.toFixed(2)} (${token.marketCapSol.toFixed(2)} SOL)`
       );
@@ -31,16 +32,18 @@ class TokenTracker extends EventEmitter {
 
     this.tokens.set(token.mint, token);
 
+    // Listen for state changes
     token.on("stateChanged", ({ token, from, to }) => {
       this.emit("tokenStateChanged", { token, from, to });
       
       // Unsubscribe from WebSocket updates when token enters dead state
-      if (to === "dead") {
+      if (to === STATES.DEAD) {
         console.log(`Token ${token.symbol || token.mint.slice(0, 8)} marked as dead, unsubscribing from updates`);
         this.webSocketManager.unsubscribeFromToken(token.mint);
       }
     });
 
+    // Listen for position readiness
     token.on("readyForPosition", async (token) => {
       // Check if we already have a position for this token
       if (this.positionManager.getPosition(token.mint)) {
@@ -57,15 +60,12 @@ class TokenTracker extends EventEmitter {
       }
     });
 
+    // Listen for unsafe recovery events
     token.on("unsafeRecovery", (data) => {
       this.emit("unsafeRecovery", data);
-    });
-
-    token.on("recoveryGainTooHigh", (data) => {
-      this.emit("recoveryGainTooHigh", data);
-      const { token, gainPercentage } = data;
+      const { token: unsafeToken, reason, value } = data;
       console.warn(
-        `Token ${token.symbol} (${token.mint}) recovery gain too high: ${gainPercentage.toFixed(2)}%`
+        `Token ${unsafeToken.symbol || unsafeToken.mint.slice(0, 8)} in unsafe recovery: ${reason} (${value})`
       );
     });
 
@@ -79,11 +79,6 @@ class TokenTracker extends EventEmitter {
     const token = this.tokens.get(tradeData.mint);
     if (!token) return;
 
-    // Add trade amount for volume tracking if this is a trade
-    if (tradeData.txType === "buy" || tradeData.txType === "sell") {
-      tradeData.tradeAmount = tradeData.tokenAmount;
-    }
-
     // Update token data first
     token.update(tradeData);
 
@@ -95,105 +90,50 @@ class TokenTracker extends EventEmitter {
 
     // Get current position if exists
     const position = this.positionManager.getPosition(token.mint);
-    if (position && token.state !== "inPosition") {
-      // Only set state to inPosition if we're not already in that state
-      token.setState("inPosition");
-    } else if (!position && token.state === "inPosition") {
-      // Handle case where position was closed but token state wasn't updated
-      token.setState("closed");
-    }
 
-    switch (token.state) {
-      case "new":
-        if (marketCapUSD >= config.THRESHOLDS.HEATING_UP_USD) {
-          token.setState("heatingUp");
-          this.emit("tokenHeatingUp", token);
-        }
-        break;
-
-      case "heatingUp":
-        if (marketCapUSD >= config.THRESHOLDS.FIRST_PUMP_USD) {
-          token.setState("firstPump");
-        }
-        break;
-
-      case "firstPump":
-        if (!token.highestMarketCap) token.highestMarketCap = marketCapUSD;
-        if (marketCapUSD > token.highestMarketCap) {
-          token.highestMarketCap = marketCapUSD;
-        }
-        const drawdownPercentage =
-          ((token.highestMarketCap - marketCapUSD) / token.highestMarketCap) *
-          100;
-        if (drawdownPercentage >= config.THRESHOLDS.PUMP_DRAWDOWN) {
-          token.setState("drawdown");
-          token.drawdownLow = marketCapUSD;
-        }
-        break;
-
-      case "drawdown":
-        await token.evaluateRecovery(this.safetyChecker);
-        break;
-
-      case "unsafeRecovery":
-        await token.evaluateRecovery(this.safetyChecker);
-        break;
-
-      case "inPosition":
-        const result = this.positionManager.updatePosition(
-          token.mint,
-          token.marketCapSol,
-          { 
-            volume: token.volume5m || 0,
-            volume1m: token.volume1m || 0,
-            volume30m: token.volume30m || 0
-          }
-        );
-        if (result) {
-          if (result.portion === 1.0) {
-            token.setState("closed");
-            this.emit("positionClosed", {
-              token,
-              reason: result.reason || "exit_strategy",
-            });
-          } else {
-            this.emit("partialExit", {
-              token,
-              percentage: result.profitPercentage,
-              portion: result.portion,
-              reason: result.reason || "take_profit",
-            });
-          }
-        }
-        break;
-    }
-
-    // Check for token death in any state
-    if (marketCapUSD <= config.THRESHOLDS.DEAD_USD) {
-      // Only mark tokens as dead if they've reached FIRST_PUMP state
-      if (token.highestMarketCap >= config.THRESHOLDS.FIRST_PUMP_USD) {
-        if (position) {
-          const closeResult = this.positionManager.closePosition(token.mint, token.marketCapSol);
-          if (closeResult) {
-            token.setState("dead");
-            this.emit("positionClosed", { token, reason: "dead" });
-          }
-        } else {
-          token.setState("dead");
-        }
+    // Handle position state synchronization
+    if (position && token.state !== STATES.OPEN) {
+      const stateChange = token.stateManager.setState(STATES.OPEN);
+      this.emit("tokenStateChanged", { token, ...stateChange });
+    } else if (!position && token.state === STATES.OPEN) {
+      // Position was closed, transition to appropriate state based on current conditions
+      if (token.stateManager.priceHistory.bottom) {
+        const stateChange = token.stateManager.setState(STATES.RECOVERY);
+        this.emit("tokenStateChanged", { token, ...stateChange });
+      } else {
+        const stateChange = token.stateManager.setState(STATES.DRAWDOWN);
+        this.emit("tokenStateChanged", { token, ...stateChange });
       }
     }
 
-    this.emit("tokenUpdated", token);
+    // Check if token is dead
+    if (marketCapUSD <= config.THRESHOLDS.DEAD_USD && token.state !== STATES.DEAD) {
+      const stateChange = token.stateManager.setState(STATES.DEAD);
+      this.emit("tokenStateChanged", { token, ...stateChange });
+      return;
+    }
+
+    // Evaluate recovery conditions if in recovery state
+    if (token.state === STATES.RECOVERY) {
+      await token.evaluateRecovery(this.safetyChecker);
+    }
   }
 
   getToken(mint) {
     return this.tokens.get(mint);
   }
 
+  getAllTokens() {
+    return Array.from(this.tokens.values());
+  }
+
   getTokensByState(state) {
-    return Array.from(this.tokens.values()).filter(
-      (token) => token.state === state
+    return this.getAllTokens().filter(token => token.state === state);
+  }
+
+  getActiveTokens() {
+    return this.getAllTokens().filter(token => 
+      token.state !== STATES.DEAD && token.state !== STATES.CLOSED
     );
   }
 }

@@ -134,8 +134,8 @@ class Dashboard {
     });
 
     // Token state boxes in second row, extending to bottom
-    this.heatingUpBox = this.grid.set(3, 0, 9, 3, blessed.box, {
-      label: " Heating Up ",
+    this.newTokensBox = this.grid.set(3, 0, 9, 3, blessed.box, {
+      label: " New Tokens ",
       content: "Waiting...",
       border: "line",
       tags: false,
@@ -146,8 +146,8 @@ class Dashboard {
       },
     });
 
-    this.firstPumpBox = this.grid.set(3, 3, 9, 3, blessed.box, {
-      label: " First Pump ",
+    this.pumpingBox = this.grid.set(3, 3, 9, 3, blessed.box, {
+      label: " Pumping ",
       content: "Waiting...",
       border: "line",
       tags: false,
@@ -170,8 +170,8 @@ class Dashboard {
       },
     });
 
-    this.supplyRecoveryBox = this.grid.set(3, 9, 9, 3, blessed.box, {
-      label: " Unsafe Recovery ",
+    this.recoveryBox = this.grid.set(3, 9, 9, 3, blessed.box, {
+      label: " Recovery ",
       content: "Waiting...",
       border: "line",
       tags: false,
@@ -432,12 +432,10 @@ class Dashboard {
   updateDashboard() {
     try {
       this.walletBox.setContent(this.getWalletStatus());
-      this.heatingUpBox.setContent(this.getTokensByState("heatingUp"));
-      this.firstPumpBox.setContent(this.getTokensByState("firstPump"));
+      this.newTokensBox.setContent(this.getTokensByState("new"));
+      this.pumpingBox.setContent(this.getTokensByState("pumping"));
       this.drawdownBox.setContent(this.getTokensByState("drawdown"));
-      this.supplyRecoveryBox.setContent(
-        this.getTokensByState("unsafeRecovery")
-      );
+      this.recoveryBox.setContent(this.getTokensByState("recovery"));
       this.activePositionsBox.setContent(this.getActivePositions());
       this.tradeBox.setContent(this.getTradeHistory());
       this.updateBalanceHistory();
@@ -449,9 +447,7 @@ class Dashboard {
 
   getTokensByState(state) {
     try {
-      const tokens = Array.from(this.tokenTracker.tokens.values()).filter(
-        (token) => token.state === state
-      );
+      const tokens = this.tokenTracker.getTokensByState(state);
 
       if (tokens.length === 0) {
         return "No tokens in this state";
@@ -476,47 +472,54 @@ class Dashboard {
             const topConcentration = token.getTopHolderConcentration(10);
             const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
 
-            // Get volume data in USD with k format for ≥1000, whole numbers for <1000
-            const formatVolume = (vol) => {
-              const volUSD = this.priceManager.solToUSD(vol);
-              return volUSD >= 1000
-                ? `${(volUSD / 1000).toFixed(1)}k`
-                : Math.round(volUSD).toString();
-            };
-
             // Get volume from token's volume metrics
-            const vol1m = formatVolume(token.volume1m || 0);
-            const vol5m = formatVolume(token.volume5m || 0);
-            const vol30m = formatVolume(token.volume30m || 0);
+            const vol1m = this.formatVolume(token.volume1m || 0);
+            const vol5m = this.formatVolume(token.volume5m || 0);
+            const vol30m = this.formatVolume(token.volume30m || 0);
 
             // Format the token info string
             const symbol = token.symbol || token.mint.slice(0, 8);
             const rows = [
               `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(5)} | 30m: $${vol30m}`,
+              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(5)} | 30m: $${vol30m}`
             ];
 
-            // Add safety failure reason for unsafe recovery state
-            if (state === "unsafeRecovery" && token.unsafeReason) {
-              const { reason, value } = token.unsafeReason;
-              let valueStr = value;
-              switch (reason) {
-                case "High holder concentration":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "Token too young":
-                  valueStr = `${Math.floor(value)}s`;
-                  break;
-                case "Creator holdings too high":
-                  valueStr = `${value.toFixed(1)}%`;
-                  break;
-                case "volatilityTooHigh":
-                  valueStr = `${value.toFixed(2)}`;
-                  break;
-                default:
-                  valueStr = value ? value.toString() : "N/A";
+            // Add pump metrics for new tokens
+            if (state === "new") {
+              const priceIncrease1m = token.getPriceIncrease(60);
+              const priceIncrease5m = token.getPriceIncrease(300);
+              const volumeSpike = token.getVolumeSpike();
+              const buyPressure = token.getBuyPressure();
+              
+              rows.push(
+                `P1m: ${priceIncrease1m.toFixed(1)}% P5m: ${priceIncrease5m.toFixed(1)}% VS: ${volumeSpike.toFixed(0)}% BP: ${buyPressure.toFixed(0)}%`
+              );
+            }
+
+            // Add unsafe reasons for recovery state
+            if (state === "recovery" && token.stateManager.hasUnsafeReasons()) {
+              const unsafeReasons = token.stateManager.getUnsafeReasons();
+              if (unsafeReasons.length > 0) {
+                const { reason, value } = unsafeReasons[0];
+                let valueStr = value;
+                switch (reason) {
+                  case "High holder concentration":
+                    valueStr = `${value.toFixed(1)}%`;
+                    break;
+                  case "Token too young":
+                    valueStr = `${Math.floor(value)}s`;
+                    break;
+                  case "Creator holdings too high":
+                    valueStr = `${value.toFixed(1)}%`;
+                    break;
+                  case "volatilityTooHigh":
+                    valueStr = `${value.toFixed(2)}`;
+                    break;
+                  default:
+                    valueStr = value ? value.toString() : "N/A";
+                }
+                rows.push(`UNSAFE: ${reason} (${valueStr})`);
               }
-              rows.push(`UNSAFE: ${reason} (${valueStr})`);
             }
 
             rows.push("─".repeat(50)); // Add horizontal rule between tokens

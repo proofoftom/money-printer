@@ -94,26 +94,13 @@ class WebSocketManager extends EventEmitter {
     if (
       message.message &&
       (message.message.includes("Successfully subscribed") ||
-       message.message.includes("Unsubscribed"))
+        message.message.includes("Unsubscribed"))
     ) {
       return;
     }
 
     // Handle token creation messages
     if (message.txType === "create") {
-      // Ignore tokens that are already above our heating up threshold
-      const marketCapUSD = this.priceManager.solToUSD(message.marketCapSol);
-      if (marketCapUSD > config.THRESHOLDS.HEATING_UP_USD) {
-        console.log(
-          `Ignoring new token ${message.name} (${
-            message.mint
-          }) - Market cap too high: $${marketCapUSD.toFixed(
-            2
-          )} (${message.marketCapSol.toFixed(2)} SOL)`
-        );
-        return;
-      }
-
       this.emit("newToken", message);
       this.tokenTracker.handleNewToken(message);
       // Subscribe to trades for the new token
