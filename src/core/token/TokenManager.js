@@ -4,7 +4,7 @@ const config = require("../../utils/config");
 const TokenStateManager = require("./TokenStateManager");
 
 class TokenManager extends EventEmitter {
-  constructor(safetyChecker, positionManager, priceManager, webSocketManager, traderManager) {
+  constructor(safetyChecker, positionManager, priceManager, webSocketManager, traderManager, stateManager) {
     super();
     this.safetyChecker = safetyChecker;
     this.positionManager = positionManager;
@@ -12,11 +12,30 @@ class TokenManager extends EventEmitter {
     this.webSocketManager = webSocketManager;
     this.traderManager = traderManager;
     this.tokens = new Map();
-    this.stateManager = new TokenStateManager();
+    this.stateManager = stateManager;
 
     // Set high max listeners as we manage many tokens
     this.setMaxListeners(100);
 
+    // Set up event handlers
+    this.setupEventHandlers();
+
+    // Recovery monitoring
+    if (process.env.NODE_ENV !== 'test') {
+      this._recoveryInterval = setInterval(
+        () => this.monitorRecoveryOpportunities(),
+        config.RECOVERY_MONITOR_INTERVAL || 30000
+      );
+
+      // Set up periodic cleanup
+      this._cleanupInterval = setInterval(
+        () => this.cleanupInactiveTokens(),
+        300000 // Every 5 minutes
+      );
+    }
+  }
+
+  setupEventHandlers() {
     // Set up state change handlers
     this.stateManager.on('stateChanged', this.handleStateChange.bind(this));
     this.stateManager.on('tokenUnsafe', this.handleUnsafeToken.bind(this));
@@ -27,18 +46,6 @@ class TokenManager extends EventEmitter {
     if (this.priceManager) {
       this.priceManager.on('priceUpdate', this.handlePriceUpdate.bind(this));
     }
-
-    // Recovery monitoring
-    this._recoveryInterval = setInterval(
-      () => this.monitorRecoveryOpportunities(),
-      config.RECOVERY_MONITOR_INTERVAL || 30000
-    );
-
-    // Set up periodic cleanup
-    this._cleanupInterval = setInterval(
-      () => this.cleanupInactiveTokens(),
-      300000 // Every 5 minutes
-    );
   }
 
   handleNewToken(tokenData) {
@@ -185,17 +192,22 @@ class TokenManager extends EventEmitter {
   }
 
   handleTrade(tradeData) {
-    const { mint, traderPublicKey, type, amount, price, timestamp } = tradeData;
-    const token = this.tokens.get(mint);
-    
-    if (!token) return;
+    try {
+      const { mint, traderPublicKey, type, amount, price, timestamp } = tradeData;
+      const token = this.tokens.get(mint);
+      
+      if (!token) return;
 
-    // Update token state
-    token.updateTrade({ type, amount, price, timestamp });
+      // Update token state
+      token.updateTrade({ type, amount, price, timestamp });
 
-    // Forward to trader manager without expecting events back
-    if (this.traderManager) {
-      this.traderManager.handleTrade(tradeData);
+      // Forward to trader manager without expecting events back
+      if (this.traderManager) {
+        this.traderManager.handleTrade(tradeData);
+      }
+    } catch (error) {
+      console.error('Error handling trade:', error);
+      // Don't rethrow to ensure graceful error handling
     }
   }
 
@@ -448,21 +460,31 @@ class TokenManager extends EventEmitter {
   }
 
   cleanup() {
+    // Clear intervals if they exist
     if (this._recoveryInterval) {
       clearInterval(this._recoveryInterval);
+      this._recoveryInterval = null;
     }
+
     if (this._cleanupInterval) {
       clearInterval(this._cleanupInterval);
+      this._cleanupInterval = null;
     }
-    
+
     // Clean up all tokens
-    for (const mint of this.tokens.keys()) {
-      this.cleanupToken(mint);
+    for (const token of this.tokens.values()) {
+      token.cleanup();
     }
-    
-    // Clean up state manager
-    this.stateManager.cleanup();
-    
+
+    // Clear the tokens map
+    this.tokens.clear();
+
+    // Clean up the state manager
+    if (this.stateManager && typeof this.stateManager.cleanup === 'function') {
+      this.stateManager.cleanup();
+    }
+
+    // Remove all event listeners
     this.removeAllListeners();
   }
 }
