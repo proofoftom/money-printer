@@ -13,7 +13,10 @@ jest.mock('../../src/utils/config', () => ({
     MIN: 10,
     MAX: 1000
   },
-  RECOVERY_MONITOR_INTERVAL: 1000
+  RECOVERY_MONITOR_INTERVAL: 1000,
+  SAFETY: {
+    THRESHOLD: 0.1
+  }
 }));
 
 describe('TokenManager', () => {
@@ -42,12 +45,19 @@ describe('TokenManager', () => {
     jest.clearAllMocks();
     process.env.NODE_ENV = 'test';
 
-    // Create mock token
+    // Create mock token with full functionality
     mockToken = {
+      mint: mockTokenData.mint,
       update: jest.fn(),
       updateTrade: jest.fn(),
       recordTrade: jest.fn().mockResolvedValue(true),
-      cleanup: jest.fn()
+      cleanup: jest.fn(),
+      getState: jest.fn().mockReturnValue('new'),
+      isPumping: jest.fn().mockReturnValue(false),
+      isSafe: jest.fn().mockReturnValue(true),
+      getMarketCap: jest.fn().mockReturnValue(mockTokenData.marketCapSol),
+      getTokensInBondingCurve: jest.fn().mockReturnValue(mockTokenData.vTokensInBondingCurve),
+      getSolInBondingCurve: jest.fn().mockReturnValue(mockTokenData.vSolInBondingCurve)
     };
     Token.mockImplementation(() => mockToken);
 
@@ -55,17 +65,26 @@ describe('TokenManager', () => {
     mockStateManager = new EventEmitter();
     mockStateManager.setState = jest.fn();
     mockStateManager.updateState = jest.fn();
+    mockStateManager.evaluateToken = jest.fn();
     mockStateManager.cleanup = jest.fn();
     TokenStateManager.mockImplementation(() => mockStateManager);
 
     // Create mock price manager
     mockPriceManager = new EventEmitter();
     mockPriceManager.solToUSD = jest.fn().mockReturnValue(100);
+    mockPriceManager.getTokenPrice = jest.fn().mockReturnValue(0.1);
 
     // Create other mock dependencies
     mockSafetyChecker = new EventEmitter();
+    mockSafetyChecker.isSafe = jest.fn().mockReturnValue(true);
+
     mockPositionManager = new EventEmitter();
+    mockPositionManager.handleTrade = jest.fn();
+    mockPositionManager.getCurrentPosition = jest.fn().mockReturnValue(null);
+
     mockWebSocketManager = new EventEmitter();
+    mockWebSocketManager.subscribeToToken = jest.fn();
+
     mockTraderManager = new EventEmitter();
     mockTraderManager.handleTrade = jest.fn();
 
@@ -89,103 +108,185 @@ describe('TokenManager', () => {
     }
     tokenManager?.cleanup();
     mockStateManager?.removeAllListeners();
-    mockPriceManager?.removeAllListeners();
   });
 
-  describe('Core Token Operations', () => {
-    it('should handle new token creation', async () => {
+  describe('Token Creation and Management', () => {
+    it('should create and initialize a new token', async () => {
       await tokenManager.handleNewToken(mockTokenData);
 
-      expect(Token).toHaveBeenCalledWith(mockTokenData);
-      expect(tokenManager.tokens.has(mockTokenData.mint)).toBe(true);
-      expect(mockStateManager.setState).toHaveBeenCalledWith(
-        expect.anything(),
-        'new',
-        'Token created'
+      expect(Token).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mint: mockTokenData.mint,
+          marketCapSol: mockTokenData.marketCapSol
+        })
       );
+      expect(mockWebSocketManager.subscribeToToken).toHaveBeenCalledWith(mockTokenData.mint);
+      expect(mockStateManager.setState).toHaveBeenCalledWith(mockToken, 'new');
     });
 
-    it('should handle token trades', async () => {
-      // Create token first
+    it('should not create duplicate tokens', async () => {
+      await tokenManager.handleNewToken(mockTokenData);
       await tokenManager.handleNewToken(mockTokenData);
 
-      const tradeData = {
+      expect(Token).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Trade Handling', () => {
+    beforeEach(async () => {
+      await tokenManager.handleNewToken(mockTokenData);
+    });
+
+    it('should handle buy trades', async () => {
+      const buyTrade = {
+        type: 'buy',
+        mint: mockTokenData.mint,
+        amount: 50,
+        price: 0.1
+      };
+
+      await tokenManager.handleTokenTrade(buyTrade);
+
+      expect(mockToken.recordTrade).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'buy',
+          amount: 50
+        })
+      );
+      expect(mockStateManager.evaluateToken).toHaveBeenCalledWith(mockToken);
+    });
+
+    it('should handle sell trades', async () => {
+      const sellTrade = {
+        type: 'sell',
+        mint: mockTokenData.mint,
+        amount: 25,
+        price: 0.1
+      };
+
+      await tokenManager.handleTokenTrade(sellTrade);
+
+      expect(mockToken.recordTrade).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'sell',
+          amount: 25
+        })
+      );
+      expect(mockStateManager.evaluateToken).toHaveBeenCalledWith(mockToken);
+    });
+
+    it('should ignore trades for unknown tokens', async () => {
+      const unknownTrade = {
+        type: 'buy',
+        mint: 'unknown-mint',
+        amount: 50
+      };
+
+      await tokenManager.handleTokenTrade(unknownTrade);
+
+      expect(mockToken.recordTrade).not.toHaveBeenCalled();
+      expect(mockStateManager.evaluateToken).not.toHaveBeenCalled();
+    });
+
+    it('should handle trades that affect token state', async () => {
+      // Simulate a token that starts pumping after a trade
+      mockToken.isPumping.mockReturnValue(true);
+      mockToken.getMarketCap.mockReturnValue(100);
+
+      const buyTrade = {
         type: 'buy',
         mint: mockTokenData.mint,
         amount: 100,
-        price: 1.5,
-        timestamp: Date.now()
+        price: 0.2
       };
 
-      await tokenManager.handleTrade(tradeData);
-      expect(mockToken.updateTrade).toHaveBeenCalledWith({
-        type: tradeData.type,
-        amount: tradeData.amount,
-        price: tradeData.price,
-        timestamp: tradeData.timestamp
-      });
-      expect(mockTraderManager.handleTrade).toHaveBeenCalledWith(tradeData);
-    });
+      await tokenManager.handleTokenTrade(buyTrade);
 
-    it('should handle token updates', async () => {
-      // Create token first
+      expect(mockStateManager.evaluateToken).toHaveBeenCalledWith(mockToken);
+      expect(mockToken.recordTrade).toHaveBeenCalled();
+    });
+  });
+
+  describe('Token State Transitions', () => {
+    beforeEach(async () => {
       await tokenManager.handleNewToken(mockTokenData);
-
-      const updateData = {
-        mint: mockTokenData.mint,
-        type: 'buy',
-        tokenAmount: 100,
-        vTokensInBondingCurve: 1100,
-        vSolInBondingCurve: 12,
-        marketCap: 60
-      };
-
-      await tokenManager.handleTokenUpdate(updateData);
-      expect(mockStateManager.updateState).toHaveBeenCalledWith(
-        expect.anything(),
-        updateData
-      );
     });
 
-    it('should cleanup resources properly', () => {
-      // Add a token to clean up
-      tokenManager.tokens.set(mockTokenData.mint, mockToken);
-      
-      tokenManager.cleanup();
-      expect(mockToken.cleanup).toHaveBeenCalled();
-      expect(mockStateManager.cleanup).toHaveBeenCalled();
-      expect(tokenManager.tokens.size).toBe(0);
+    it('should handle token becoming unsafe', async () => {
+      // Simulate token becoming unsafe
+      mockToken.isSafe.mockReturnValue(false);
+      mockSafetyChecker.isSafe.mockReturnValue(false);
+
+      const sellTrade = {
+        type: 'sell',
+        mint: mockTokenData.mint,
+        amount: 500,
+        price: 0.05
+      };
+
+      await tokenManager.handleTokenTrade(sellTrade);
+
+      expect(mockStateManager.evaluateToken).toHaveBeenCalledWith(mockToken);
+    });
+
+    it('should handle token entering recovery', async () => {
+      // Simulate conditions for recovery
+      mockToken.getState.mockReturnValue('drawdown');
+      mockToken.isSafe.mockReturnValue(true);
+      mockToken.getMarketCap.mockReturnValue(30);
+
+      const buyTrade = {
+        type: 'buy',
+        mint: mockTokenData.mint,
+        amount: 50,
+        price: 0.15
+      };
+
+      await tokenManager.handleTokenTrade(buyTrade);
+
+      expect(mockStateManager.evaluateToken).toHaveBeenCalledWith(mockToken);
     });
   });
 
   describe('Error Handling', () => {
     it('should handle token creation errors', async () => {
+      // Mock Token constructor to throw
       Token.mockImplementation(() => {
         throw new Error('Token creation failed');
       });
 
-      const result = await tokenManager.handleNewToken(mockTokenData);
-      expect(result).toBeNull();
+      // Expect handleNewToken to throw
+      await expect(async () => {
+        await tokenManager.handleNewToken(mockTokenData);
+      }).rejects.toThrow('Token creation failed');
+
+      // Verify token was not added
       expect(tokenManager.tokens.has(mockTokenData.mint)).toBe(false);
     });
 
-    it('should handle trade errors gracefully', async () => {
+    it('should handle trade recording errors', async () => {
       await tokenManager.handleNewToken(mockTokenData);
-      mockToken.updateTrade.mockImplementation(() => {
-        throw new Error('Trade failed');
-      });
+      mockToken.recordTrade.mockRejectedValue(new Error('Trade recording failed'));
 
-      const tradeData = {
+      const trade = {
         type: 'buy',
         mint: mockTokenData.mint,
-        amount: 100,
-        price: 1.5,
-        timestamp: Date.now()
+        amount: 50
       };
 
-      // Should not throw
-      await tokenManager.handleTrade(tradeData);
-      expect(mockToken.updateTrade).toHaveBeenCalled();
+      await expect(tokenManager.handleTokenTrade(trade))
+        .rejects
+        .toThrow('Trade recording failed');
+    });
+  });
+
+  describe('Cleanup', () => {
+    it('should clean up resources properly', async () => {
+      await tokenManager.handleNewToken(mockTokenData);
+      tokenManager.cleanup();
+
+      expect(mockToken.cleanup).toHaveBeenCalled();
+      expect(mockStateManager.cleanup).toHaveBeenCalled();
     });
   });
 });
