@@ -251,6 +251,16 @@ describe('TokenManager', () => {
 
       expect(mockStateManager.evaluateToken).toHaveBeenCalledWith(mockToken);
     });
+
+    it('should handle dead tokens', async () => {
+      const reason = 'no_liquidity';
+      await tokenManager.handleNewToken(mockTokenData);
+      
+      tokenManager.handleDeadToken({ token: mockToken, reason });
+      
+      // Token should be removed from the manager
+      expect(tokenManager.getToken(mockToken.mint)).toBeUndefined();
+    });
   });
 
   describe('Price Updates', () => {
