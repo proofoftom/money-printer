@@ -8,7 +8,7 @@ const PositionManager = require("./core/position/PositionManager");
 const PriceManager = require("./services/price/PriceManager");
 const Wallet = require("./utils/Wallet");
 const errorLogger = require("./monitoring/errorLoggerInstance");
-const Dashboard = require("./monitoring/Dashboard");
+const Dashboard = require("./core/dashboard/Dashboard");
 const DataManager = require("./utils/dataManager");
 const TraderManager = require("./core/trader/TraderManager");
 
@@ -260,7 +260,10 @@ tokenManager.on("positionOpened", (token) => {
   if (global.dashboard) {
     const position = positionManager.getPosition(token.mint);
     global.dashboard.logStatus(`Opened position for ${token.symbol}`, "info");
-    global.dashboard.logStatus(`Entry price: ${position.entryPrice} SOL`, "info");
+    global.dashboard.logStatus(
+      `Entry price: ${position.entryPrice} SOL`,
+      "info"
+    );
     global.dashboard.logStatus(`Market cap: ${token.marketCapSol} SOL`, "info");
     global.dashboard.logTrade({
       type: "BUY",

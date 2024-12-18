@@ -1,7 +1,5 @@
 SYMBOL  MC: $1.2k | H: 123   | T10: 45%  | D: 1.23%
 AGE      V: 12.3k | 5m 12.3k | 30m 12.3k | Txs: 123
- 
-
 
 MC = Market Cap
 H = Holders
