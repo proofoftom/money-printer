@@ -2,7 +2,7 @@ const EventEmitter = require('events');
 const fs = require('fs').promises;
 const path = require('path');
 const Trader = require('./Trader');
-const config = require('../../../utils/config');
+const config = require('../../utils/config');
 
 class TraderManager extends EventEmitter {
     constructor() {
@@ -94,13 +94,17 @@ class TraderManager extends EventEmitter {
             for (const [address, state] of Object.entries(traderStates)) {
                 const trader = new Trader(address);
                 trader.loadState(state);
-                this.traders.set(address, trader);
+                this.traders.set(address.toLowerCase(), trader);
             }
         } catch (error) {
-            if (error.code !== 'ENOENT') {
-                console.error('Error loading trader states:', error);
-                this.emit('error', { type: 'loadFailed', error });
+            // If file doesn't exist, that's okay - we'll create it when saving
+            if (error.code === 'ENOENT') {
+                console.info('No existing trader states found. Starting fresh.');
+                return;
             }
+            // For other errors, log them but don't crash
+            console.error('Error loading trader states:', error);
+            throw error; // Re-throw to be caught by global error handler
         }
     }
 

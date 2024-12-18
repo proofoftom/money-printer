@@ -11,6 +11,7 @@ const errorLogger = require("./monitoring/errorLoggerInstance");
 const Dashboard = require("./core/dashboard/Dashboard");
 const DataManager = require("./utils/dataManager");
 const TraderManager = require("./core/trader/TraderManager");
+const TokenStateManager = require("./core/token/TokenStateManager");
 
 console.log("Initializing Money Printer...");
 
@@ -164,6 +165,7 @@ const safetyChecker = initializeComponent(
   "SafetyChecker"
 );
 const traderManager = initializeComponent(new TraderManager(), "TraderManager");
+const stateManager = initializeComponent(new TokenStateManager(), "TokenStateManager");
 
 // Initialize TokenManager and WebSocketManager
 const tokenManager = initializeComponent(
@@ -172,7 +174,8 @@ const tokenManager = initializeComponent(
     positionManager,
     priceManager,
     null,
-    traderManager
+    traderManager,
+    stateManager
   ),
   "TokenManager"
 );

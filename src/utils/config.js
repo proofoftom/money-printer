@@ -4,6 +4,11 @@ module.exports = {
   CLEANUP_INTERVAL: 300000, // 5 minutes
   MAX_POSITIONS: 3,
 
+  // Price Configuration
+  PRICE: {
+    UPDATE_INTERVAL: 60000, // 1 minute
+  },
+
   // WebSocket Configuration
   WEBSOCKET: {
     URL: "wss://pumpportal.fun/data-api/real-time",
@@ -18,6 +23,7 @@ module.exports = {
     SAVE_INTERVAL: 60000, // 1 minute
     ANALYSIS_INTERVAL: 300000, // 5 minutes
     RECOVERY_ANALYSIS_INTERVAL: 60000, // 1 minute
+    CLEANUP_INTERVAL: 300000, // 5 minutes
     MIN_TRADES: 10,
     MIN_SUCCESS_RATE: 0.6,
     MAX_CONCURRENT_POSITIONS: 3,

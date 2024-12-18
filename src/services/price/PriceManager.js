@@ -15,10 +15,14 @@ class PriceManager extends EventEmitter {
     try {
       await this.updatePrice();
       
-      // Set up periodic price updates
+      // Set up periodic price updates with fallback to general update interval
+      const updateInterval = (config.PRICE && config.PRICE.UPDATE_INTERVAL) || 
+                           config.UPDATE_INTERVAL || 
+                           60000; // Default 1 minute if no config found
+      
       this.updateInterval = setInterval(
         () => this.updatePrice(),
-        config.PRICE.UPDATE_INTERVAL || 60000 // Default 1 minute
+        updateInterval
       );
       
       return this.solPriceUSD;
