@@ -5,6 +5,7 @@ const {
   PricePoint,
   STATES,
 } = require("./TokenStateManager");
+const { type } = require("os");
 
 class Token extends EventEmitter {
   constructor(tokenData, priceManager, safetyChecker) {
@@ -57,13 +58,14 @@ class Token extends EventEmitter {
       initialMarketCapUSD: this.priceManager.solToUSD(tokenData.marketCapSol),
     };
 
-    // Price tracking data structure
-    this.priceData = {
-      trades: [], // Array of {price, volume, timestamp}
+    // Unified trade tracking data structure
+    this.tradeHistory = {
+      trades: [], // Array of {id, price, volume, timestamp, walletAddress, type, side}
+      lastTradeId: 0,
       bodyPrice: null,
       wickHigh: null,
       wickLow: null,
-      wickDirection: "neutral", // 'up', 'down', or 'neutral'
+      wickDirection: "neutral",
       lastSpreadEvent: 0,
     };
 
@@ -78,13 +80,13 @@ class Token extends EventEmitter {
     ];
     this.priceVolatility = 0;
 
-    // Initialize volume tracking (by-second windows for instant pump detection)
-    this.volume5s = 0; // 5 second volume in USD
-    this.volume10s = 0; // 10 second volume in USD
-    this.volume30s = 0; // 30 second volume in USD
+    // Initialize volume tracking
+    this.volume1m = 0;
+    this.volume5m = 0;
+    this.volume30m = 0;
 
-    // Initialize wallets map
-    this.wallets = new Map();
+    // Initialize wallets map - now with trade references
+    this.wallets = new Map(); // Map<walletAddress, {balance, initialBalance, tradeIds: Set<number>, firstSeen, lastActive, isCreator}>
 
     // Initialize creator as holder if initial balance provided
     if (tokenData.newTokenBalance || tokenData.initialBuy) {
@@ -92,7 +94,7 @@ class Token extends EventEmitter {
       this.wallets.set(tokenData.traderPublicKey, {
         balance,
         initialBalance: balance,
-        trades: [],
+        tradeIds: new Set(),
         firstSeen: Date.now(),
         lastActive: Date.now(),
         isCreator: true,
@@ -119,46 +121,17 @@ class Token extends EventEmitter {
     this.vSolInBondingCurve = data.vSolInBondingCurve;
     this.marketCapSol = data.marketCapSol;
 
-    // Handle trade data
-    if (data.txType === "buy" || data.txType === "sell") {
-      // Record trade for price calculations
-      const price = this.calculateTokenPrice();
-      this.priceData.trades.push({
-        price,
-        volume: data.tokenAmount,
+    // Update price tracking
+    this.updatePriceMetrics();
+
+    // Update wallet data if trade occurred
+    if (data.tokenAmount) {
+      this.updateWalletActivity(data.traderPublicKey, {
+        balance: data.newTokenBalance,
+        amount: data.tokenAmount,
+        type: data.txType,
         timestamp: now,
       });
-
-      // Update market cap and bonding curve data
-      if (data.marketCapSol) {
-        this.marketCapSol = data.marketCapSol;
-        if (data.marketCapSol > this.highestMarketCap) {
-          this.highestMarketCap = data.marketCapSol;
-        }
-      }
-      if (data.vTokensInBondingCurve) {
-        this.vTokensInBondingCurve = data.vTokensInBondingCurve;
-      }
-      if (data.vSolInBondingCurve) {
-        this.vSolInBondingCurve = data.vSolInBondingCurve;
-      }
-
-      // Update wallet data
-      if (data.traderPublicKey && typeof data.newTokenBalance !== "undefined") {
-        this.updateWalletActivity(data.traderPublicKey, {
-          type: data.txType,
-          amount: data.tokenAmount,
-          price,
-          timestamp: now,
-          newBalance: data.newTokenBalance,
-        });
-      }
-
-      // Update volume metrics
-      const tradeVolume = data.tokenAmount;
-      this.volume5s += tradeVolume;
-      this.volume10s += tradeVolume;
-      this.volume30s += tradeVolume;
     }
     // Handle token creation
     else if (data.txType === "create") {
@@ -168,7 +141,6 @@ class Token extends EventEmitter {
         this.updateWalletActivity(data.traderPublicKey, {
           type: "create",
           amount: data.initialBuy,
-          price: this.initialPrice,
           timestamp: now,
           newBalance: data.initialBuy,
           isCreator: true,
@@ -176,8 +148,10 @@ class Token extends EventEmitter {
       }
     }
 
-    // Update price metrics and check state transitions
-    this.updatePriceMetrics();
+    // Update all metrics including volume
+    this.updateMetrics();
+
+    // Handle state transitions based on new metrics
     this.handleStateTransitions();
   }
 
@@ -190,13 +164,13 @@ class Token extends EventEmitter {
       Date.now()
     );
 
-    // Get 5-minute volume for safety checks
-    const volume5m = this.getRecentVolume(5 * 60 * 1000);
+    // Update price history based on current state
+    this.stateManager.updatePriceHistory(currentPrice);
 
     // Update price history and check for state transitions
     const stateChange = this.stateManager.updatePriceHistory(
       currentPrice,
-      volume5m
+      this.volume5m
     );
     if (stateChange) {
       this.emit("stateChanged", { token: this, ...stateChange });
@@ -217,7 +191,7 @@ class Token extends EventEmitter {
       // Check for first pump entry opportunity
       if (this.stateManager.canEnterPosition(true)) {
         // Check volume hasn't dropped too much
-        if (!this.stateManager.checkPumpSafety(volume5m)) {
+        if (!this.stateManager.checkPumpSafety(this.volume5m)) {
           this.stateManager.markUnsafe(
             "Volume dropped significantly during pump"
           );
@@ -278,7 +252,7 @@ class Token extends EventEmitter {
       // Check for new pump from drawdown
       if (this.stateManager.isPumpDetected({ currentPrice }, true)) {
         // Check if volume has dropped too much
-        if (!this.stateManager.checkPumpSafety(volume5m)) {
+        if (!this.stateManager.checkPumpSafety(this.volume5m)) {
           this.stateManager.markUnsafe(
             "Volume dropped significantly during pump"
           );
@@ -306,6 +280,36 @@ class Token extends EventEmitter {
         }
       }
     }
+    // Handle recovery state
+    else if (this.state === STATES.RECOVERY) {
+      // Update recovery price point if higher
+      if (
+        !this.stateManager.priceHistory.recovery ||
+        currentPrice.bodyPrice >
+          this.stateManager.priceHistory.recovery.bodyPrice
+      ) {
+        this.stateManager.priceHistory.recovery = currentPrice;
+      }
+
+      // Check if we should enter position
+      if (this.stateManager.shouldEnterPosition(currentPrice)) {
+        this.emit("readyForPosition", this);
+      }
+      // Check for new drawdown cycle if we drop below our previous bottom
+      else if (
+        this.stateManager.priceHistory.bottom &&
+        currentPrice.bodyPrice < this.stateManager.priceHistory.bottom.bodyPrice
+      ) {
+        // Reset bottom for new drawdown cycle
+        this.stateManager.priceHistory.bottom = null;
+        this.stateManager.transitionToDrawdown(currentPrice);
+        this.emit("stateChanged", {
+          token: this,
+          from: STATES.RECOVERY,
+          to: STATES.DRAWDOWN,
+        });
+      }
+    }
   }
 
   calculatePrices() {
@@ -314,11 +318,11 @@ class Token extends EventEmitter {
     const recentStart = now - config.PRICE_CALC.RECENT_WINDOW;
 
     // Filter trades within window
-    this.priceData.trades = this.priceData.trades.filter(
+    this.tradeHistory.trades = this.tradeHistory.trades.filter(
       (t) => t.timestamp > windowStart
     );
 
-    if (this.priceData.trades.length === 0) {
+    if (this.tradeHistory.trades.length === 0) {
       const currentPrice = this.calculateTokenPrice();
       return {
         bodyPrice: currentPrice,
@@ -330,7 +334,7 @@ class Token extends EventEmitter {
     let totalWeight = 0;
     let weightedSum = 0;
 
-    this.priceData.trades.forEach((trade) => {
+    this.tradeHistory.trades.forEach((trade) => {
       const weight =
         trade.volume *
         (trade.timestamp > recentStart ? config.PRICE_CALC.RECENT_WEIGHT : 1);
@@ -341,8 +345,8 @@ class Token extends EventEmitter {
     const bodyPrice = weightedSum / totalWeight;
 
     // Calculate wick prices
-    const wickHigh = Math.max(...this.priceData.trades.map((t) => t.price));
-    const wickLow = Math.min(...this.priceData.trades.map((t) => t.price));
+    const wickHigh = Math.max(...this.tradeHistory.trades.map((t) => t.price));
+    const wickLow = Math.min(...this.tradeHistory.trades.map((t) => t.price));
 
     // Determine wick direction
     const upperWick = wickHigh - bodyPrice;
@@ -354,9 +358,9 @@ class Token extends EventEmitter {
     const spreadPercentage = ((wickHigh - wickLow) / bodyPrice) * 100;
     if (
       spreadPercentage >= config.THRESHOLDS.SPREAD &&
-      now - this.priceData.lastSpreadEvent > config.PRICE_CALC.WINDOW
+      now - this.tradeHistory.lastSpreadEvent > config.PRICE_CALC.WINDOW
     ) {
-      this.priceData.lastSpreadEvent = now;
+      this.tradeHistory.lastSpreadEvent = now;
       this.emit("significantSpread", {
         token: this,
         spreadPercentage,
@@ -368,10 +372,10 @@ class Token extends EventEmitter {
     }
 
     // Update price data
-    this.priceData.bodyPrice = bodyPrice;
-    this.priceData.wickHigh = wickHigh;
-    this.priceData.wickLow = wickLow;
-    this.priceData.wickDirection = wickDirection;
+    this.tradeHistory.bodyPrice = bodyPrice;
+    this.tradeHistory.wickHigh = wickHigh;
+    this.tradeHistory.wickLow = wickLow;
+    this.tradeHistory.wickDirection = wickDirection;
 
     return {
       bodyPrice,
@@ -381,15 +385,15 @@ class Token extends EventEmitter {
 
   getSpreadMetrics() {
     return {
-      spreadPercentage: this.priceData.wickHigh
-        ? ((this.priceData.wickHigh - this.priceData.wickLow) /
-            this.priceData.bodyPrice) *
+      spreadPercentage: this.tradeHistory.wickHigh
+        ? ((this.tradeHistory.wickHigh - this.tradeHistory.wickLow) /
+            this.tradeHistory.bodyPrice) *
           100
         : 0,
-      wickDirection: this.priceData.wickDirection,
-      bodyPrice: this.priceData.bodyPrice,
-      wickHigh: this.priceData.wickHigh,
-      wickLow: this.priceData.wickLow,
+      wickDirection: this.tradeHistory.wickDirection,
+      bodyPrice: this.tradeHistory.bodyPrice,
+      wickHigh: this.tradeHistory.wickHigh,
+      wickLow: this.tradeHistory.wickLow,
     };
   }
 
@@ -405,31 +409,8 @@ class Token extends EventEmitter {
   }
 
   getVolumeSpike() {
-    const now = Date.now();
-    const timeWindow = 5 * 1000; // 5 seconds window
-    const currentVolume = this.getRecentVolume(timeWindow);
-    
-    console.log(`[${this.symbol}] Volume spike:`, JSON.stringify({
-      currentVolume,
-      trades: Array.from(this.wallets.values()).reduce((sum, w) => sum + w.trades.length, 0)
-    }, null, 2));
-    
-    // If we have no volume, return -100 to indicate no activity
-    if (currentVolume === 0) return -100;
-    
-    // Compare current volume to previous window
-    const previousWindow = this.getRecentVolume(timeWindow * 2) - currentVolume;
-    
-    console.log(`[${this.symbol}] Volume comparison:`, JSON.stringify({
-      currentVolume,
-      previousWindow,
-      spike: previousWindow === 0 ? (currentVolume > 0 ? 100 : -100) : ((currentVolume - previousWindow) / previousWindow) * 100
-    }, null, 2));
-    
-    if (previousWindow === 0) return currentVolume > 0 ? 100 : -100;
-    
-    // Calculate percentage change from previous window
-    return ((currentVolume - previousWindow) / previousWindow) * 100;
+    const baseVolume = this.volume5m / 5; // Average volume per minute over 5 minutes
+    return this.volume1m > 0 ? (this.volume1m / baseVolume) * 100 : 0;
   }
 
   getBuyPressure() {
@@ -444,9 +425,9 @@ class Token extends EventEmitter {
       );
       for (const trade of recentTrades) {
         if (trade.priceChange >= 0) {
-          buyVolume += trade.volumeInUSD;
+          buyVolume += trade.volumeInSol;
         }
-        totalVolume += trade.volumeInUSD;
+        totalVolume += trade.volumeInSol;
       }
     }
 
@@ -515,18 +496,18 @@ class Token extends EventEmitter {
       );
 
       // Track volume spike
-      const recentVolume = this.getRecentVolume(timeWindow);
-      this.pumpMetrics.volumeSpikes.push({
-        timestamp: now,
-        volume: recentVolume,
-        priceChange,
-      });
+      // const recentVolume = this.getRecentVolume(timeWindow);
+      // this.pumpMetrics.volumeSpikes.push({
+      //   timestamp: now,
+      //   volume: recentVolume,
+      //   priceChange,
+      // });
 
-      // Cleanup old volume spikes
-      const cutoff = now - 30 * 1000; // Keep last 30 seconds
-      this.pumpMetrics.volumeSpikes = this.pumpMetrics.volumeSpikes.filter(
-        (spike) => spike.timestamp > cutoff
-      );
+      // // Cleanup old volume spikes
+      // const cutoff = now - 30 * 1000; // Keep last 30 seconds
+      // this.pumpMetrics.volumeSpikes = this.pumpMetrics.volumeSpikes.filter(
+      //   (spike) => spike.timestamp > cutoff
+      // );
     }
 
     this.currentPrice = newPrice;
@@ -535,38 +516,10 @@ class Token extends EventEmitter {
   getRecentVolume(timeWindow) {
     const now = Date.now();
     const cutoff = now - timeWindow;
-    let volumeTokens = 0;
     
-    for (const [_, wallet] of this.wallets) {
-      // Filter trades within timeWindow and sum their token amounts
-      const recentTrades = wallet.trades.filter(
-        (trade) => trade.timestamp > cutoff
-      );
-      
-      for (const trade of recentTrades) {
-        // Make sure we have a valid number for the amount
-        const amount = Number(trade.amount) || 0;
-        volumeTokens += amount;
-      }
-    }
-    
-    // Convert total token volume to USD
-    const solValue = volumeTokens * (this.vSolInBondingCurve / this.vTokensInBondingCurve);
-    const usdValue = this.priceManager.solToUSD(solValue);
-    
-    console.log(`[${this.symbol}] Volume for ${timeWindow/1000}s:`, JSON.stringify({
-      volumeTokens,
-      solValue,
-      usdValue,
-      bondingCurve: {
-        vSol: this.vSolInBondingCurve,
-        vTokens: this.vTokensInBondingCurve,
-        ratio: this.vSolInBondingCurve / this.vTokensInBondingCurve
-      }
-    }, null, 2));
-    
-    // Return 0 if volume is NaN or undefined
-    return isNaN(usdValue) ? 0 : usdValue;
+    return this.tradeHistory.trades
+      .filter(trade => trade.timestamp > cutoff)
+      .reduce((sum, trade) => sum + Math.abs(trade.volume), 0);
   }
 
   updateWalletActivity(publicKey, tradeData) {
@@ -576,8 +529,8 @@ class Token extends EventEmitter {
     // Create new wallet data if doesn't exist
     if (!wallet) {
       wallet = {
-        balance: 0,
-        initialBalance: tradeData.newBalance || 0,
+        balance: tradeData.balance,
+        initialBalance: tradeData.balance,
         trades: [],
         firstSeen: now,
         lastActive: now,
@@ -588,54 +541,27 @@ class Token extends EventEmitter {
 
     // Update wallet data
     wallet.lastActive = now;
-    wallet.balance =
-      tradeData.newBalance !== undefined
-        ? tradeData.newBalance
-        : wallet.balance;
+    wallet.balance = tradeData.balance;
 
     // Store trade data with token amount
     wallet.trades.push({
-      amount: tradeData.tokenAmount,
+      amount: tradeData.amount,
+      type: tradeData.type, // "buy" or "sell"
       timestamp: now,
     });
 
-    // Update volume metrics
-    this.volume5s = this.getRecentVolume(5 * 1000); // 5 seconds
-    this.volume10s = this.getRecentVolume(10 * 1000); // 10 seconds
-    this.volume30s = this.getRecentVolume(30 * 1000); // 30 seconds
-  }
-
-  updateWalletBalance(publicKey, newBalance, timestamp) {
-    let wallet = this.wallets.get(publicKey);
-
-    if (newBalance > 0) {
-      if (!wallet) {
-        wallet = {
-          balance: newBalance,
-          initialBalance: newBalance,
-          trades: [],
-          firstSeen: timestamp,
-          lastActive: timestamp,
-          isCreator: false,
-        };
-        this.wallets.set(publicKey, wallet);
-      } else {
-        wallet.balance = newBalance;
-        wallet.lastActive = timestamp;
-      }
-    } else {
-      // Only delete if wallet exists and has no recent trades
-      if (wallet) {
-        const hasRecentTrades = wallet.trades.some(
-          (t) => t.timestamp > timestamp - 30 * 60 * 1000
+    // Cleanup old trades
+    if (
+      now - this.metrics.volumeData.lastCleanup >
+      this.metrics.volumeData.cleanupInterval
+    ) {
+      const cutoff = now - 30 * 60 * 1000; // 30 minutes
+      for (const [_, walletData] of this.wallets) {
+        walletData.trades = walletData.trades.filter(
+          (t) => t.timestamp > cutoff
         );
-        if (!hasRecentTrades) {
-          this.wallets.delete(publicKey);
-        } else {
-          wallet.balance = 0;
-          wallet.lastActive = timestamp;
-        }
       }
+      this.metrics.volumeData.lastCleanup = now;
     }
   }
 
@@ -698,7 +624,7 @@ class Token extends EventEmitter {
 
       for (const trade of recentTrades) {
         stats.volumeTotal += trade.amount;
-        if (trade.priceChange >= 0) {
+        if (trade.type === "buy") {
           stats.buyVolume += trade.amount;
         } else {
           stats.sellVolume += trade.amount;
@@ -748,28 +674,31 @@ class Token extends EventEmitter {
   }
 
   updateMetrics() {
-    // Update volume metrics with by-second windows
-    this.volume5s = this.getRecentVolume(5 * 1000); // 5 seconds
-    this.volume10s = this.getRecentVolume(10 * 1000); // 10 seconds
-    this.volume30s = this.getRecentVolume(30 * 1000); // 30 seconds
+    // Update volume metrics
+    this.volume1m = this.getRecentVolume(60 * 1000); // 1 minute
+    this.volume5m = this.getRecentVolume(5 * 60 * 1000); // 5 minutes
+    this.volume30m = this.getRecentVolume(30 * 60 * 1000); // 30 minutes
 
     // Update price stats
     const priceStats = this.getPriceStats();
-    const traderStats = this.getTraderStats();
+    this.priceVolatility = priceStats.volatility;
 
-    // Emit metrics update event
-    this.emit("metricsUpdate", {
-      mint: this.mint,
-      symbol: this.symbol,
-      state: this.state,
-      holders: this.getHolderCount(),
-      topHolderConcentration: this.getTopHolderConcentration(),
+    // Update trader stats
+    const traderStats = this.getTraderStats("5m");
+    this.metrics.volumeData.maxWalletVolumePercentage =
+      traderStats.maxWalletVolumePercentage;
+    this.metrics.volumeData.suspectedWashTradePercentage =
+      traderStats.suspectedWashTradePercentage;
+
+    // Emit metrics update event for monitoring
+    this.emit("metricsUpdated", {
+      token: this.mint,
       priceStats,
       traderStats,
       volume: {
-        volume5s: this.volume5s,
-        volume10s: this.volume10s,
-        volume30s: this.volume30s,
+        volume1m: this.volume1m,
+        volume5m: this.volume5m,
+        volume30m: this.volume30m,
       },
     });
   }
@@ -910,6 +839,195 @@ class Token extends EventEmitter {
       return 0;
     }
     return this.vSolInBondingCurve / this.vTokensInBondingCurve;
+  }
+
+  recordTrade(tradeData) {
+    const { price, volume, walletAddress, type, side } = tradeData;
+    const timestamp = Date.now();
+    
+    // Create trade record
+    const trade = {
+      id: ++this.tradeHistory.lastTradeId,
+      price,
+      volume,
+      timestamp,
+      walletAddress,
+      type,
+      side
+    };
+    
+    // Add to trade history
+    this.tradeHistory.trades.push(trade);
+    
+    // Update wallet data
+    let wallet = this.wallets.get(walletAddress);
+    if (!wallet) {
+      wallet = {
+        balance: 0,
+        initialBalance: 0,
+        tradeIds: new Set(),
+        firstSeen: timestamp,
+        lastActive: timestamp,
+        isCreator: false
+      };
+      this.wallets.set(walletAddress, wallet);
+    }
+    
+    wallet.tradeIds.add(trade.id);
+    wallet.lastActive = timestamp;
+    
+    // Update wallet balance based on trade side
+    if (side === 'buy') {
+      wallet.balance += volume;
+    } else if (side === 'sell') {
+      wallet.balance -= volume;
+    }
+    
+    // Update volume metrics
+    this.updateVolumeMetrics();
+    
+    // Emit trade event for dashboard
+    this.emit('trade', trade);
+    
+    // Update price metrics
+    this.updatePriceMetrics();
+    
+    return trade.id;
+  }
+
+  updateVolumeMetrics() {
+    const now = Date.now();
+    
+    // Update rolling volume windows
+    this.volume1m = this.getRecentVolume(60 * 1000);      // 1 minute
+    this.volume5m = this.getRecentVolume(5 * 60 * 1000);  // 5 minutes
+    this.volume30m = this.getRecentVolume(30 * 60 * 1000); // 30 minutes
+
+    // Calculate initial volume metrics for new tokens
+    if (now - this.minted < 5 * 60 * 1000) { // Token is less than 5 minutes old
+      // Track buy vs sell ratio in early trades
+      const recentTrades = this.tradeHistory.trades.filter(t => t.timestamp > this.minted);
+      const buyVolume = recentTrades.reduce((sum, t) => sum + (t.side === 'buy' ? t.volume : 0), 0);
+      const sellVolume = recentTrades.reduce((sum, t) => sum + (t.side === 'sell' ? t.volume : 0), 0);
+      
+      this.metrics.earlyTrading = {
+        buyToSellRatio: buyVolume / (sellVolume || 1),
+        uniqueBuyers: new Set(recentTrades.filter(t => t.side === 'buy').map(t => t.walletAddress)).size,
+        uniqueSellers: new Set(recentTrades.filter(t => t.side === 'sell').map(t => t.walletAddress)).size,
+        creatorSells: recentTrades.filter(t => t.walletAddress === this.traderPublicKey && t.side === 'sell').length,
+        timeToFirstTrade: recentTrades.length > 0 ? recentTrades[0].timestamp - this.minted : null,
+        volumeAcceleration: this.calculateVolumeAcceleration()
+      };
+
+      // Detect potential fake volume
+      const repeatedTraders = this.detectRepeatedTraders(recentTrades);
+      if (repeatedTraders.length > 0) {
+        this.metrics.earlyTrading.suspiciousActivity = repeatedTraders;
+      }
+    }
+    
+    // Update volume spikes detection with enhanced sensitivity for new tokens
+    const volumeSpike = this.getVolumeSpike();
+    if (volumeSpike) {
+      this.pumpMetrics.volumeSpikes.push({
+        timestamp: now,
+        volume: this.volume1m,
+        ratio: volumeSpike,
+        isNewToken: now - this.minted < 5 * 60 * 1000
+      });
+      
+      // Cleanup old spikes
+      const spikesCutoff = now - 30 * 1000; // Keep last 30 seconds
+      this.pumpMetrics.volumeSpikes = this.pumpMetrics.volumeSpikes
+        .filter(spike => spike.timestamp > spikesCutoff);
+    }
+  }
+
+  calculateVolumeAcceleration() {
+    const trades = this.tradeHistory.trades;
+    if (trades.length < 3) return 0;
+
+    const intervals = [];
+    for (let i = 1; i < trades.length; i++) {
+      const timeDiff = trades[i].timestamp - trades[i-1].timestamp;
+      const volumeDiff = trades[i].volume - trades[i-1].volume;
+      intervals.push(volumeDiff / (timeDiff || 1));
+    }
+
+    // Calculate rate of change of volume over time
+    let acceleration = 0;
+    for (let i = 1; i < intervals.length; i++) {
+      acceleration += intervals[i] - intervals[i-1];
+    }
+    
+    return acceleration / (intervals.length - 1);
+  }
+
+  detectRepeatedTraders(trades) {
+    const traderFrequency = new Map();
+    const suspiciousTraders = [];
+
+    trades.forEach(trade => {
+      const count = (traderFrequency.get(trade.walletAddress) || 0) + 1;
+      traderFrequency.set(trade.walletAddress, count);
+      
+      // Check for rapid back-and-forth trading
+      if (count >= 3) {
+        const traderTrades = trades.filter(t => t.walletAddress === trade.walletAddress);
+        const rapidTrading = this.checkRapidTrading(traderTrades);
+        if (rapidTrading) {
+          suspiciousTraders.push({
+            wallet: trade.walletAddress,
+            tradeCount: count,
+            pattern: rapidTrading
+          });
+        }
+      }
+    });
+
+    return suspiciousTraders;
+  }
+
+  checkRapidTrading(trades) {
+    if (trades.length < 3) return null;
+
+    // Look for alternating buy/sell patterns
+    let alternatingCount = 0;
+    for (let i = 1; i < trades.length; i++) {
+      if (trades[i].side !== trades[i-1].side) {
+        alternatingCount++;
+      }
+    }
+
+    if (alternatingCount / trades.length > 0.7) {
+      return 'alternating';
+    }
+
+    // Check for trades happening too quickly
+    const avgTimeBetweenTrades = trades.reduce((sum, trade, i) => {
+      if (i === 0) return 0;
+      return sum + (trade.timestamp - trades[i-1].timestamp);
+    }, 0) / (trades.length - 1);
+
+    if (avgTimeBetweenTrades < 1000) { // Less than 1 second between trades
+      return 'rapid';
+    }
+
+    return null;
+  }
+
+  getTradesByWallet(walletAddress) {
+    const wallet = this.wallets.get(walletAddress);
+    if (!wallet) return [];
+    
+    return Array.from(wallet.tradeIds)
+      .map(id => this.tradeHistory.trades.find(t => t.id === id))
+      .filter(Boolean);
+  }
+  
+  getRecentTrades(timeWindow = 5 * 60 * 1000) { // Default 5 minutes
+    const cutoff = Date.now() - timeWindow;
+    return this.tradeHistory.trades.filter(t => t.timestamp > cutoff);
   }
 }
 

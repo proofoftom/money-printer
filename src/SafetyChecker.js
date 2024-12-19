@@ -98,6 +98,29 @@ class SafetyChecker {
   }
 
   checkRugSignals(token) {
+    const now = Date.now();
+    const isNewToken = now - token.minted < 5 * 60 * 1000;
+
+    if (isNewToken) {
+      // For new tokens, we're more strict about creator behavior
+      if (token.metrics.earlyTrading?.creatorSells > 0) {
+        const creatorSellRatio = token.getCreatorSellPercentage();
+        if (creatorSellRatio > config.SAFETY.MAX_CREATOR_SELL_PERCENTAGE_EARLY) {
+          this.setFailureReason('creator_selling_too_much', creatorSellRatio);
+          return false;
+        }
+      }
+
+      // Check for wash trading patterns
+      const alternatingPatterns = token.metrics.earlyTrading?.suspiciousActivity
+        ?.filter(a => a.pattern === 'alternating').length || 0;
+      
+      if (alternatingPatterns > config.SAFETY.MAX_ALTERNATING_PATTERNS) {
+        this.setFailureReason('wash_trading_detected', alternatingPatterns);
+        return false;
+      }
+    }
+
     // Enhanced rug detection using pump metrics
     const pumpMetrics = token.pumpMetrics;
     const priceStats = token.getPriceStats();
@@ -158,6 +181,46 @@ class SafetyChecker {
   }
 
   checkPumpDynamics(token) {
+    const now = Date.now();
+    const isNewToken = now - token.minted < 5 * 60 * 1000; // Less than 5 minutes old
+
+    if (isNewToken && token.metrics.earlyTrading) {
+      // Check buy/sell ratio - we want more buys than sells in early trading
+      if (token.metrics.earlyTrading.buyToSellRatio < config.SAFETY.MIN_BUY_SELL_RATIO) {
+        this.setFailureReason('low_buy_sell_ratio', token.metrics.earlyTrading.buyToSellRatio);
+        return false;
+      }
+
+      // Check for suspicious trading patterns
+      if (token.metrics.earlyTrading.suspiciousActivity?.length > 0) {
+        const rapidTradingCount = token.metrics.earlyTrading.suspiciousActivity
+          .filter(a => a.pattern === 'rapid').length;
+        
+        if (rapidTradingCount > config.SAFETY.MAX_RAPID_TRADERS) {
+          this.setFailureReason('suspicious_trading_pattern', rapidTradingCount);
+          return false;
+        }
+      }
+
+      // Check if creator is dumping
+      if (token.metrics.earlyTrading.creatorSells > config.SAFETY.MAX_CREATOR_SELLS_EARLY) {
+        this.setFailureReason('creator_dumping', token.metrics.earlyTrading.creatorSells);
+        return false;
+      }
+
+      // Check for healthy volume acceleration
+      if (token.metrics.earlyTrading.volumeAcceleration < config.SAFETY.MIN_VOLUME_ACCELERATION) {
+        this.setFailureReason('low_volume_acceleration', token.metrics.earlyTrading.volumeAcceleration);
+        return false;
+      }
+
+      // Check for minimum unique buyers
+      if (token.metrics.earlyTrading.uniqueBuyers < config.SAFETY.MIN_UNIQUE_BUYERS) {
+        this.setFailureReason('insufficient_unique_buyers', token.metrics.earlyTrading.uniqueBuyers);
+        return false;
+      }
+    }
+
     // Fast check for pump characteristics
     const pumpMetrics = token.pumpMetrics;
     const pumpConfig = config.SAFETY.PUMP_DETECTION;

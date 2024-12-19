@@ -16,10 +16,49 @@ class ExitStrategies {
     return Math.round(value * multiplier) / multiplier;
   }
 
-  shouldExit(position, currentPrice, currentVolume) {
+  shouldExit(position, currentPrice, currentVolume, token) {
     // Skip all checks if no position remaining
     if (this.remainingPosition === 0) {
       return { shouldExit: false };
+    }
+
+    const now = Date.now();
+    const isNewToken = now - token.minted < 5 * 60 * 1000;
+
+    if (isNewToken) {
+      // Check for sudden creator selling
+      if (token.metrics.earlyTrading?.creatorSells > this.config.EXIT.NEW_TOKEN.MAX_CREATOR_SELLS) {
+        const portion = this.remainingPosition;
+        this.remainingPosition = 0;
+        return { shouldExit: true, reason: 'CREATOR_SELLING', portion };
+      }
+
+      // Check for declining buy pressure
+      if (token.metrics.earlyTrading?.buyToSellRatio < this.config.EXIT.NEW_TOKEN.MIN_BUY_SELL_RATIO) {
+        const portion = this.remainingPosition;
+        this.remainingPosition = 0;
+        return { shouldExit: true, reason: 'DECLINING_BUY_PRESSURE', portion };
+      }
+
+      // Check for suspicious trading patterns emerging
+      if (token.metrics.earlyTrading?.suspiciousActivity?.length > this.config.EXIT.NEW_TOKEN.MAX_SUSPICIOUS_PATTERNS) {
+        const portion = this.remainingPosition;
+        this.remainingPosition = 0;
+        return { shouldExit: true, reason: 'SUSPICIOUS_PATTERNS', portion };
+      }
+
+      // Check for volume acceleration decline
+      if (token.metrics.earlyTrading?.volumeAcceleration < this.config.EXIT.NEW_TOKEN.MIN_VOLUME_ACCELERATION) {
+        const portion = this.remainingPosition;
+        this.remainingPosition = 0;
+        return { shouldExit: true, reason: 'VOLUME_ACCELERATION_DROP', portion };
+      }
+
+      // Modified take profit for new tokens - more aggressive
+      const newTokenTakeProfitResult = this.checkNewTokenTakeProfit(position, currentPrice);
+      if (newTokenTakeProfitResult.shouldExit) {
+        return { ...newTokenTakeProfitResult, reason: 'NEW_TOKEN_TAKE_PROFIT' };
+      }
     }
 
     // Check take profit first to capture gains
@@ -186,6 +225,28 @@ class ExitStrategies {
       }
     }
     return 0;
+  }
+
+  checkNewTokenTakeProfit(position, currentPrice) {
+    const profitPercentage = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    
+    // More aggressive take profit tiers for new tokens
+    const tiers = [
+      { threshold: 300, portion: 0.5 },  // Take 50% at 300% profit
+      { threshold: 500, portion: 0.3 },  // Take 30% at 500% profit
+      { threshold: 1000, portion: 0.2 }  // Take remaining 20% at 1000% profit
+    ];
+    
+    for (const tier of tiers) {
+      if (profitPercentage >= tier.threshold && !this.triggeredTiers.has(tier.threshold)) {
+        this.triggeredTiers.add(tier.threshold);
+        const portion = tier.portion * this.remainingPosition;
+        this.remainingPosition -= portion;
+        return { shouldExit: true, portion };
+      }
+    }
+    
+    return { shouldExit: false };
   }
 
   calculateVolatility() {

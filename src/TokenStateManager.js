@@ -1,22 +1,24 @@
 // Token state management
 const STATES = {
-  NEW: 'new',
-  PUMPING: 'pumping',
-  PUMPED: 'pumped',
-  DRAWDOWN: 'drawdown',
-  OPEN: 'open',
-  CLOSED: 'closed',
-  DEAD: 'dead',
-  RECOVERY: 'recovery'
+  NEW: "new",               // Just created
+  ACCUMULATION: "accumulation", // Early buying phase
+  LAUNCHING: "launching",   // Initial pump starting
+  PUMPING: "pumping",      // Active pump
+  PUMPED: "pumped",        // Reached target
+  DRAWDOWN: "drawdown",    // Price declining
+  DEAD: "dead",            // Token inactive
 };
 
 // Safety check reasons
 const UNSAFE_REASONS = {
-  LIQUIDITY: 'insufficient_liquidity',
-  HOLDER_CONCENTRATION: 'high_holder_concentration',
-  TRADING_PATTERN: 'suspicious_trading_pattern',
-  VOLUME: 'low_volume',
-  AGE: 'insufficient_age'
+  LIQUIDITY: "insufficient_liquidity",
+  HOLDER_CONCENTRATION: "high_holder_concentration",
+  TRADING_PATTERN: "suspicious_trading_pattern",
+  VOLUME: "low_volume",
+  AGE: "insufficient_age",
+  CREATOR_SELLING: "creator_selling",
+  WASH_TRADING: "wash_trading",
+  RAPID_TRADING: "rapid_trading"
 };
 
 // Price tracking structure
@@ -28,138 +30,247 @@ class PricePoint {
   }
 }
 
-const config = require('./config');
+const config = require("./config");
 
 class TokenStateManager {
   constructor() {
     this.state = STATES.NEW;
     this.unsafeReasons = new Set();
     this.priceHistory = {
-      initialPumpPrice: null,  // Price when first entering pump
+      initialPrice: null,     // First recorded price
+      accumulationPrice: null, // Price at start of accumulation
+      launchPrice: null,      // Price when launching detected
       peak: null,             // Highest price during pump/pumped
       bottom: null,           // Lowest price during drawdown
-      lastPrice: null,
-      pumpStartPrice: null,   // Price at start of current pump
-      pumpStartTime: null,    // Time when current pump started
-      lastPumpPeak: null      // Preserve the peak from the previous pump
+      lastPrice: null
     };
     this.metrics = {
-      initialVolume5m: 0,     // 5-minute volume when pump started
-      failedAttempts: 0,      // Number of failed safety checks
-      isFirstPumpEntry: false // Whether position was entered on first pump
+      volumeProfile: {
+        accumulation: 0,      // Volume during accumulation
+        launch: 0,            // Volume during launch
+        peak: 0              // Peak volume
+      },
+      buyPressure: {
+        accumulation: 0,      // Buy pressure during accumulation
+        launch: 0,           // Buy pressure during launch
+        current: 0           // Current buy pressure
+      },
+      creatorActivity: {
+        lastSell: null,      // Timestamp of last creator sell
+        sellCount: 0,        // Number of creator sells
+        sellVolume: 0        // Volume of creator sells
+      },
+      tradingPatterns: {
+        rapidTraders: new Set(),    // Wallets with rapid trading
+        alternatingTraders: new Set() // Wallets with suspicious patterns
+      }
+    };
+    this.entryPoints = {
+      accumulation: null,    // Best entry during accumulation
+      launch: null,         // Best entry during launch
+      pump: null           // Best entry during pump
     };
     this.unsafe = false;
   }
 
-  updatePriceHistory(currentPrice, volume5m) {
-    // Set initial price if not set
-    if (!this.priceHistory.lastPrice) {
-      this.priceHistory.lastPrice = currentPrice;
-      this.priceHistory.initialPumpPrice = currentPrice;
-      return;
-    }
+  updateState(token) {
+    const now = Date.now();
+    const tokenAge = now - token.minted;
+    const earlyTrading = token.metrics.earlyTrading;
+    
+    // Early lifecycle management (first 5 minutes)
+    if (tokenAge < 5 * 60 * 1000) {
+      switch(this.state) {
+        case STATES.NEW:
+          if (this.detectAccumulation(token)) {
+            this.setState(STATES.ACCUMULATION);
+            this.priceHistory.accumulationPrice = token.currentPrice;
+            this.findAccumulationEntry(token);
+          }
+          break;
 
-    // Track peak price in pumping/pumped states
-    if ((this.state === STATES.PUMPING || this.state === STATES.PUMPED) && 
-        (!this.priceHistory.peak || currentPrice.bodyPrice > this.priceHistory.peak.bodyPrice)) {
-      this.priceHistory.peak = currentPrice;
-    }
+        case STATES.ACCUMULATION:
+          if (this.detectLaunch(token)) {
+            this.setState(STATES.LAUNCHING);
+            this.priceHistory.launchPrice = token.currentPrice;
+            this.findLaunchEntry(token);
+          }
+          break;
 
-    // Track bottom price in drawdown
-    if (this.state === STATES.DRAWDOWN && 
-        (!this.priceHistory.bottom || currentPrice.bodyPrice < this.priceHistory.bottom.bodyPrice)) {
-      this.priceHistory.bottom = currentPrice;
-    }
-
-    // Check for pumped state transition
-    if (this.state === STATES.PUMPING) {
-      const gainFromInitial = this.getGainFromInitial(currentPrice);
-      if (gainFromInitial >= config.THRESHOLDS.PUMPED) {
-        return this.setState(STATES.PUMPED);
+        case STATES.LAUNCHING:
+          if (this.detectPump(token)) {
+            this.setState(STATES.PUMPING);
+            this.findPumpEntry(token);
+          } else if (this.detectFailedLaunch(token)) {
+            this.setState(STATES.DEAD);
+          }
+          break;
       }
     }
 
-    this.priceHistory.lastPrice = currentPrice;
+    // Standard lifecycle management
+    switch(this.state) {
+      case STATES.PUMPING:
+        if (this.detectPumped(token)) {
+          this.setState(STATES.PUMPED);
+        } else if (this.detectPumpFailure(token)) {
+          this.setState(STATES.DRAWDOWN);
+        }
+        break;
+
+      case STATES.PUMPED:
+        if (this.detectDrawdown(token)) {
+          this.setState(STATES.DRAWDOWN);
+        }
+        break;
+
+      case STATES.DRAWDOWN:
+        if (this.detectDead(token)) {
+          this.setState(STATES.DEAD);
+        }
+        break;
+    }
   }
 
-  isPumpDetected(metrics, fromDrawdown = false) {
-    // Store pump start data if this is a new pump
-    if (!this.priceHistory.pumpStartPrice) {
-      this.priceHistory.pumpStartPrice = this.priceHistory.lastPrice;
-      this.priceHistory.pumpStartTime = Date.now();
+  detectAccumulation(token) {
+    const { earlyTrading } = token.metrics;
+    if (!earlyTrading) return false;
+
+    return (
+      earlyTrading.uniqueBuyers >= config.SAFETY.MIN_UNIQUE_BUYERS &&
+      earlyTrading.buyToSellRatio >= config.SAFETY.MIN_BUY_SELL_RATIO &&
+      !earlyTrading.suspiciousActivity?.length
+    );
+  }
+
+  detectLaunch(token) {
+    const { earlyTrading } = token.metrics;
+    if (!earlyTrading) return false;
+
+    return (
+      earlyTrading.volumeAcceleration >= config.SAFETY.MIN_VOLUME_ACCELERATION &&
+      earlyTrading.buyToSellRatio >= config.SAFETY.MIN_BUY_SELL_RATIO * 1.5 &&
+      !earlyTrading.creatorSells
+    );
+  }
+
+  detectPump(token) {
+    return (
+      token.metrics.earlyTrading?.volumeAcceleration >= config.SAFETY.PUMP_DETECTION.MIN_GAIN_RATE &&
+      this.getPriceGain(token) >= config.SAFETY.PUMP_DETECTION.MIN_PRICE_GAIN &&
+      token.getVolumeSpike() >= config.SAFETY.PUMP_DETECTION.MIN_VOLUME_SPIKE
+    );
+  }
+
+  findAccumulationEntry(token) {
+    if (
+      token.metrics.earlyTrading?.buyToSellRatio >= config.SAFETY.MIN_BUY_SELL_RATIO * 1.2 &&
+      token.metrics.earlyTrading?.uniqueBuyers >= config.SAFETY.MIN_UNIQUE_BUYERS * 1.5
+    ) {
+      this.entryPoints.accumulation = {
+        price: token.currentPrice,
+        confidence: this.calculateEntryConfidence(token)
+      };
+    }
+  }
+
+  findLaunchEntry(token) {
+    if (
+      token.metrics.earlyTrading?.volumeAcceleration >= config.SAFETY.MIN_VOLUME_ACCELERATION * 1.3 &&
+      !token.metrics.earlyTrading?.creatorSells
+    ) {
+      this.entryPoints.launch = {
+        price: token.currentPrice,
+        confidence: this.calculateEntryConfidence(token)
+      };
+    }
+  }
+
+  calculateEntryConfidence(token) {
+    const { earlyTrading } = token.metrics;
+    if (!earlyTrading) return 0;
+
+    let confidence = 0;
+    
+    // Buy pressure (0-30 points)
+    confidence += (earlyTrading.buyToSellRatio / config.SAFETY.MIN_BUY_SELL_RATIO) * 30;
+    
+    // Unique buyers (0-20 points)
+    confidence += (earlyTrading.uniqueBuyers / config.SAFETY.MIN_UNIQUE_BUYERS) * 20;
+    
+    // Volume acceleration (0-20 points)
+    confidence += (earlyTrading.volumeAcceleration / config.SAFETY.MIN_VOLUME_ACCELERATION) * 20;
+    
+    // Creator behavior (0-30 points)
+    confidence += earlyTrading.creatorSells ? 0 : 30;
+    
+    // Deductions for suspicious activity
+    if (earlyTrading.suspiciousActivity?.length) {
+      confidence -= earlyTrading.suspiciousActivity.length * 15;
     }
 
-    // Calculate gain from reference point
-    const referencePrice = fromDrawdown ? 
-      (this.priceHistory.bottom || this.priceHistory.initialPumpPrice).bodyPrice : 
-      this.priceHistory.initialPumpPrice.bodyPrice;
-    
-    const currentPrice = this.priceHistory.lastPrice.bodyPrice;
-    const priceGain = ((currentPrice - referencePrice) / referencePrice) * 100;
-
-    return priceGain >= config.THRESHOLDS.PUMP;
+    return Math.max(0, Math.min(100, confidence));
   }
 
-  isDrawdownTriggered(currentPrice) {
-    // Only allow drawdown if token has reached pumped state and we have valid price data
-    if (this.state !== STATES.PUMPED || !this.priceHistory.peak || !currentPrice) {
-      return false;
-    }
-
-    const peakPrice = this.priceHistory.peak.bodyPrice;
-    const drawdown = ((peakPrice - currentPrice.bodyPrice) / peakPrice) * 100;
-    return drawdown >= config.THRESHOLDS.DRAWDOWN;
+  getBestEntry() {
+    // Return the entry point with the highest confidence
+    return [this.entryPoints.accumulation, this.entryPoints.launch, this.entryPoints.pump]
+      .filter(Boolean)
+      .sort((a, b) => b.confidence - a.confidence)[0];
   }
 
-  checkPumpSafety(volume5m) {
-    // Check volume hasn't dropped significantly
-    const volumeDrop = ((this.metrics.initialVolume5m - volume5m) / this.metrics.initialVolume5m) * 100;
-    if (volumeDrop > config.THRESHOLDS.MAX_VOLUME_DROP) {
-      return false;
-    }
-    return true;
+  getPriceGain(token) {
+    if (!this.priceHistory.initialPrice || !token.currentPrice) return 0;
+    return (
+      ((token.currentPrice.bodyPrice - this.priceHistory.initialPrice.bodyPrice) /
+        this.priceHistory.initialPrice.bodyPrice) *
+      100
+    );
   }
 
-  canEnterPosition(isFirstPump = false) {
-    if (!this.priceHistory.pumpStartTime || !this.priceHistory.pumpStartPrice) return false;
-    
-    const currentPrice = this.priceHistory.lastPrice.bodyPrice;
-    const pumpStartPrice = this.priceHistory.pumpStartPrice.bodyPrice;
-    const pumpGain = ((currentPrice - pumpStartPrice) / pumpStartPrice) * 100;
-    
-    // Check if within entry window
-    if (pumpGain > config.THRESHOLDS.POSITION_ENTRY_WINDOW) return false;
-
-    // For first pump entries, require minimum gain
-    if (isFirstPump && pumpGain < config.THRESHOLDS.MIN_FIRST_PUMP_GAIN) return false;
-
-    return true;
+  detectPumped(token) {
+    if (!this.priceHistory.peak || !token.currentPrice) return false;
+    return (
+      ((token.currentPrice.bodyPrice - this.priceHistory.peak.bodyPrice) /
+        this.priceHistory.peak.bodyPrice) *
+      100 >= config.THRESHOLDS.PUMPED
+    );
   }
 
-  markPositionEntered(isFirstPump = false) {
-    this.metrics.isFirstPumpEntry = isFirstPump;
+  detectPumpFailure(token) {
+    if (!this.priceHistory.peak || !token.currentPrice) return false;
+    return (
+      ((this.priceHistory.peak.bodyPrice - token.currentPrice.bodyPrice) /
+        this.priceHistory.peak.bodyPrice) *
+      100 >= config.THRESHOLDS.PUMP_FAILURE
+    );
   }
 
-  getPositionSizeRatio() {
-    return this.metrics.isFirstPumpEntry ? 
-      config.POSITION_SIZING.FIRST_PUMP_SIZE_RATIO : 1;
+  detectDrawdown(token) {
+    if (!this.priceHistory.peak || !token.currentPrice) return false;
+    return (
+      ((this.priceHistory.peak.bodyPrice - token.currentPrice.bodyPrice) /
+        this.priceHistory.peak.bodyPrice) *
+      100 >= config.THRESHOLDS.DRAWDOWN
+    );
   }
 
-  getGainFromInitial(currentPrice) {
-    if (!this.priceHistory.initialPumpPrice || !currentPrice) return 0;
-    return ((currentPrice.bodyPrice - this.priceHistory.initialPumpPrice.bodyPrice) / 
-            this.priceHistory.initialPumpPrice.bodyPrice) * 100;
+  detectDead(token) {
+    if (!this.priceHistory.bottom || !token.currentPrice) return false;
+    return (
+      ((this.priceHistory.bottom.bodyPrice - token.currentPrice.bodyPrice) /
+        this.priceHistory.bottom.bodyPrice) *
+      100 >= config.THRESHOLDS.DEAD
+    );
   }
 
-  getDrawdownFromPeak() {
-    if (!this.priceHistory.lastPrice) return 0;
-    
-    // Use the last pump's peak if in drawdown, otherwise use current peak
-    const peakPrice = this.state === STATES.DRAWDOWN && this.priceHistory.lastPumpPeak ? 
-      this.priceHistory.lastPumpPeak.bodyPrice : 
-      (this.priceHistory.peak ? this.priceHistory.peak.bodyPrice : this.priceHistory.lastPrice.bodyPrice);
-
-    return ((peakPrice - this.priceHistory.lastPrice.bodyPrice) / peakPrice) * 100;
+  detectFailedLaunch(token) {
+    if (!this.priceHistory.launchPrice || !token.currentPrice) return false;
+    return (
+      ((this.priceHistory.launchPrice.bodyPrice - token.currentPrice.bodyPrice) /
+        this.priceHistory.launchPrice.bodyPrice) *
+      100 >= config.THRESHOLDS.FAILED_LAUNCH
+    );
   }
 
   setState(newState) {
@@ -179,7 +290,7 @@ class TokenStateManager {
 
     return {
       from: oldState,
-      to: newState
+      to: newState,
     };
   }
 
@@ -199,5 +310,5 @@ module.exports = {
   STATES,
   UNSAFE_REASONS,
   PricePoint,
-  TokenStateManager
+  TokenStateManager,
 };

@@ -67,16 +67,27 @@ Partial Exit:
     `);
   }
 
-  async openPosition(mint, marketCap, volatility = 0) {
-    const positionSize = this.calculatePositionSize(marketCap, volatility);
+  async openPosition(mint, token, marketCap) {
+    // Get entry point confidence from token state manager
+    const entryPoint = token.stateManager.getBestEntry();
+    if (!entryPoint || entryPoint.confidence < config.POSITION.MIN_ENTRY_CONFIDENCE) {
+      console.log(`Skipping position: Low entry confidence (${entryPoint?.confidence || 0})`);
+      return false;
+    }
+
+    // Calculate position size based on entry confidence and token state
+    const baseSize = this.calculatePositionSize(marketCap);
+    const confidenceMultiplier = this.calculateConfidenceMultiplier(entryPoint.confidence);
+    const stateMultiplier = this.calculateStateMultiplier(token.stateManager.state);
+    const positionSize = baseSize * confidenceMultiplier * stateMultiplier;
     
     if (this.wallet.balance >= positionSize) {
-      // Simulate transaction delay and price impact
+      // Simulate transaction with new metrics
       const delay = await this.transactionSimulator.simulateTransactionDelay();
       const executionPrice = this.transactionSimulator.calculatePriceImpact(
         positionSize,
         marketCap,
-        0
+        token.metrics.earlyTrading?.volumeAcceleration || 0
       );
 
       const position = {
@@ -90,32 +101,178 @@ Partial Exit:
         entryTime: Date.now(),
         maxDrawdown: 0,
         maxUpside: 0,
+        entryState: token.stateManager.state,
+        entryConfidence: entryPoint.confidence,
+        metrics: {
+          volumeProfile: { ...token.metrics.earlyTrading?.volumeProfile },
+          buyPressure: { ...token.metrics.earlyTrading?.buyPressure },
+          creatorActivity: { ...token.metrics.earlyTrading?.creatorActivity },
+          tradingPatterns: {
+            rapidTraders: new Set([...token.metrics.earlyTrading?.tradingPatterns.rapidTraders || []]),
+            alternatingTraders: new Set([...token.metrics.earlyTrading?.tradingPatterns.alternatingTraders || []])
+          }
+        },
+        priceHistory: [executionPrice],
         volumeHistory: [],
         candleHistory: [],
         simulatedDelay: delay,
-        priceHistory: [executionPrice],
-        volume: 0,
-        volume1m: 0,
-        volume5m: 0,
-        volume30m: 0,
-        profitHistory: [0],
-        highPrice: executionPrice
+        profitHistory: [0]
       };
 
       this.stateManager.addPosition(position);
       this.wallet.updateBalance(-positionSize);
 
-      // Emit trade event for opening position
+      // Emit trade event with enhanced metrics
       this.emit('trade', {
         type: 'BUY',
         mint,
         profitLoss: 0,
         symbol: position.symbol || mint.slice(0, 8),
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        metrics: {
+          entryState: position.entryState,
+          confidence: position.entryConfidence,
+          volumeAcceleration: token.metrics.earlyTrading?.volumeAcceleration,
+          buyPressure: token.metrics.earlyTrading?.buyPressure.current
+        }
       });
 
       return true;
     }
+    return false;
+  }
+
+  calculateConfidenceMultiplier(confidence) {
+    // Scale position size based on entry confidence
+    // 0-40: 0.5x, 41-60: 0.75x, 61-80: 1x, 81-90: 1.25x, 91-100: 1.5x
+    if (confidence >= 91) return 1.5;
+    if (confidence >= 81) return 1.25;
+    if (confidence >= 61) return 1.0;
+    if (confidence >= 41) return 0.75;
+    return 0.5;
+  }
+
+  calculateStateMultiplier(state) {
+    // Adjust position size based on token state
+    switch (state) {
+      case 'ACCUMULATION':
+        return 0.75; // Early entry, higher risk
+      case 'LAUNCHING':
+        return 1.25; // Strong momentum building
+      case 'PUMPING':
+        return 1.0;  // Standard entry
+      default:
+        return 0.5;  // Unknown state, reduce size
+    }
+  }
+
+  async updatePosition(mint, currentPrice, token) {
+    const position = this.stateManager.getPosition(mint);
+    if (!position) return;
+
+    // Update position with new token metrics
+    position.currentPrice = currentPrice;
+    position.priceHistory.push(currentPrice);
+    
+    // Update metrics
+    if (token.metrics.earlyTrading) {
+      position.metrics = {
+        volumeProfile: { ...token.metrics.earlyTrading.volumeProfile },
+        buyPressure: { ...token.metrics.earlyTrading.buyPressure },
+        creatorActivity: { ...token.metrics.earlyTrading.creatorActivity },
+        tradingPatterns: {
+          rapidTraders: new Set([...token.metrics.earlyTrading.tradingPatterns.rapidTraders]),
+          alternatingTraders: new Set([...token.metrics.earlyTrading.tradingPatterns.alternatingTraders])
+        }
+      };
+    }
+
+    // Calculate P/L
+    const pl = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    position.profitHistory.push(pl);
+
+    // Update max values
+    position.maxUpside = Math.max(position.maxUpside, pl);
+    position.maxDrawdown = Math.min(position.maxDrawdown, pl);
+
+    // Check for exit conditions based on new metrics
+    const shouldExit = await this.checkExitConditions(position, token);
+    if (shouldExit) {
+      await this.closePosition(mint, currentPrice);
+      return;
+    }
+
+    // Check for partial exit conditions
+    const partialExitSize = this.calculatePartialExitSize(position, token);
+    if (partialExitSize > 0) {
+      await this.closePosition(mint, currentPrice, partialExitSize);
+    }
+
+    this.stateManager.updatePosition(position);
+  }
+
+  calculatePartialExitSize(position, token) {
+    const { metrics } = token;
+    
+    // Exit 25% if creator starts selling
+    if (metrics.earlyTrading?.creatorActivity.sellCount > 0 && position.remainingSize > 0.5) {
+      return 0.25;
+    }
+
+    // Exit 50% if suspicious trading patterns increase significantly
+    if (metrics.earlyTrading?.tradingPatterns.rapidTraders.size > 
+        position.metrics.tradingPatterns.rapidTraders.size * 2) {
+      return 0.5;
+    }
+
+    // Exit 25% if buy pressure decreases significantly
+    if (metrics.earlyTrading?.buyPressure.current < 
+        position.metrics.buyPressure.current * 0.7) {
+      return 0.25;
+    }
+
+    return 0;
+  }
+
+  async checkExitConditions(position, token) {
+    const { metrics } = token;
+    
+    // Immediate exit conditions
+    if (
+      // Creator dumping
+      metrics.earlyTrading?.creatorActivity.sellVolume > position.size * 0.5 ||
+      // Severe decline in buy pressure
+      metrics.earlyTrading?.buyPressure.current < position.metrics.buyPressure.current * 0.5 ||
+      // Massive increase in suspicious trading
+      metrics.earlyTrading?.tradingPatterns.rapidTraders.size > position.metrics.tradingPatterns.rapidTraders.size * 3
+    ) {
+      return true;
+    }
+
+    // State-based exit conditions
+    switch (position.entryState) {
+      case 'ACCUMULATION':
+        // Exit if accumulation phase fails
+        if (metrics.earlyTrading?.buyPressure.current < config.SAFETY.MIN_BUY_PRESSURE) {
+          return true;
+        }
+        break;
+      
+      case 'LAUNCHING':
+        // Exit if launch momentum fails
+        if (metrics.earlyTrading?.volumeAcceleration < config.SAFETY.MIN_VOLUME_ACCELERATION) {
+          return true;
+        }
+        break;
+      
+      case 'PUMPING':
+        // Exit if pump momentum dies
+        if (metrics.earlyTrading?.buyPressure.current < position.metrics.buyPressure.current * 0.6) {
+          return true;
+        }
+        break;
+    }
+
     return false;
   }
 
@@ -177,66 +334,6 @@ Partial Exit:
       }
       return updatedPosition;
     }
-  }
-
-  updatePosition(mint, currentPrice, volumeData = null, candleData = null) {
-    // Get existing position data
-    const position = this.getPosition(mint);
-    if (!position) return null;
-
-    // Update price history (keep last 10 minutes of data)
-    const priceHistory = position.priceHistory || [];
-    priceHistory.push(currentPrice);
-    if (priceHistory.length > 60) { // 60 data points at ~10s intervals = 10 minutes
-      priceHistory.shift();
-    }
-
-    // Update volume history (keep last 5 minutes of data)
-    const volumeHistory = position.volumeHistory || [];
-    if (volumeData) {
-      volumeHistory.push({
-        timestamp: Date.now(),
-        volume: volumeData.volume || 0,
-        volume1m: volumeData.volume1m || 0,
-        volume5m: volumeData.volume5m || 0,
-        volume30m: volumeData.volume30m || 0
-      });
-      if (volumeHistory.length > 30) { // 30 data points = 5 minutes
-        volumeHistory.shift();
-      }
-    }
-
-    // Update profit history
-    const profitHistory = position.profitHistory || [];
-    const currentProfit = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
-    profitHistory.push(currentProfit);
-    if (profitHistory.length > 30) {
-      profitHistory.shift();
-    }
-
-    // Update high price if needed
-    const highPrice = Math.max(position.highPrice || position.entryPrice, currentPrice);
-
-    // Update position with new data
-    const updatedPosition = this.stateManager.updatePosition(mint, {
-      currentPrice,
-      priceHistory,
-      volumeHistory,
-      profitHistory,
-      highPrice,
-      volume: volumeData?.volume || position.volume || 0,
-      volume1m: volumeData?.volume1m || position.volume1m || 0,
-      volume5m: volumeData?.volume5m || position.volume5m || 0,
-      volume30m: volumeData?.volume30m || position.volume30m || 0,
-      candleHistory: candleData ? [...(position.candleHistory || []), candleData] : undefined
-    });
-
-    if (!updatedPosition) {
-      console.error(`Failed to update position for ${mint}`);
-      return null;
-    }
-
-    return updatedPosition;
   }
 
   getPosition(mint) {
