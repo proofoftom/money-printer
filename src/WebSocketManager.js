@@ -111,7 +111,7 @@ class WebSocketManager extends EventEmitter {
     // Handle trade messages
     if (message.txType === "buy" || message.txType === "sell") {
       this.emit("trade", message);
-      this.tokenTracker.handleTokenUpdate(message);
+      this.tokenTracker.handleTradeUpdate(message);
       return;
     }
 

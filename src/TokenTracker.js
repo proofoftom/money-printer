@@ -24,10 +24,13 @@ class TokenTracker extends EventEmitter {
     token.on("stateChanged", ({ token, from, to }) => {
       this.emit("tokenStateChanged", { token, from, to });
 
-      // Unsubscribe from WebSocket updates when token enters dead state
+      // Handle dead state
       if (to === STATES.DEAD) {
-        console.log(`Token ${token.symbol || token.mint.slice(0, 8)} marked as dead, unsubscribing from updates`);
+        console.log(`Token ${token.symbol || token.mint.slice(0, 8)} marked as dead, cleaning up...`);
+        // Unsubscribe from WebSocket updates
         this.webSocketManager.unsubscribeFromToken(token.mint);
+        // Remove from tracking
+        this.tokens.delete(token.mint);
       }
     });
 

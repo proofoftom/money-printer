@@ -20,7 +20,7 @@ class Token extends EventEmitter {
     this.priceManager = priceManager;
 
     // Initialize state manager
-    this.stateManager = new TokenStateManager();
+    this.stateManager = new TokenStateManager(config);
     this.highestMarketCap = this.marketCapSol;
 
     // Initialize metrics tracking
@@ -59,10 +59,10 @@ class Token extends EventEmitter {
     }];
     this.priceVolatility = 0;
 
-    // Initialize volume tracking
-    this.volume1m = 0;
-    this.volume5m = 0;
-    this.volume30m = 0;
+    // Initialize volume tracking (by-second windows for instant pump detection)
+    this.volume5s = 0;    // 5 second volume
+    this.volume10s = 0;   // 10 second volume
+    this.volume30s = 0;   // 30 second volume
 
     // Initialize wallets map
     this.wallets = new Map();
@@ -104,56 +104,58 @@ class Token extends EventEmitter {
       this.vSolInBondingCurve = data.vSolInBondingCurve;
     }
 
-    // Update price tracking
-    this.updatePriceMetrics();
+    // Calculate new price
+    this.currentPrice = this.calculateTokenPrice();
 
-    // Update wallet data if trade occurred
-    if (data.tokenAmount) {
+    // Handle trade data
+    if (data.txType === 'buy' || data.txType === 'sell') {
       const volumeInSol = Math.abs(data.tokenAmount * this.currentPrice);
+      const volumeInUSD = this.priceManager.solToUSD(volumeInSol);
+      
+      // Update wallet activity with trade data
       this.updateWalletActivity(data.traderPublicKey, {
         amount: data.tokenAmount,
         volumeInSol,
+        volumeInUSD,
         priceChange: ((this.currentPrice - oldPrice) / oldPrice) * 100,
         timestamp: now,
         newBalance: data.newTokenBalance
       });
+
+      // Update volume metrics with actual USD volume using by-second windows
+      this.volume5s = this.getRecentVolume(5 * 1000);    // 5 seconds
+      this.volume10s = this.getRecentVolume(10 * 1000);  // 10 seconds
+      this.volume30s = this.getRecentVolume(30 * 1000);  // 30 seconds
     }
     // Update wallet balance if no trade (e.g., transfer)
     else if (data.traderPublicKey && typeof data.newTokenBalance !== "undefined") {
       this.updateWalletBalance(data.traderPublicKey, data.newTokenBalance, now);
     }
 
-    // Update all metrics including volume
-    this.updateMetrics();
-
-    // Handle state transitions based on new metrics
+    // Update price metrics and check state transitions
+    this.updatePriceMetrics();
     this.handleStateTransitions();
   }
 
   handleStateTransitions() {
     const currentPrice = new PricePoint(
-      this.currentPrice,  // body price
-      this.currentPrice,  // using same price for wick until we implement wick tracking
+      this.calculateTokenPrice(),
+      this.calculateTokenPrice(),
       Date.now()
     );
 
-    // First check if token should be marked as dead
-    const marketCapUSD = this.priceManager.solToUSD(this.marketCapSol);
-    if (marketCapUSD <= config.THRESHOLDS.DEAD_USD && 
-        this.state !== STATES.DEAD && 
-        this.state !== STATES.NEW) { // Don't mark new tokens as dead
-      this.stateManager.setState(STATES.DEAD);
-      this.emit("stateChanged", { token: this, from: this.state, to: STATES.DEAD });
-      return;
-    }
+    // Update price history based on current state
+    this.stateManager.updatePriceHistory(currentPrice);
 
-    // Check for pump conditions in NEW state
+    // Handle state transitions based on current state
     if (this.state === STATES.NEW) {
+      // Check for initial pump
       const metrics = {
-        priceIncrease1m: this.getPriceIncrease(60),
-        priceIncrease5m: this.getPriceIncrease(300),
+        priceIncrease: this.getPriceIncrease(300), // 5 minutes
         volumeSpike: this.getVolumeSpike(),
-        buyPressure: this.getBuyPressure()
+        buyPressure: this.getBuyPressure(),
+        isFirstPump: true,
+        isHeatingUp: this.isHeatingUp()
       };
 
       if (this.stateManager.isPumpDetected(metrics)) {
@@ -161,60 +163,27 @@ class Token extends EventEmitter {
         this.emit("stateChanged", { token: this, from: STATES.NEW, to: STATES.PUMPING });
       }
     }
-    // Check for drawdown in PUMPING state
+    // Handle pump monitoring and drawdown detection
     else if (this.state === STATES.PUMPING) {
-      if (!this.stateManager.priceHistory.peak) {
-        this.stateManager.priceHistory.peak = currentPrice;
-      } else if (currentPrice.bodyPrice > this.stateManager.priceHistory.peak.bodyPrice) {
-        this.stateManager.priceHistory.peak = currentPrice;
-      }
-
       if (this.stateManager.isDrawdownTriggered(currentPrice, this.stateManager.priceHistory.peak)) {
         this.stateManager.transitionToDrawdown(currentPrice);
         this.emit("stateChanged", { token: this, from: STATES.PUMPING, to: STATES.DRAWDOWN });
       }
     }
-    // Handle drawdown confirmation and recovery
+    // Handle drawdown and check for new pump
     else if (this.state === STATES.DRAWDOWN) {
-      // Initialize or update confirmation candle
-      if (!this.stateManager.confirmationCandle) {
-        this.stateManager.confirmationCandle = currentPrice;
-      }
-      
-      // If drawdown is confirmed, update bottom and check for recovery
-      if (this.stateManager.confirmDrawdown(currentPrice)) {
-        // Update bottom if price is lower
-        if (!this.stateManager.priceHistory.bottom || 
-            currentPrice.bodyPrice < this.stateManager.priceHistory.bottom.bodyPrice) {
-          this.stateManager.priceHistory.bottom = currentPrice;
-        }
+      // Check for new pump
+      const metrics = {
+        priceIncrease: this.getPriceIncrease(300), // 5 minutes
+        volumeSpike: this.getVolumeSpike(),
+        buyPressure: this.getBuyPressure(),
+        isFirstPump: false,
+        isHeatingUp: this.isHeatingUp()
+      };
 
-        // Check if we've recovered enough from our current bottom
-        if (this.stateManager.isRecoveryTriggered(currentPrice, this.stateManager.priceHistory.bottom)) {
-          this.stateManager.transitionToRecovery(currentPrice);
-          this.emit("stateChanged", { token: this, from: STATES.DRAWDOWN, to: STATES.RECOVERY });
-        }
-      }
-    }
-    // Handle recovery state
-    else if (this.state === STATES.RECOVERY) {
-      // Update recovery price point if higher
-      if (!this.stateManager.priceHistory.recovery || 
-          currentPrice.bodyPrice > this.stateManager.priceHistory.recovery.bodyPrice) {
-        this.stateManager.priceHistory.recovery = currentPrice;
-      }
-
-      // Check if we should enter position
-      if (this.stateManager.shouldEnterPosition(currentPrice)) {
-        this.emit("readyForPosition", this);
-      }
-      // Check for new drawdown cycle if we drop below our previous bottom
-      else if (this.stateManager.priceHistory.bottom && 
-               currentPrice.bodyPrice < this.stateManager.priceHistory.bottom.bodyPrice) {
-        // Reset bottom for new drawdown cycle
-        this.stateManager.priceHistory.bottom = null;
-        this.stateManager.transitionToDrawdown(currentPrice);
-        this.emit("stateChanged", { token: this, from: STATES.RECOVERY, to: STATES.DRAWDOWN });
+      if (this.stateManager.isPumpDetected(metrics)) {
+        this.stateManager.transitionToPumping(currentPrice);
+        this.emit("stateChanged", { token: this, from: STATES.DRAWDOWN, to: STATES.PUMPING });
       }
     }
   }
@@ -231,8 +200,20 @@ class Token extends EventEmitter {
   }
 
   getVolumeSpike() {
-    const baseVolume = this.volume5m / 5; // Average volume per minute over 5 minutes
-    return this.volume1m > 0 ? (this.volume1m / baseVolume) * 100 : 0;
+    const volume5s = this.volume5s;
+    const volume30s = this.volume30s;
+    
+    if (volume30s === 0) return 0;
+    
+    // Calculate volume spike by comparing 5s rate to 30s rate
+    const volume5sRate = volume5s / 5;    // Volume per second in 5s window
+    const volume30sRate = volume30s / 30; // Volume per second in 30s window
+    
+    if (volume30sRate === 0) return 0;
+    
+    // Convert to percentage increase/decrease from baseline rate
+    const volumeSpike = ((volume5sRate / volume30sRate) - 1) * 100;
+    return volumeSpike;
   }
 
   getBuyPressure() {
@@ -245,9 +226,9 @@ class Token extends EventEmitter {
       const recentTrades = wallet.trades.filter(t => t.timestamp > now - timeWindow);
       for (const trade of recentTrades) {
         if (trade.priceChange >= 0) {
-          buyVolume += trade.volumeInSol;
+          buyVolume += trade.volumeInUSD;
         }
-        totalVolume += trade.volumeInSol;
+        totalVolume += trade.volumeInUSD;
       }
     }
 
@@ -340,18 +321,18 @@ class Token extends EventEmitter {
   getRecentVolume(timeWindow) {
     const now = Date.now();
     const cutoff = now - timeWindow;
-    let volume = 0;
+    let volumeInUSD = 0;
     
     for (const [_, wallet] of this.wallets) {
       // Filter trades within timeWindow and sum their volumes
       const recentTrades = wallet.trades.filter(trade => trade.timestamp > cutoff);
-      volume += recentTrades.reduce((sum, trade) => {
+      volumeInUSD += recentTrades.reduce((sum, trade) => {
         // Ensure we're using absolute values for volume calculation
-        return sum + Math.abs(trade.volumeInSol || 0);
+        return sum + Math.abs(trade.volumeInUSD || 0);
       }, 0);
     }
     
-    return volume;
+    return volumeInUSD;
   }
 
   updateWalletActivity(publicKey, tradeData) {
@@ -374,12 +355,20 @@ class Token extends EventEmitter {
     // Update wallet data
     wallet.lastActive = now;
     wallet.balance = tradeData.newBalance !== undefined ? tradeData.newBalance : wallet.balance;
+    
+    // Store trade data with volume in both SOL and USD
     wallet.trades.push({
       amount: tradeData.amount,
       volumeInSol: tradeData.volumeInSol,
+      volumeInUSD: this.priceManager.solToUSD(tradeData.volumeInSol || 0),
       priceChange: tradeData.priceChange,
       timestamp: now
     });
+
+    // Update volume metrics with USD volume
+    this.volume5s = this.getRecentVolume(5 * 1000);    // 5 seconds
+    this.volume10s = this.getRecentVolume(10 * 1000);  // 10 seconds
+    this.volume30s = this.getRecentVolume(30 * 1000);  // 30 seconds
 
     // Cleanup old trades
     if (now - this.metrics.volumeData.lastCleanup > this.metrics.volumeData.cleanupInterval) {
@@ -472,11 +461,11 @@ class Token extends EventEmitter {
       };
 
       for (const trade of recentTrades) {
-        stats.volumeTotal += trade.volumeInSol;
+        stats.volumeTotal += trade.volumeInUSD;
         if (trade.priceChange >= 0) {
-          stats.buyVolume += trade.volumeInSol;
+          stats.buyVolume += trade.volumeInUSD;
         } else {
-          stats.sellVolume += trade.volumeInSol;
+          stats.sellVolume += trade.volumeInUSD;
         }
       }
 
@@ -521,29 +510,28 @@ class Token extends EventEmitter {
   }
 
   updateMetrics() {
-    // Update volume metrics
-    this.volume1m = this.getRecentVolume(60 * 1000);     // 1 minute
-    this.volume5m = this.getRecentVolume(5 * 60 * 1000); // 5 minutes
-    this.volume30m = this.getRecentVolume(30 * 60 * 1000); // 30 minutes
+    // Update volume metrics with by-second windows
+    this.volume5s = this.getRecentVolume(5 * 1000);    // 5 seconds
+    this.volume10s = this.getRecentVolume(10 * 1000);  // 10 seconds
+    this.volume30s = this.getRecentVolume(30 * 1000);  // 30 seconds
 
     // Update price stats
     const priceStats = this.getPriceStats();
-    this.priceVolatility = priceStats.volatility;
+    const traderStats = this.getTraderStats();
 
-    // Update trader stats
-    const traderStats = this.getTraderStats("5m");
-    this.metrics.volumeData.maxWalletVolumePercentage = traderStats.maxWalletVolumePercentage;
-    this.metrics.volumeData.suspectedWashTradePercentage = traderStats.suspectedWashTradePercentage;
-
-    // Emit metrics update event for monitoring
-    this.emit("metricsUpdated", {
-      token: this.mint,
+    // Emit metrics update event
+    this.emit("metricsUpdate", {
+      mint: this.mint,
+      symbol: this.symbol,
+      state: this.state,
+      holders: this.getHolderCount(),
+      topHolderConcentration: this.getTopHolderConcentration(),
       priceStats,
       traderStats,
       volume: {
-        volume1m: this.volume1m,
-        volume5m: this.volume5m,
-        volume30m: this.volume30m
+        volume5s: this.volume5s,
+        volume10s: this.volume10s,
+        volume30s: this.volume30s
       }
     });
   }

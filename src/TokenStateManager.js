@@ -3,7 +3,6 @@ const STATES = {
   NEW: 'new',
   PUMPING: 'pumping',
   DRAWDOWN: 'drawdown',
-  RECOVERY: 'recovery',
   OPEN: 'open',
   CLOSED: 'closed',
   DEAD: 'dead'
@@ -28,83 +27,66 @@ class PricePoint {
 }
 
 class TokenStateManager {
-  constructor() {
+  constructor(config) {
     this.state = STATES.NEW;
     this.unsafeReasons = new Set();
     this.priceHistory = {
-      peak: null,      // PricePoint during pumping
-      bottom: null,    // PricePoint during drawdown
-      recovery: null   // PricePoint during recovery
+      peak: null,      // Highest price during pump
+      bottom: null,    // Lowest price during drawdown
     };
-    this.confirmationCandle = null;
+    this.config = config;
   }
 
   // Pump Detection (all conditions must be met)
   isPumpDetected(metrics) {
     const {
-      priceIncrease1m,
-      priceIncrease5m,
+      priceIncrease,
       volumeSpike,
-      buyPressure
+      buyPressure,
+      isFirstPump,
+      isHeatingUp
     } = metrics;
 
-    return (
-      priceIncrease1m >= 10 &&  // 10% price increase in 1min
-      priceIncrease5m >= 25 &&  // 25% price increase in 5min
-      volumeSpike >= 200 &&     // 200% volume spike
-      buyPressure >= 65         // 65% buy pressure
-    );
+    console.log(`Pump check - Price Increase: ${priceIncrease.toFixed(2)}%, Volume Spike: ${volumeSpike}, Buy Pressure: ${buyPressure}, First Pump: ${isFirstPump}, Heating Up: ${isHeatingUp}`);
+
+    return priceIncrease >= this.config.THRESHOLDS.PUMP &&
+           volumeSpike &&
+           buyPressure &&
+           (isFirstPump || isHeatingUp);
   }
 
   // State Transition Checks
   isDrawdownTriggered(currentPrice, peak) {
-    // Use body prices for calculations
-    return (peak.bodyPrice - currentPrice.bodyPrice) / peak.bodyPrice >= 0.25; // 25% drop
-  }
-
-  isRecoveryTriggered(currentPrice, bottom) {
-    // Use body prices for calculations
-    return (currentPrice.bodyPrice - bottom.bodyPrice) / bottom.bodyPrice >= 0.10; // 10% up
-  }
-
-  shouldEnterPosition(currentPrice) {
-    if (this.state !== STATES.RECOVERY || this.unsafeReasons.size > 0) {
-      return false;
-    }
-
-    const gain = (currentPrice.bodyPrice - this.priceHistory.bottom.bodyPrice) / 
-                this.priceHistory.bottom.bodyPrice * 100;
-    
-    return gain <= 15; // Enter if gain <= 15%
+    const drawdown = (peak.bodyPrice - currentPrice.bodyPrice) / peak.bodyPrice * 100;
+    return drawdown >= this.config.THRESHOLDS.DRAWDOWN;
   }
 
   // State Transitions
   transitionToPumping(pricePoint) {
+    console.log(`Transitioning to pumping - Price: ${pricePoint.bodyPrice}`);
     this.state = STATES.PUMPING;
     this.priceHistory.peak = pricePoint;
+    this.priceHistory.bottom = null;
   }
 
   transitionToDrawdown(pricePoint) {
+    console.log(`Transitioning to drawdown - Price: ${pricePoint.bodyPrice}`);
     this.state = STATES.DRAWDOWN;
-    this.confirmationCandle = pricePoint;
+    this.priceHistory.bottom = pricePoint;
   }
 
-  confirmDrawdown(pricePoint) {
-    if (this.isDrawdownTriggered(pricePoint, this.confirmationCandle)) {
-      // Update bottom if it's null or if new price is lower
+  updatePriceHistory(pricePoint) {
+    if (this.state === STATES.PUMPING) {
+      // Update peak if we have a new high
+      if (!this.priceHistory.peak || pricePoint.bodyPrice > this.priceHistory.peak.bodyPrice) {
+        this.priceHistory.peak = pricePoint;
+      }
+    } else if (this.state === STATES.DRAWDOWN) {
+      // Update bottom if we have a new low
       if (!this.priceHistory.bottom || pricePoint.bodyPrice < this.priceHistory.bottom.bodyPrice) {
         this.priceHistory.bottom = pricePoint;
       }
-      return true;
     }
-    return false;
-  }
-
-  transitionToRecovery(pricePoint) {
-    this.state = STATES.RECOVERY;
-    this.priceHistory.recovery = pricePoint;
-    // Reset unsafe reasons when entering a new recovery cycle
-    this.resetUnsafeReasons();
   }
 
   // Safety Management
@@ -138,12 +120,11 @@ class TokenStateManager {
   // State Management
   setState(newState) {
     const oldState = this.state;
+    console.log(`State transition - From: ${oldState} to ${newState}`);
     this.state = newState;
 
     if (newState === STATES.DRAWDOWN) {
       this.priceHistory.bottom = null; // Reset bottom until confirmed
-    } else if (newState === STATES.RECOVERY) {
-      this.resetUnsafeReasons(); // Reset unsafe reasons on new recovery cycle
     }
 
     return {

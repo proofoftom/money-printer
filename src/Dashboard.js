@@ -42,12 +42,12 @@ class Dashboard {
     };
 
     // Listen for trade events from PositionManager
-    this.positionManager.on('trade', (tradeData) => {
+    this.positionManager.on("trade", (tradeData) => {
       this.logTrade(tradeData);
     });
 
     // Listen for balance updates from Wallet
-    this.wallet.on('balanceUpdate', () => {
+    this.wallet.on("balanceUpdate", () => {
       this.updateBalanceHistory();
     });
 
@@ -248,10 +248,12 @@ class Dashboard {
         }
 
         // Filter both x and y data to show only every 60th point for readability
-        const filteredIndices = this.balanceHistory.x.map((_, i) => i).filter(i => i % 60 === 0);
+        const filteredIndices = this.balanceHistory.x
+          .map((_, i) => i)
+          .filter((i) => i % 60 === 0);
         const displayData = {
-          x: filteredIndices.map(i => this.balanceHistory.x[i]),
-          y: filteredIndices.map(i => this.balanceHistory.y[i]),
+          x: filteredIndices.map((i) => this.balanceHistory.x[i]),
+          y: filteredIndices.map((i) => this.balanceHistory.y[i]),
           style: {
             line: "yellow",
           },
@@ -278,44 +280,58 @@ class Dashboard {
       // Calculate basic stats
       const pnl = ((pos.currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
       const holdTime = (Date.now() - pos.entryTime) / 1000;
-      const holdTimeStr = holdTime < 60 
-        ? `${holdTime.toFixed(0)}s` 
-        : `${(holdTime / 60).toFixed(1)}m`;
+      const holdTimeStr =
+        holdTime < 60
+          ? `${holdTime.toFixed(0)}s`
+          : `${(holdTime / 60).toFixed(1)}m`;
 
       // Calculate price velocity (change per minute)
       const priceHistory = pos.priceHistory || [];
       const recentPrices = priceHistory.slice(-5); // Last 5 price points
-      const velocity = recentPrices.length > 1
-        ? ((recentPrices[recentPrices.length - 1] - recentPrices[0]) / recentPrices[0]) * 100
-        : 0;
+      const velocity =
+        recentPrices.length > 1
+          ? ((recentPrices[recentPrices.length - 1] - recentPrices[0]) /
+              recentPrices[0]) *
+            100
+          : 0;
 
       // Get volume trends
       const volumeHistory = pos.volumeHistory || [];
       const recentVolume = volumeHistory.slice(-3); // Last 3 volume points
-      const volumeTrend = recentVolume.length > 1
-        ? ((recentVolume[recentVolume.length - 1] - recentVolume[0]) / recentVolume[0]) * 100
-        : 0;
+      const volumeTrend =
+        recentVolume.length > 1
+          ? ((recentVolume[recentVolume.length - 1] - recentVolume[0]) /
+              recentVolume[0]) *
+            100
+          : 0;
 
       // Format velocity indicator
-      const velocityIndicator = velocity > 0 
-        ? '{green-fg}↑' + velocity.toFixed(1) + '%/m{/green-fg}' 
-        : '{red-fg}↓' + Math.abs(velocity).toFixed(1) + '%/m{/red-fg}';
+      const velocityIndicator =
+        velocity > 0
+          ? "{green-fg}↑" + velocity.toFixed(1) + "%/m{/green-fg}"
+          : "{red-fg}↓" + Math.abs(velocity).toFixed(1) + "%/m{/red-fg}";
 
       // Format volume trend indicator
-      const volumeIndicator = volumeTrend > 0
-        ? '{green-fg}↑' + volumeTrend.toFixed(0) + '%{/green-fg}'
-        : '{red-fg}↓' + Math.abs(volumeTrend).toFixed(0) + '%{/red-fg}';
+      const volumeIndicator =
+        volumeTrend > 0
+          ? "{green-fg}↑" + volumeTrend.toFixed(0) + "%{/green-fg}"
+          : "{red-fg}↓" + Math.abs(volumeTrend).toFixed(0) + "%{/red-fg}";
 
       // Calculate profit trend
       const profitTrend = pos.profitHistory || [];
       const recentProfit = profitTrend.slice(-3);
-      const profitDirection = recentProfit.length > 1
-        ? recentProfit[recentProfit.length - 1] > recentProfit[0] ? "▲" : "▼"
-        : "─";
+      const profitDirection =
+        recentProfit.length > 1
+          ? recentProfit[recentProfit.length - 1] > recentProfit[0]
+            ? "▲"
+            : "▼"
+          : "─";
 
       // Format P/L with color and trend
-      const plColor = pnl >= 0 ? 'green' : 'red';
-      const plStr = `{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(1)}%{/${plColor}-fg}`;
+      const plColor = pnl >= 0 ? "green" : "red";
+      const plStr = `{${plColor}-fg}${profitDirection} ${Math.abs(pnl).toFixed(
+        1
+      )}%{/${plColor}-fg}`;
 
       // Get volume in USD
       const volumeUSD = this.priceManager.solToUSD(pos.volume);
@@ -325,8 +341,10 @@ class Dashboard {
         `${pos.mint?.slice(0, 8)}... | ${holdTimeStr} | P/L: ${plStr}`,
         `Price: ${pos.currentPrice?.toFixed(4)} SOL ${velocityIndicator}`,
         `Vol: ${this.formatVolume(pos.volume5m || 0)}$ ${volumeIndicator}`,
-        `Entry: ${pos.entryPrice?.toFixed(4)} | High: ${pos.highPrice?.toFixed(4)}`,
-        "─".repeat(50) // Separator
+        `Entry: ${pos.entryPrice?.toFixed(4)} | High: ${pos.highPrice?.toFixed(
+          4
+        )}`,
+        "─".repeat(50), // Separator
       ].join("\n");
     });
 
@@ -362,12 +380,15 @@ class Dashboard {
       return this.trades
         .map((trade) => {
           try {
-            const profitLossStr = trade.profitLoss !== undefined && trade.profitLoss !== null
-              ? `${trade.profitLoss >= 0 ? "+" : ""}${trade.profitLoss.toFixed(1)}%`
-              : "N/A";
+            const profitLossStr =
+              trade.profitLoss !== undefined && trade.profitLoss !== null
+                ? `${
+                    trade.profitLoss >= 0 ? "+" : ""
+                  }${trade.profitLoss.toFixed(1)}%`
+                : "N/A";
 
             const symbol = trade.symbol || trade.mint?.slice(0, 8) || "Unknown";
-            
+
             // Color code based on trade type and profit/loss
             let tradeColor = "white";
             if (trade.type === "BUY") tradeColor = "yellow";
@@ -375,7 +396,13 @@ class Dashboard {
               tradeColor = trade.profitLoss >= 0 ? "green" : "red";
             }
 
-            return `{${tradeColor}-fg}[${trade.timestamp}] {${tradeColor}-fg}${trade.type.padEnd(5)} {/${tradeColor}-fg}{white-fg} ${symbol.padEnd(12)} {/${tradeColor}-fg}{${tradeColor}-fg} ${profitLossStr}{/${tradeColor}-fg}`;
+            return `{${tradeColor}-fg}[${
+              trade.timestamp
+            }] {${tradeColor}-fg}${trade.type.padEnd(
+              5
+            )} {/${tradeColor}-fg}{white-fg} ${symbol.padEnd(
+              12
+            )} {/${tradeColor}-fg}{${tradeColor}-fg} ${profitLossStr}{/${tradeColor}-fg}`;
           } catch (err) {
             return `Error formatting trade: ${err.message}`;
           }
@@ -401,10 +428,10 @@ class Dashboard {
   logStatus(message, type = "info") {
     try {
       if (!this.statusBox) return;
-      
+
       const timestamp = new Date().toLocaleTimeString();
       let formattedMessage = `[${timestamp}] `;
-      
+
       switch (type) {
         case "error":
           formattedMessage += "{red-fg}";
@@ -418,14 +445,16 @@ class Dashboard {
         default:
           formattedMessage += "{white-fg}";
       }
-      
+
       formattedMessage += message + "{/}";
       this.statusBox.pushLine(formattedMessage);
       this.statusBox.setScrollPerc(100); // Auto-scroll to bottom
       this.screen.render();
     } catch (error) {
       // If there's an error in logging, fall back to original console
-      this.originalConsoleError.apply(console, [`Error in logStatus: ${error.message}`]);
+      this.originalConsoleError.apply(console, [
+        `Error in logStatus: ${error.message}`,
+      ]);
     }
   }
 
@@ -459,45 +488,63 @@ class Dashboard {
             // Calculate token age in seconds
             const now = Date.now();
             const tokenAge = Math.floor((now - token.minted) / 1000);
-            const ageStr = tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
+            const ageStr =
+              tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
 
             // Format market cap in USD with k format
             const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-            const mcFormatted = marketCapUSD >= 1000
-              ? `${(marketCapUSD / 1000).toFixed(1)}k`
-              : marketCapUSD.toFixed(1);
+            const mcFormatted =
+              marketCapUSD >= 1000
+                ? `${(marketCapUSD / 1000).toFixed(1)}k`
+                : marketCapUSD.toFixed(1);
 
             // Get holder info
             const holderCount = token.getHolderCount();
             const topConcentration = token.getTopHolderConcentration(10);
-            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
+            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(
+              0
+            )}%`;
 
-            // Get volume from token's volume metrics
-            const vol1m = this.formatVolume(token.volume1m || 0);
-            const vol5m = this.formatVolume(token.volume5m || 0);
-            const vol30m = this.formatVolume(token.volume30m || 0);
+            // Get volume from token's volume metrics using by-second windows
+            const vol5s = this.formatVolume(token.volume5s || 0);
+            const vol10s = this.formatVolume(token.volume10s || 0);
+            const vol30s = this.formatVolume(token.volume30s || 0);
 
             // Format the token info string
             const symbol = token.symbol || token.mint.slice(0, 8);
             const rows = [
-              `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-              `VOL   1m: $${vol1m.padEnd(5)} | 5m: $${vol5m.padEnd(5)} | 30m: $${vol30m}`
+              `${symbol.padEnd(12)} ${ageStr.padEnd(
+                3
+              )} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
+              `VOL   5s: $${vol5s.padEnd(5)} | 10s: $${vol10s.padEnd(
+                5
+              )} | 30s: $${vol30s}`,
             ];
 
             // Add pump metrics for new tokens
-            if (state === "new") {
+            if (
+              state === "new" ||
+              state === "pumping" ||
+              state === "drawdown"
+            ) {
               const priceIncrease1m = token.getPriceIncrease(60);
               const priceIncrease5m = token.getPriceIncrease(300);
               const volumeSpike = token.getVolumeSpike();
               const buyPressure = token.getBuyPressure();
-              
+
               rows.push(
-                `P1m: ${priceIncrease1m.toFixed(1)}% P5m: ${priceIncrease5m.toFixed(1)}% VS: ${volumeSpike.toFixed(0)}% BP: ${buyPressure.toFixed(0)}%`
+                `P1m: ${priceIncrease1m.toFixed(
+                  1
+                )}% P5m: ${priceIncrease5m.toFixed(
+                  1
+                )}% VS: ${volumeSpike.toFixed(0)}% BP: ${buyPressure.toFixed(
+                  0
+                )}%`
               );
             }
 
             // Add unsafe reasons for recovery state
-            if (state === "recovery" && token.stateManager.hasUnsafeReasons()) {
+            if (state === "recovery" && token.stateManager.isUnsafe()) {
               const unsafeReasons = token.stateManager.getUnsafeReasons();
               if (unsafeReasons.length > 0) {
                 const { reason, value } = unsafeReasons[0];
@@ -509,14 +556,11 @@ class Dashboard {
                   case "Token too young":
                     valueStr = `${Math.floor(value)}s`;
                     break;
-                  case "Creator holdings too high":
-                    valueStr = `${value.toFixed(1)}%`;
-                    break;
-                  case "volatilityTooHigh":
-                    valueStr = `${value.toFixed(2)}`;
+                  case "Low volume":
+                    valueStr = `$${value.toFixed(2)}`;
                     break;
                   default:
-                    valueStr = value ? value.toString() : "N/A";
+                    valueStr = value.toString();
                 }
                 rows.push(`UNSAFE: ${reason} (${valueStr})`);
               }

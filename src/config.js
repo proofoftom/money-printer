@@ -7,38 +7,33 @@ module.exports = {
   // Market thresholds
   THRESHOLDS: {
     // Market Cap Thresholds (in USD)
-    MAX_ENTRY_CAP_USD: 50000, // Increased to catch larger pumps ($50k)
-    DEAD_USD: 6000, // Lower threshold for considering token dead ($5k)
-    PUMP_DRAWDOWN: 15, // Reduced drawdown for quicker recovery entry
-    RECOVERY: 8, // Lower recovery threshold for faster reentry
-    SAFE_RECOVERY_GAIN: 12, // Lower safe recovery threshold
+    MAX_ENTRY_CAP_USD: 50000, // Maximum market cap for entering positions ($50k)
+    DEAD_USD: 6000, // Market cap threshold for considering token dead ($6k)
 
-    // Time and Age Thresholds
-    MIN_TIME_SINCE_CREATION: 20, // Reduced minimum time for faster entry
-    MIN_HOLDER_WALLET_AGE: 5, // Reduced minimum holder age
+    // State Transition Thresholds (in percent)
+    DRAWDOWN: 25, // Price drop to enter drawdown state
+    PUMP: 25, // Price gain to detect pump
+
+    // Time and Age Thresholds (in seconds)
+    MIN_TIME_SINCE_CREATION: 20, // Minimum token age
+    MIN_HOLDER_WALLET_AGE: 5, // Minimum holder wallet age
 
     // Holder Distribution Thresholds
-    MIN_HOLDERS: 20, // Lower minimum holders requirement
-    MAX_TOP_HOLDER_CONCENTRATION: 35, // Allow higher concentration for early entry
+    MIN_HOLDERS: 20, // Minimum number of holders
+    MAX_TOP_HOLDER_CONCENTRATION: 35, // Maximum concentration for top holders
 
     // Price Action Thresholds
-    MAX_INITIAL_PRICE_MULT: 4, // Allow higher initial price multiplier
-    MAX_PRICE_VOLATILITY: 75, // Increased volatility tolerance
+    MAX_INITIAL_PRICE_MULT: 4, // Maximum initial price multiplier
+    MAX_PRICE_VOLATILITY: 75, // Maximum price volatility
 
     // Trading Pattern Thresholds
-    MAX_AVG_TRADE_SIZE_USD: 750, // Increased maximum trade size
-    MIN_BUY_SELL_RATIO: 0.5, // Lower buy/sell ratio requirement
-    MAX_SINGLE_WALLET_VOLUME: 30, // Allow higher single wallet volume
+    MAX_AVG_TRADE_SIZE_USD: 750, // Maximum average trade size
+    MIN_BUY_SELL_RATIO: 0.5, // Minimum buy/sell ratio
+    MAX_SINGLE_WALLET_VOLUME: 30, // Maximum volume from single wallet
 
     // Volume Pattern Thresholds
-    MIN_VOLUME_PRICE_CORRELATION: 0.4, // Lower correlation requirement
-    MAX_WASH_TRADE_PERCENTAGE: 25, // Slightly increased wash trade tolerance
-
-    // Pump token specific thresholds
-    PUMP: 25, // Lower pump threshold for faster entry
-    RECOVERY: 12, // Faster recovery threshold
-    SAFE_RECOVERY_GAIN: 20, // Lower safe recovery gain requirement
-    DEAD: -20, // Higher dead threshold for faster exit
+    MIN_VOLUME_PRICE_CORRELATION: 0.4, // Minimum volume/price correlation
+    MAX_WASH_TRADE_PERCENTAGE: 25, // Maximum wash trading percentage
   },
 
   // Safety configuration
