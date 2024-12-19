@@ -40,7 +40,8 @@ class TokenStateManager {
       bottom: null,           // Lowest price during drawdown
       lastPrice: null,
       pumpStartPrice: null,   // Price at start of current pump
-      pumpStartTime: null     // Time when current pump started
+      pumpStartTime: null,    // Time when current pump started
+      lastPumpPeak: null      // Preserve the peak from the previous pump
     };
     this.metrics = {
       initialVolume5m: 0,     // 5-minute volume when pump started
@@ -151,9 +152,14 @@ class TokenStateManager {
   }
 
   getDrawdownFromPeak() {
-    if (!this.priceHistory.peak || !this.priceHistory.lastPrice) return 0;
-    return ((this.priceHistory.peak.bodyPrice - this.priceHistory.lastPrice.bodyPrice) / 
-            this.priceHistory.peak.bodyPrice) * 100;
+    if (!this.priceHistory.lastPrice) return 0;
+    
+    // Use the last pump's peak if in drawdown, otherwise use current peak
+    const peakPrice = this.state === STATES.DRAWDOWN && this.priceHistory.lastPumpPeak ? 
+      this.priceHistory.lastPumpPeak.bodyPrice : 
+      (this.priceHistory.peak ? this.priceHistory.peak.bodyPrice : this.priceHistory.lastPrice.bodyPrice);
+
+    return ((peakPrice - this.priceHistory.lastPrice.bodyPrice) / peakPrice) * 100;
   }
 
   setState(newState) {
@@ -164,6 +170,11 @@ class TokenStateManager {
     if (newState === STATES.PUMPING) {
       this.priceHistory.pumpStartPrice = null;
       this.priceHistory.pumpStartTime = null;
+    }
+
+    // When transitioning to drawdown, preserve the peak
+    if (newState === STATES.DRAWDOWN && this.priceHistory.peak) {
+      this.priceHistory.lastPumpPeak = this.priceHistory.peak;
     }
 
     return {

@@ -86,6 +86,9 @@ class TokenTracker extends EventEmitter {
     // Update token state with new trade data
     token.update(tradeData);
 
+    // Emit update event
+    this.emit("tokenUpdated", token);
+
     // Update missed opportunity tracking
     this.safetyChecker.updateTrackedTokens(token);
 
