@@ -1,8 +1,8 @@
 // Token state management
 const STATES = {
-  NEW: "new",       // Just created
-  READY: "ready",   // Ready for position
-  DEAD: "dead",     // Token inactive/done
+  NEW: "NEW",       // Just created
+  READY: "READY",   // Ready for position
+  DEAD: "DEAD",     // Token inactive/done
 };
 
 class TokenStateManager {

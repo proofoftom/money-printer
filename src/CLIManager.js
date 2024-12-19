@@ -4,6 +4,9 @@ const asciichart = require('asciichart');
 const keypress = require('keypress');
 const notifier = require('node-notifier');
 const EventEmitter = require('events');
+const { TokenStateManager } = require('./TokenStateManager');
+const inquirer = require('inquirer');
+const { STATES } = require('./TokenStateManager');
 
 class CLIManager extends EventEmitter {
   constructor(config, tokenTracker) {
@@ -18,12 +21,32 @@ class CLIManager extends EventEmitter {
     this.activePositions = new Map();
     this.tradeHistory = [];
     this.tokenList = new Map();
+    this.performanceMetrics = {
+      totalPnLSol: 0,
+      totalPnLUsd: 0,
+      winRate: 0,
+      avgWin: 0,
+      avgLoss: 0,
+      bestTrade: 0,
+      worstTrade: 0,
+      avgHoldTime: 0,
+      activePositions: 0,
+      totalTrades: 0
+    };
+    this.performanceTimer = null;
+    this.renderTimer = null;
     
     // Initialize tables
     this.initializeTables();
     
     // Setup keyboard controls
     this.setupKeyboardControls();
+
+    // Setup event listeners
+    this.setupEventListeners();
+
+    // Start performance tracking
+    this.startPerformanceTracking();
   }
 
   initializeTables() {
@@ -44,6 +67,7 @@ class CLIManager extends EventEmitter {
         chalk.cyan('Current'),
         chalk.cyan('Size'),
         chalk.cyan('PnL'),
+        chalk.cyan('State'),
         chalk.cyan('Time')
       ],
       style: { head: [], border: [] }
@@ -68,9 +92,11 @@ class CLIManager extends EventEmitter {
         chalk.cyan('Token'),
         chalk.cyan('Age'),
         chalk.cyan('MCap'),
+        chalk.cyan('Price'),
         chalk.cyan('Volume'),
         chalk.cyan('Safety'),
-        chalk.cyan('State')
+        chalk.cyan('State'),
+        chalk.cyan('Draw%')
       ],
       style: { head: [], border: [] }
     });
@@ -126,6 +152,148 @@ class CLIManager extends EventEmitter {
         process.exit();
       }
     });
+  }
+
+  setupEventListeners() {
+    // Position events
+    this.tokenTracker.on('positionOpened', ({ position }) => {
+      this.activePositions.set(position.mint, position);
+      this.render();
+      
+      notifier.notify({
+        title: 'Position Opened',
+        message: `Opened ${position.size.toFixed(2)} ${position.symbol} @ ${position.entryPrice.toFixed(4)}`
+      });
+    });
+
+    this.tokenTracker.on('positionClosed', ({ position }) => {
+      this.activePositions.delete(position.mint);
+      this.tradeHistory.unshift({
+        timestamp: new Date().toLocaleTimeString(),
+        symbol: position.symbol,
+        type: 'CLOSE',
+        price: position.currentPrice,
+        size: position.size,
+        pnl: position.realizedPnLSol
+      });
+      this.render();
+      
+      notifier.notify({
+        title: 'Position Closed',
+        message: `Closed ${position.symbol} with PnL: ${position.realizedPnLSol.toFixed(2)} SOL`
+      });
+    });
+
+    // Token events
+    this.tokenTracker.on('tokenAdded', ({ token }) => {
+      this.tokenList.set(token.mint, token);
+      this.render();
+    });
+
+    this.tokenTracker.on('tokenUpdated', ({ token }) => {
+      this.tokenList.set(token.mint, token);
+      this.render();
+    });
+
+    this.tokenTracker.on('tokenStateChanged', ({ token, from, to }) => {
+      if (to === TokenStateManager.STATES.DEAD) {
+        notifier.notify({
+          title: 'Token Dead',
+          message: `${token.symbol} marked as DEAD (${token.getDrawdownPercentage().toFixed(1)}% drawdown)`
+        });
+      }
+      this.render();
+    });
+  }
+
+  startPerformanceTracking() {
+    if (this.performanceTimer) {
+      clearInterval(this.performanceTimer);
+    }
+    this.performanceTimer = setInterval(() => {
+      this.updatePerformanceMetrics();
+    }, 5000); // Update every 5 seconds
+  }
+
+  stopPerformanceTracking() {
+    if (this.performanceTimer) {
+      clearInterval(this.performanceTimer);
+      this.performanceTimer = null;
+    }
+  }
+
+  updatePerformanceMetrics() {
+    const metrics = this.performanceMetrics;
+    
+    // Calculate total P&L
+    metrics.totalPnLSol = Array.from(this.activePositions.values())
+      .reduce((total, pos) => total + pos.unrealizedPnLSol, 0);
+    metrics.totalPnLUsd = this.tokenTracker.priceManager.solToUSD(metrics.totalPnLSol);
+
+    // Calculate trade statistics
+    const trades = this.tradeHistory;
+    const winningTrades = trades.filter(t => t.pnl > 0);
+    
+    metrics.totalTrades = trades.length;
+    metrics.winRate = trades.length ? (winningTrades.length / trades.length) * 100 : 0;
+    metrics.avgWin = winningTrades.length ? 
+      winningTrades.reduce((sum, t) => sum + t.pnl, 0) / winningTrades.length : 0;
+    
+    const losingTrades = trades.filter(t => t.pnl <= 0);
+    metrics.avgLoss = losingTrades.length ? 
+      losingTrades.reduce((sum, t) => sum + t.pnl, 0) / losingTrades.length : 0;
+    
+    metrics.bestTrade = trades.length ? Math.max(...trades.map(t => t.pnl)) : 0;
+    metrics.worstTrade = trades.length ? Math.min(...trades.map(t => t.pnl)) : 0;
+    
+    // Calculate position metrics
+    metrics.activePositions = this.activePositions.size;
+    metrics.avgHoldTime = Array.from(this.activePositions.values())
+      .reduce((sum, pos) => sum + pos.getTimeInPosition(), 0) / Math.max(1, this.activePositions.size);
+
+    this.render();
+  }
+
+  updatePerformanceTable() {
+    this.performanceTable.length = 0;
+    const m = this.performanceMetrics;
+    const pnlColor = m.totalPnLSol >= 0 ? chalk.green : chalk.red;
+    
+    this.performanceTable.push(
+      ['Total P&L (SOL)', pnlColor(m.totalPnLSol.toFixed(3))],
+      ['Total P&L (USD)', pnlColor(`$${m.totalPnLUsd.toFixed(2)}`)],
+      ['Win Rate', chalk.white(`${m.winRate.toFixed(1)}%`)],
+      ['Avg Win', chalk.green(m.avgWin.toFixed(3))],
+      ['Avg Loss', chalk.red(m.avgLoss.toFixed(3))],
+      ['Best Trade', chalk.green(m.bestTrade.toFixed(3))],
+      ['Worst Trade', chalk.red(m.worstTrade.toFixed(3))],
+      ['Active Positions', chalk.white(m.activePositions.toString())],
+      ['Total Trades', chalk.white(m.totalTrades.toString())],
+      ['Avg Hold Time', chalk.white(this.formatTime(m.avgHoldTime))]
+    );
+  }
+
+  formatTime(ms) {
+    if (!ms || ms < 0) return '0s';
+    
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `${days}d`;
+    if (hours > 0) return `${hours}h`;
+    if (minutes > 0) return `${minutes}m`;
+    return `${seconds}s`;
+  }
+
+  formatNumber(num) {
+    if (!num && num !== 0) return '0';
+    if (isNaN(num)) return '0';
+    
+    if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`;
+    if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`;
+    return num.toFixed(2);
   }
 
   toggleTrading() {
@@ -218,167 +386,193 @@ class CLIManager extends EventEmitter {
     }
   }
 
-  renderBalanceChart() {
-    if (!this.showCharts || this.balanceHistory.length < 2) return '';
-    
-    const config = {
-      height: 10,
-      colors: [asciichart.blue],
-      format: x => x.toFixed(3)
-    };
-    
-    return '\nBalance History:\n' + asciichart.plot(this.balanceHistory, config);
-  }
-
-  renderPerformanceMetrics() {
-    this.performanceTable.length = 0;
-    
-    const totalTrades = this.tradeHistory.length;
-    const winningTrades = this.tradeHistory.filter(t => t.pnl > 0).length;
-    const winRate = totalTrades ? (winningTrades / totalTrades * 100).toFixed(1) : '0.0';
-    
-    const totalPnL = this.tradeHistory.reduce((sum, t) => sum + t.pnl, 0);
-    const avgPnL = totalTrades ? (totalPnL / totalTrades).toFixed(3) : '0.000';
-    
-    // Get token stats
-    const tokenStats = this.tokenTracker ? this.tokenTracker.getTokenStats() : { 
-      total: 0, 
-      new: 0, 
-      ready: 0, 
-      dead: 0, 
-      avgMarketCapUSD: 0, 
-      totalMarketCapUSD: 0 
-    };
-    
-    this.performanceTable.push(
-      ['Total Trades', totalTrades],
-      ['Win Rate', `${winRate}%`],
-      ['Average PnL', `${avgPnL} SOL`],
-      ['Total PnL', `${totalPnL.toFixed(3)} SOL`],
-      ['Active Positions', this.activePositions.size],
-      ['', ''],
-      ['Token Stats:', ''],
-      ['Total Tokens', tokenStats.total],
-      ['New Tokens', tokenStats.new],
-      ['Ready Tokens', tokenStats.ready],
-      ['Dead Tokens', tokenStats.dead],
-      ['Avg Market Cap', `$${tokenStats.avgMarketCapUSD.toFixed(2)}`],
-      ['Total Market Cap', `$${tokenStats.totalMarketCapUSD.toFixed(2)}`]
-    );
-    
-    return this.performanceTable.toString();
-  }
-
-  renderPositions() {
+  updatePositionsTable() {
     this.positionsTable.length = 0;
     
-    for (const [token, position] of this.activePositions) {
-      const pnlColor = position.pnl >= 0 ? chalk.green : chalk.red;
+    for (const [mint, position] of this.activePositions) {
+      const timeSinceOpen = position.getTimeInPosition();
+      const timeString = this.formatTime(timeSinceOpen);
+      const roi = position.roiPercentage;
+      const roiColor = roi >= 0 ? chalk.green : chalk.red;
       
       this.positionsTable.push([
-        position.symbol,
-        position.entryPrice.toFixed(6),
-        position.currentPrice.toFixed(6),
-        position.size.toFixed(3),
-        pnlColor(`${position.pnl.toFixed(3)} (${position.pnlPercent.toFixed(1)}%)`),
-        position.holdTime
+        chalk.yellow(position.symbol),
+        chalk.white(position.getAverageEntryPrice()?.toFixed(4) || 'N/A'),
+        chalk.white(position.currentPrice?.toFixed(4) || 'N/A'),
+        chalk.white(position.size?.toFixed(4) || 'N/A'),
+        roiColor(`${position.unrealizedPnLSol.toFixed(3)} (${roi.toFixed(1)}%)`),
+        this.formatPositionState(position.state),
+        chalk.white(timeString)
       ]);
     }
-    
-    return this.positionsTable.toString();
   }
 
-  renderTradeHistory() {
-    this.tradeHistoryTable.length = 0;
-    
-    for (const trade of this.tradeHistory.slice(0, 10)) {
-      const pnlColor = trade.pnl >= 0 ? chalk.green : chalk.red;
-      
-      this.tradeHistoryTable.push([
-        trade.timestamp,
-        trade.symbol,
-        trade.type === 'buy' ? chalk.green('BUY') : chalk.red('SELL'),
-        trade.price.toFixed(6),
-        trade.size.toFixed(3),
-        pnlColor(`${trade.pnl.toFixed(3)}`)
-      ]);
+  formatPositionState(state) {
+    switch (state) {
+      case 'PENDING':
+        return chalk.yellow(state);
+      case 'OPEN':
+        return chalk.green(state);
+      case 'CLOSED':
+        return chalk.red(state);
+      default:
+        return chalk.white(state);
     }
-    
-    return this.tradeHistoryTable.toString();
   }
 
-  renderTokenList() {
+  updateTokenListTable() {
     this.tokenListTable.length = 0;
     
-    const sortedTokens = Array.from(this.tokenList.values())
-      .sort((a, b) => b.marketCapSol - a.marketCapSol);
-
-    for (const token of sortedTokens) {
-      const safetyColor = token.isSafe ? chalk.green : chalk.red;
-      const stateColor = token.stateManager.getCurrentState() === 'ready' ? chalk.green : chalk.yellow;
+    const sortedTokens = Array.from(this.tokenList.entries())
+      .sort(([, a], [, b]) => b.marketCapSol - a.marketCapSol);
+    
+    for (const [mint, token] of sortedTokens) {
+      const age = Date.now() - token.minted;
+      const ageString = this.formatTime(age);
+      const safetyScore = token.safetyChecker.getScore();
+      const drawdown = token.getDrawdownPercentage();
+      const drawdownColor = drawdown >= 15 ? chalk.red : 
+                          drawdown >= 10 ? chalk.yellow : 
+                          chalk.green;
+      
+      // Get detailed safety info
+      const safetyInfo = this.getTokenSafetyInfo(token);
+      const safetyIndicator = this.formatSafetyIndicators(safetyInfo);
       
       this.tokenListTable.push([
-        token.symbol,
-        token.age,
-        `$${this.tokenTracker.priceManager.solToUSD(token.marketCapSol).toFixed(2)}`,
-        token.volume.toFixed(3),
-        safetyColor(token.isSafe ? 'SAFE' : 'UNSAFE'),
-        stateColor(token.stateManager.getCurrentState().toUpperCase())
+        chalk.yellow(token.symbol),
+        chalk.white(ageString),
+        chalk.white(this.formatNumber(token.marketCapSol)),
+        chalk.white(token.currentPrice?.toFixed(4) || 'N/A'),
+        chalk.white(this.formatNumber(token.vSolInBondingCurve)),
+        safetyIndicator,
+        this.formatTokenState(token.stateManager.getCurrentState()),
+        drawdownColor(`${drawdown.toFixed(1)}%`)
       ]);
     }
+  }
+
+  formatTokenState(state) {
+    switch (state) {
+      case STATES.NEW:
+        return chalk.yellow('NEW');
+      case STATES.READY:
+        return chalk.green('READY');
+      case STATES.DEAD:
+        return chalk.red('DEAD');
+      default:
+        return chalk.gray('UNKNOWN');
+    }
+  }
+
+  getTokenSafetyInfo(token) {
+    const safety = token.safetyChecker;
+    return {
+      score: safety.getScore(),
+      liquidityOk: safety.checkLiquidity(token),
+      ageOk: safety.checkAge(token),
+      volumeOk: safety.checkVolume(token),
+      marketCapOk: safety.checkMarketCap(token),
+      drawdownOk: token.getDrawdownPercentage() < 15
+    };
+  }
+
+  formatSafetyIndicators(safety) {
+    const indicators = [];
+    if (safety.liquidityOk) indicators.push('L');
+    if (safety.ageOk) indicators.push('A');
+    if (safety.volumeOk) indicators.push('V');
+    if (safety.marketCapOk) indicators.push('M');
+    if (safety.drawdownOk) indicators.push('D');
+
+    const color = safety.score >= 80 ? chalk.green :
+                 safety.score >= 60 ? chalk.yellow :
+                 chalk.red;
     
-    return this.tokenListTable.toString();
+    return color(`${safety.score}% [${indicators.join('')}]`);
+  }
+
+  renderBalanceChart() {
+    if (!this.showCharts || this.balanceHistory.length < 2) return '';
+
+    const config = {
+      height: 10,
+      colors: [asciichart.green],
+      format: x => x.toFixed(3)
+    };
+
+    return '\nBalance History (SOL):\n' +
+           asciichart.plot(this.balanceHistory.slice(-50), config);
   }
 
   render() {
     console.clear();
     
     // Header
-    console.log(chalk.blue.bold('\n🖨️  Money Printer Dashboard'));
-    console.log(chalk.gray('Press ? for help, Ctrl+C to exit\n'));
+    console.log(chalk.cyan.bold('🖨️  Money Printer v1.0.0'));
+    console.log(chalk.gray(`Status: ${this.isRunning ? chalk.green('Running') : chalk.yellow('Paused')}`));
     
-    // Status
-    console.log(chalk.yellow(`Status: ${this.isRunning ? chalk.green('RUNNING') : chalk.red('PAUSED')}`));
-    console.log(chalk.yellow(`Risk per trade: ${(this.config.RISK_PER_TRADE * 100).toFixed(1)}%\n`));
-    
-    // Balance chart
-    if (this.showCharts) {
-      console.log(this.renderBalanceChart());
-    }
-    
-    // View-specific content
     switch (this.currentView) {
       case 'dashboard':
         console.log(chalk.cyan.bold('\nPerformance Metrics:'));
-        console.log(this.renderPerformanceMetrics());
-        console.log(chalk.cyan.bold('\nActive Positions:'));
-        console.log(this.renderPositions());
-        break;
+        this.updatePerformanceTable();
+        console.log(this.performanceTable.toString());
         
+        if (this.showCharts) {
+          console.log(this.renderBalanceChart());
+        }
+        
+        console.log(chalk.cyan.bold('\nActive Positions:'));
+        this.updatePositionsTable();
+        console.log(this.positionsTable.toString());
+        break;
       case 'trades':
         console.log(chalk.cyan.bold('\nRecent Trades:'));
         console.log(this.renderTradeHistory());
         break;
-        
       case 'positions':
         console.log(chalk.cyan.bold('\nActive Positions:'));
-        console.log(this.renderPositions());
+        this.updatePositionsTable();
+        console.log(this.positionsTable.toString());
         break;
-        
       case 'performance':
         console.log(chalk.cyan.bold('\nPerformance Metrics:'));
-        console.log(this.renderPerformanceMetrics());
+        this.updatePerformanceTable();
+        console.log(this.performanceTable.toString());
         break;
-        
       case 'tokens':
         console.log(chalk.cyan.bold('\nToken List:'));
-        console.log(this.renderTokenList());
+        this.updateTokenListTable();
+        console.log(this.tokenListTable.toString());
         break;
     }
     
     // Footer
     console.log(chalk.gray('\nAuto-scroll:', this.autoScroll ? 'ON' : 'OFF'));
     console.log(chalk.gray('Charts:', this.showCharts ? 'ON' : 'OFF'));
+  }
+
+  cleanup() {
+    // Stop performance tracking
+    this.stopPerformanceTracking();
+    
+    // Clear all event listeners
+    this.removeAllListeners();
+    
+    // Stop any active intervals
+    if (this.renderTimer) {
+      clearInterval(this.renderTimer);
+      this.renderTimer = null;
+    }
+    
+    // Clear data
+    this.activePositions.clear();
+    this.tokenList.clear();
+    this.tradeHistory = [];
+    this.balanceHistory = [];
+    
+    // Reset state
+    this.isRunning = false;
   }
 }
 
