@@ -481,11 +481,11 @@ class Dashboard {
         (token) => token.state.toLowerCase() === state.toLowerCase()
       );
 
-      // Sort by market cap
+      // Sort by gain percentage instead of market cap
       tokens.sort((a, b) => {
-        const mcA = this.priceManager.solToUSD(a.marketCapSol);
-        const mcB = this.priceManager.solToUSD(b.marketCapSol);
-        return mcB - mcA;
+        const gainA = a.getGainPercentage();
+        const gainB = b.getGainPercentage();
+        return gainB - gainA;
       });
 
       return tokens.map((token) => {
@@ -516,8 +516,12 @@ class Dashboard {
           // Format the token info string
           const symbol = token.symbol || token.mint.slice(0, 8);
           const rows = [
-            `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-            `VOL   5s: $${vol5s.padEnd(5)} | 10s: $${vol10s.padEnd(5)} | 30s: $${vol30s}`
+            `${symbol.padEnd(12)} ${ageStr.padEnd(
+              3
+            )} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
+            `VOL   5s: $${vol5s.padEnd(5)} | 10s: $${vol10s.padEnd(
+              5
+            )} | 30s: $${vol30s}`,
           ];
 
           // Add state-specific metrics
