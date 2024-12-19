@@ -14,11 +14,42 @@ jest.mock("../Token", () => {
       stateManager: deps.stateManager || new MockStateManager(),
       safetyChecker: deps.safetyChecker,
       priceManager: deps.priceManager,
+      lastTradeType: null,
+      lastTradeAmount: null,
+      lastTradeTime: null,
+      tokenBalance: null,
       update: function(newData) {
-        Object.assign(this, newData);
+        // Update core token data
+        if (newData.vTokensInBondingCurve !== undefined) {
+          this.vTokensInBondingCurve = newData.vTokensInBondingCurve;
+        }
+        if (newData.vSolInBondingCurve !== undefined) {
+          this.vSolInBondingCurve = newData.vSolInBondingCurve;
+        }
+        if (newData.marketCapSol !== undefined) {
+          this.marketCapSol = newData.marketCapSol;
+        }
+        if (newData.newTokenBalance !== undefined) {
+          this.tokenBalance = newData.newTokenBalance;
+        }
+
+        // Track trade type
+        if (newData.type === 'buy' || newData.type === 'sell') {
+          this.lastTradeType = newData.type;
+          this.lastTradeAmount = newData.tokenAmount;
+          this.lastTradeTime = Date.now();
+        }
+
         if (this.safetyChecker.isTokenSafe(this) && this.stateManager.getCurrentState() === STATES.NEW) {
           this.stateManager.transitionTo(STATES.READY);
         }
+
+        // Emit update event
+        this.emit('updated', {
+          token: this,
+          tradeType: newData.type,
+          tradeAmount: newData.tokenAmount
+        });
       }
     };
     
@@ -53,8 +84,13 @@ class MockPositionManager extends EventEmitter {
   }
 }
 
-class MockWebSocketManager {
+class MockWebSocketManager extends EventEmitter {
+  constructor() {
+    super();
+  }
+  
   unsubscribeFromToken() {}
+  subscribeToToken() {}
 }
 
 class MockStateManager {
@@ -204,6 +240,96 @@ describe("TokenTracker", () => {
         expect(stats.avgMarketCapUSD).toBe(200000); // (1000 + 2000 + 3000) / 3 * 100
         expect(stats.totalMarketCapUSD).toBe(600000); // (1000 + 2000 + 3000) * 100
       });
+    });
+  });
+
+  describe('WebSocket Event Handling', () => {
+    test('handles newToken event from WebSocket', () => {
+      const tokenData = {
+        mint: 'new-token-mint',
+        name: 'New Token',
+        symbol: 'NEW',
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 100
+      };
+
+      // Simulate WebSocket emitting a newToken event
+      tokenTracker.webSocketManager.emit('newToken', tokenData);
+
+      // Check if token was added
+      const token = tokenTracker.getToken('new-token-mint');
+      expect(token).toBeDefined();
+      expect(token.mint).toBe('new-token-mint');
+      expect(token.name).toBe('New Token');
+    });
+
+    test('handles tokenTrade event from WebSocket', () => {
+      // First add a token
+      const tokenData = {
+        mint: 'trade-test-mint',
+        name: 'Trade Test Token',
+        symbol: 'TTT',
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 100
+      };
+      tokenTracker.handleNewToken(tokenData);
+
+      const tradeData = {
+        mint: 'trade-test-mint',
+        type: 'buy',
+        tokenAmount: 100,
+        newTokenBalance: 500,
+        vTokensInBondingCurve: 1100,
+        vSolInBondingCurve: 150,
+        marketCapSol: 150
+      };
+
+      // Set up spy for tokenUpdated event
+      const tokenUpdatedSpy = jest.fn();
+      tokenTracker.on('tokenUpdated', tokenUpdatedSpy);
+
+      // Simulate WebSocket emitting a tokenTrade event
+      tokenTracker.webSocketManager.emit('tokenTrade', tradeData);
+
+      // Get the updated token
+      const token = tokenTracker.getToken('trade-test-mint');
+      
+      // Verify token was updated
+      expect(token.vTokensInBondingCurve).toBe(1100);
+      expect(token.vSolInBondingCurve).toBe(150);
+      expect(token.marketCapSol).toBe(150);
+      expect(token.tokenBalance).toBe(500);
+      expect(token.lastTradeType).toBe('buy');
+      expect(token.lastTradeAmount).toBe(100);
+
+      // Verify tokenUpdated event was emitted
+      expect(tokenUpdatedSpy).toHaveBeenCalled();
+    });
+
+    test('ignores tokenTrade event for unknown token', () => {
+      const tradeData = {
+        mint: 'unknown-token-mint',
+        type: 'buy',
+        tokenAmount: 100,
+        vTokensInBondingCurve: 1100,
+        vSolInBondingCurve: 150,
+        marketCapSol: 150
+      };
+
+      // Set up spy for tokenUpdated event
+      const tokenUpdatedSpy = jest.fn();
+      tokenTracker.on('tokenUpdated', tokenUpdatedSpy);
+
+      // Simulate WebSocket emitting a tokenTrade event for unknown token
+      tokenTracker.webSocketManager.emit('tokenTrade', tradeData);
+
+      // Verify no token was added
+      expect(tokenTracker.getToken('unknown-token-mint')).toBeUndefined();
+      
+      // Verify no tokenUpdated event was emitted
+      expect(tokenUpdatedSpy).not.toHaveBeenCalled();
     });
   });
 });

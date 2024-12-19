@@ -11,6 +11,19 @@ class TokenTracker extends EventEmitter {
     this.priceManager = priceManager;
     this.webSocketManager = webSocketManager;
     this.tokens = new Map();
+
+    // Set up WebSocket event listeners
+    this.webSocketManager.on("newToken", (tokenData) => {
+      this.handleNewToken(tokenData);
+    });
+
+    this.webSocketManager.on("tokenTrade", (tradeData) => {
+      if (this.tokens.has(tradeData.mint)) {
+        const token = this.tokens.get(tradeData.mint);
+        token.update(tradeData);
+        this.emit("tokenUpdated", token);
+      }
+    });
   }
 
   handleNewToken(tokenData) {

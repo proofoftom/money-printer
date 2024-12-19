@@ -71,8 +71,17 @@ class MoneyPrinter {
     this.webSocketManager = new WebSocketManager(this.config);
     this.safetyChecker = new SafetyChecker(this.config);
     this.priceManager = new PriceManager(this.config, this.webSocketManager);
+    
+    // Initialize price manager first
+    await this.priceManager.initialize();
+    
     this.positionManager = new PositionManager(this.config, this.wallet, this.priceManager);
-    this.tokenTracker = new TokenTracker(this.safetyChecker, this.positionManager, this.priceManager, this.webSocketManager);
+    this.tokenTracker = new TokenTracker({
+      safetyChecker: this.safetyChecker,
+      positionManager: this.positionManager,
+      priceManager: this.priceManager,
+      webSocketManager: this.webSocketManager
+    });
     this.cli = new CLIManager(this.config, this.tokenTracker);
 
     // Set up event listeners

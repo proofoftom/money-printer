@@ -2,7 +2,7 @@ const EventEmitter = require("events");
 const { TokenStateManager, STATES } = require("./TokenStateManager");
 
 class Token extends EventEmitter {
-  constructor(tokenData, priceManager, safetyChecker) {
+  constructor(tokenData, { priceManager, safetyChecker }) {
     super();
     // Essential token properties
     this.mint = tokenData.mint;
@@ -26,6 +26,12 @@ class Token extends EventEmitter {
     // Price tracking
     this.currentPrice = this.calculateTokenPrice();
     this.initialPrice = this.currentPrice;
+
+    // Trade tracking
+    this.lastTradeType = null;
+    this.lastTradeAmount = null;
+    this.lastTradeTime = null;
+    this.tokenBalance = null;
   }
 
   calculateTokenPrice() {
@@ -46,9 +52,25 @@ class Token extends EventEmitter {
 
   update(data) {
     // Update core token data
-    this.vTokensInBondingCurve = data.vTokensInBondingCurve;
-    this.vSolInBondingCurve = data.vSolInBondingCurve;
-    this.marketCapSol = data.marketCapSol;
+    if (data.vTokensInBondingCurve !== undefined) {
+      this.vTokensInBondingCurve = data.vTokensInBondingCurve;
+    }
+    if (data.vSolInBondingCurve !== undefined) {
+      this.vSolInBondingCurve = data.vSolInBondingCurve;
+    }
+    if (data.marketCapSol !== undefined) {
+      this.marketCapSol = data.marketCapSol;
+    }
+    if (data.newTokenBalance !== undefined) {
+      this.tokenBalance = data.newTokenBalance;
+    }
+
+    // Track trade type
+    if (data.type === 'buy' || data.type === 'sell') {
+      this.lastTradeType = data.type;
+      this.lastTradeAmount = data.tokenAmount;
+      this.lastTradeTime = Date.now();
+    }
 
     // Update highest market cap
     if (this.marketCapSol > this.highestMarketCap) {
@@ -56,10 +78,27 @@ class Token extends EventEmitter {
     }
 
     // Update current price
-    this.currentPrice = this.calculateTokenPrice();
+    const newPrice = this.calculateTokenPrice();
+    if (newPrice !== this.currentPrice) {
+      const oldPrice = this.currentPrice;
+      this.currentPrice = newPrice;
+      this.emit('priceChanged', {
+        token: this,
+        oldPrice,
+        newPrice,
+        tradeType: this.lastTradeType
+      });
+    }
 
     // Check state transitions
     this.checkState();
+
+    // Emit update event
+    this.emit('updated', {
+      token: this,
+      tradeType: data.type,
+      tradeAmount: data.tokenAmount
+    });
   }
 
   checkState() {
