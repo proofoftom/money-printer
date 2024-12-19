@@ -1,64 +1,63 @@
-const config = require('./config');
-
 class TransactionSimulator {
   constructor() {
-    this.config = config.TRANSACTION.SIMULATION_MODE;
+    this.slippageBase = 0.005; // 0.5% base slippage
+    this.volumeMultiplier = 2; // Impact multiplier for volume ratio
   }
 
   /**
-   * Simulates transaction execution time including network delay and block confirmation
-   * @returns {Promise<number>} Total delay in milliseconds
-   */
-  async simulateTransactionDelay() {
-    if (!this.config.ENABLED) return 0;
-
-    const networkDelay = this.calculateNetworkDelay();
-    const blockConfirmationDelay = this.config.AVG_BLOCK_TIME * 1000; // Convert to ms
-
-    const totalDelay = networkDelay + blockConfirmationDelay;
-    await new Promise(resolve => setTimeout(resolve, totalDelay));
-    
-    return totalDelay;
-  }
-
-  /**
-   * Calculates the expected price impact of a transaction
-   * @param {number} tradeSizeSOL - Trade size in SOL
+   * Calculates the expected execution price including slippage
+   * @param {number} size - Trade size in SOL
    * @param {number} currentPrice - Current token price
-   * @param {number} volumeSOL - Current 24h volume in SOL
+   * @param {number} poolSize - Current pool size in SOL
+   * @param {boolean} isBuy - True for buy, false for sell
    * @returns {number} Expected execution price after slippage
    */
-  calculatePriceImpact(tradeSizeSOL, currentPrice, volumeSOL) {
-    if (!this.config.ENABLED || !this.config.PRICE_IMPACT.ENABLED) {
-      return currentPrice;
-    }
-
-    // Base slippage is a fixed percentage
-    const baseSlippage = this.config.PRICE_IMPACT.SLIPPAGE_BASE / 100;
+  calculateExecutionPrice(size, currentPrice, poolSize, isBuy) {
+    // Base slippage is fixed
+    const baseImpact = this.slippageBase;
     
-    // Volume impact is proportional to the trade size relative to volume
-    // If no volume data, use trade size as reference
-    const volumeRatio = volumeSOL > 0 ? tradeSizeSOL / volumeSOL : 1;
-    const volumeImpact = volumeRatio * (this.config.PRICE_IMPACT.VOLUME_MULTIPLIER / 100);
+    // Volume impact is proportional to trade size vs pool size
+    const volumeRatio = size / poolSize;
+    const volumeImpact = volumeRatio * this.volumeMultiplier;
     
-    const totalSlippage = baseSlippage + volumeImpact;
-
+    // Total price impact
+    const totalImpact = baseImpact + volumeImpact;
+    
     // For buys, price increases; for sells, price decreases
-    return currentPrice * (1 + totalSlippage);
+    const direction = isBuy ? 1 : -1;
+    const impactMultiplier = 1 + (direction * totalImpact);
+    
+    return currentPrice * impactMultiplier;
   }
 
   /**
-   * Calculates network delay based on configuration and simulated network conditions
-   * @returns {number} Network delay in milliseconds
-   * @private
+   * Simulates a trade execution
+   * @param {Object} params Trade parameters
+   * @returns {Object} Simulated trade result
    */
-  calculateNetworkDelay() {
-    const { MIN_MS, MAX_MS, CONGESTION_MULTIPLIER } = this.config.NETWORK_DELAY;
-    const baseDelay = Math.random() * (MAX_MS - MIN_MS) + MIN_MS;
-    
-    // Simulate network congestion (30% chance of congestion)
-    const isCongested = Math.random() < 0.3;
-    return isCongested ? baseDelay * CONGESTION_MULTIPLIER : baseDelay;
+  simulateTrade(params) {
+    const {
+      size,
+      currentPrice,
+      poolSize,
+      isBuy
+    } = params;
+
+    const executionPrice = this.calculateExecutionPrice(
+      size,
+      currentPrice,
+      poolSize,
+      isBuy
+    );
+
+    const slippagePercent = ((executionPrice - currentPrice) / currentPrice) * 100;
+
+    return {
+      executionPrice,
+      slippagePercent,
+      expectedCost: size * executionPrice,
+      priceImpact: Math.abs(slippagePercent)
+    };
   }
 }
 

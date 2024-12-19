@@ -24,90 +24,47 @@ class TokenTracker extends EventEmitter {
     token.on("stateChanged", ({ token, from, to }) => {
       this.emit("tokenStateChanged", { token, from, to });
 
-      // Unsubscribe from WebSocket updates when token enters dead state
+      // Unsubscribe and remove dead tokens
       if (to === STATES.DEAD) {
-        console.log(`Token ${token.symbol || token.mint.slice(0, 8)} marked as dead, unsubscribing from updates`);
         this.webSocketManager.unsubscribeFromToken(token.mint);
+        this.removeToken(token.mint);
       }
     });
 
-    // Listen for position ready events
-    token.on("readyForPosition", ({ token, sizeRatio }) => {
-      // Check if we already have a position for this token
+    // Listen for position opportunities
+    token.on("readyForPosition", ({ token }) => {
+      // Skip if we already have a position
       if (this.positionManager.getPosition(token.mint)) {
-        console.log(`Position already exists for ${token.symbol || token.mint.slice(0, 8)}, skipping`);
         return;
       }
 
-      // Check market cap before entering position
+      // Check market cap threshold
       const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
       if (marketCapUSD > config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
-        console.log(
-          `Skipping position for ${token.symbol || token.mint.slice(0, 8)} - Market cap too high: $${marketCapUSD.toFixed(
-            2
-          )} (${token.marketCapSol.toFixed(2)} SOL)`
-        );
         return;
       }
 
-      // Open position with size ratio
-      this.positionManager.openPosition(
-        token.mint,
-        token.marketCapSol,
-        sizeRatio
-      ).then(success => {
-        if (success) {
-          this.emit("positionOpened", token);
-        }
-      });
-    });
-
-    // Listen for significant spread events
-    token.on("significantSpread", (data) => {
-      this.emit("significantSpread", data);
+      // Open position
+      this.positionManager.openPosition(token);
     });
 
     this.tokens.set(tokenData.mint, token);
-    this.emit("newToken", token);
-
-    // Subscribe to token trades
-    this.webSocketManager.subscribeToToken(tokenData.mint);
+    this.emit("tokenAdded", token);
   }
 
-  handleTradeUpdate(tradeData) {
-    const token = this.tokens.get(tradeData.mint);
-    if (!token) {
-      return;
-    }
+  handleTokenUpdate(tokenData) {
+    const token = this.tokens.get(tokenData.mint);
+    if (!token) return;
 
-    // Update token state with new trade data
-    token.update(tradeData);
-
-    // Emit update event
+    token.update(tokenData);
     this.emit("tokenUpdated", token);
+  }
 
-    // Update missed opportunity tracking
-    this.safetyChecker.updateTrackedTokens(token);
-
-    // Convert market cap to USD for threshold comparisons
-    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-
-    // Get current position if exists
-    const position = this.positionManager.getPosition(token.mint);
-
-    // Handle position state synchronization
-    if (position && token.state !== STATES.OPEN) {
-      const stateChange = token.stateManager.setState(STATES.OPEN);
-      this.emit("tokenStateChanged", { token, ...stateChange });
-    } else if (!position && token.state === STATES.OPEN) {
-      // Position was closed, transition to appropriate state based on current conditions
-      if (token.getDrawdownPercentage() >= config.THRESHOLDS.DRAWDOWN) {
-        const stateChange = token.stateManager.setState(STATES.DRAWDOWN);
-        this.emit("tokenStateChanged", { token, ...stateChange });
-      } else if (token.getGainPercentage() >= config.THRESHOLDS.PUMPED) {
-        const stateChange = token.stateManager.setState(STATES.PUMPED);
-        this.emit("tokenStateChanged", { token, ...stateChange });
-      }
+  removeToken(mint) {
+    const token = this.tokens.get(mint);
+    if (token) {
+      this.tokens.delete(mint);
+      this.emit("tokenRemoved", token);
     }
   }
 
@@ -115,18 +72,103 @@ class TokenTracker extends EventEmitter {
     return this.tokens.get(mint);
   }
 
-  getAllTokens() {
-    return Array.from(this.tokens.values());
+  async handleNewTokenAsync(tokenData) {
+    try {
+      if (!this.validateTokenData(tokenData)) {
+        console.error('Invalid token data:', JSON.stringify(tokenData));
+        return;
+      }
+
+      const token = {
+        ...tokenData,
+        age: this.calculateTokenAge(tokenData),
+        ...this.formatMarketMetrics(tokenData)
+      };
+
+      const isSafe = await this.safetyChecker.isTokenSafe(token);
+      if (!isSafe) {
+        return;
+      }
+
+      this.tokens.set(token.mint, token);
+      this.emit('tokenAdded', token);
+    } catch (error) {
+      console.error('Error handling new token:', error);
+    }
   }
 
-  getTokensByState(state) {
-    return this.getAllTokens().filter(token => token.state === state);
+  async handleTokenUpdateAsync(tokenData) {
+    try {
+      const existingToken = this.tokens.get(tokenData.mint);
+      if (!existingToken) {
+        return;
+      }
+
+      const updatedToken = {
+        ...existingToken,
+        ...tokenData,
+        age: this.calculateTokenAge(tokenData),
+        ...this.formatMarketMetrics(tokenData)
+      };
+
+      this.tokens.set(tokenData.mint, updatedToken);
+      this.emit('tokenUpdated', updatedToken);
+    } catch (error) {
+      console.error('Error updating token:', error);
+    }
   }
 
-  getActiveTokens() {
-    return this.getAllTokens().filter(token => 
-      token.state !== STATES.DEAD && token.state !== STATES.CLOSED
-    );
+  validateTokenData(tokenData) {
+    const requiredFields = ['mint', 'name', 'symbol', 'timestamp'];
+    return requiredFields.every(field => tokenData[field]);
+  }
+
+  calculateTokenAge(token) {
+    const ageInMinutes = (Date.now() - token.timestamp) / (60 * 1000);
+    
+    if (ageInMinutes < 60) {
+      return `${Math.floor(ageInMinutes)}m`;
+    }
+    
+    const ageInHours = ageInMinutes / 60;
+    if (ageInHours < 24) {
+      return `${Math.floor(ageInHours)}h`;
+    }
+    
+    return `${Math.floor(ageInHours / 24)}d`;
+  }
+
+  formatMarketMetrics(token) {
+    return {
+      vSol: (parseFloat(token.vSol) / 1e6).toFixed(3),
+      vTokens: (parseFloat(token.vTokens) / 1e6).toFixed(3),
+      marketCap: (parseFloat(token.marketCap) / 1e6).toFixed(3)
+    };
+  }
+
+  filterOldTokens() {
+    const maxAge = config.MAX_TOKEN_AGE;
+    const now = Date.now();
+
+    for (const [mint, token] of this.tokens.entries()) {
+      const tokenAge = now - token.timestamp;
+      if (tokenAge > maxAge) {
+        this.tokens.delete(mint);
+        this.emit('tokenRemoved', { mint, reason: 'age' });
+      }
+    }
+  }
+
+  filterLowLiquidityTokens() {
+    const minLiquidity = config.MIN_LIQUIDITY_SOL * 1e6; // Convert to lamports
+
+    for (const [mint, token] of this.tokens.entries()) {
+      const liquiditySol = parseFloat(token.vSol);
+      if (liquiditySol < minLiquidity) {
+        this.tokens.delete(mint);
+        this.emit('tokenRemoved', { mint, reason: 'liquidity' });
+      }
+    }
   }
 }
 

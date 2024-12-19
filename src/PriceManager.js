@@ -1,8 +1,9 @@
 const axios = require('axios');
+const config = require('./config');
 
 class PriceManager {
   constructor() {
-    this.solPriceUSD = null;
+    this.solPriceUSD = config.SOL_USD_PRICE; // Use fallback price from config
   }
 
   async initialize() {
@@ -18,17 +19,16 @@ class PriceManager {
   }
 
   solToUSD(solAmount) {
-    if (!this.solPriceUSD) {
-      throw new Error('PriceManager not initialized');
-    }
     return solAmount * this.solPriceUSD;
   }
 
   usdToSOL(usdAmount) {
-    if (!this.solPriceUSD) {
-      throw new Error('PriceManager not initialized');
-    }
     return usdAmount / this.solPriceUSD;
+  }
+
+  // For simulation purposes
+  updateSolPrice(newPrice) {
+    this.solPriceUSD = newPrice;
   }
 }
 

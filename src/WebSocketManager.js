@@ -1,215 +1,96 @@
-const WebSocket = require("ws");
-const EventEmitter = require("events");
-const config = require("./config");
+const WebSocket = require('ws');
+const EventEmitter = require('events');
+const config = require('./config');
 
 class WebSocketManager extends EventEmitter {
-  constructor(tokenTracker, priceManager) {
+  constructor() {
     super();
-    this.tokenTracker = tokenTracker;
-    this.priceManager = priceManager;
-    this.subscriptions = new Set();
-    this.isConnected = false;
     this.ws = null;
+    this.isConnected = false;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectTimer = null;
 
-    // Don't auto-connect in test mode
-    if (process.env.NODE_ENV !== "test") {
-      this.connect();
-    }
-
-    // Increase max listeners to prevent warning
-    this.setMaxListeners(20);
-
-    // Store the SIGINT handler reference so we can remove it later
-    this.sigintHandler = () => {
-      console.log("Shutting down WebSocket connection...");
+    // Handle graceful shutdown
+    process.on('SIGINT', () => {
       this.close();
       process.exit(0);
-    };
-
-    // Handle process termination
-    process.on("SIGINT", this.sigintHandler);
+    });
   }
 
-  connect() {
-    if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws = null;
-    }
-
+  async connect() {
     try {
-      this.ws = new WebSocket(config.WEBSOCKET.URL);
-
-      this.ws.on("open", () => {
-        console.info("WebSocket connection established");
-        this.isConnected = true;
-        this.emit("connected");
-        this.subscribeToNewTokens();
-        this.resubscribeToTokens();
-      });
-
-      this.ws.on("error", (error) => {
-        console.error("WebSocket error:", error);
-        this.emit("error", error);
-      });
-
-      this.ws.on("close", () => {
-        console.warn("WebSocket connection closed");
-        this.isConnected = false;
-        this.emit("disconnected");
-        if (process.env.NODE_ENV !== "test") {
-          setTimeout(() => {
-            console.info("Attempting to reconnect...");
-            this.connect();
-          }, config.WEBSOCKET.RECONNECT_TIMEOUT);
-        }
-      });
-
-      this.ws.on("message", (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          this.handleMessage(message);
-        } catch (error) {
-          console.error("Error parsing message:", error);
-          this.emit("error", error);
-        }
-      });
+      this.ws = new WebSocket(config.WS_URL);
+      this.setupEventHandlers();
     } catch (error) {
-      console.error("Error creating WebSocket:", error);
-      this.emit("error", error);
-      if (process.env.NODE_ENV !== "test") {
-        setTimeout(() => {
-          console.log("Attempting to reconnect...");
-          this.connect();
-        }, config.WEBSOCKET.RECONNECT_TIMEOUT);
+      console.error('Failed to connect to WebSocket:', error);
+      await this.handleReconnect();
+    }
+  }
+
+  setupEventHandlers() {
+    this.ws.on('open', () => {
+      this.isConnected = true;
+      this.reconnectAttempts = 0;
+      this.emit('connected');
+    });
+
+    this.ws.on('message', (data) => {
+      try {
+        const message = JSON.parse(data);
+        if (message.type === 'token') {
+          this.emit('tokenData', message);
+        }
+      } catch (error) {
+        console.error('Failed to parse WebSocket message:', error);
       }
-    }
+    });
+
+    this.ws.on('close', () => {
+      this.isConnected = false;
+      this.handleReconnect();
+    });
+
+    this.ws.on('error', (error) => {
+      console.error('WebSocket error:', error);
+      this.isConnected = false;
+    });
   }
 
-  handleMessage(message) {
-    if (!message) {
+  async handleReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error('Max reconnection attempts reached');
       return;
     }
 
-    // Handle subscription and unsubscription confirmation messages silently
-    if (
-      message.message &&
-      (message.message.includes("Successfully subscribed") ||
-        message.message.includes("Unsubscribed"))
-    ) {
-      return;
+    this.reconnectAttempts++;
+    
+    // Clear any existing reconnect timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
     }
-
-    // Handle token creation messages
-    if (message.txType === "create") {
-      this.emit("newToken", message);
-      this.tokenTracker.handleNewToken(message);
-      // Subscribe to trades for the new token
-      this.subscribeToToken(message.mint);
-      return;
-    }
-
-    // Handle trade messages
-    if (message.txType === "buy" || message.txType === "sell") {
-      this.emit("trade", message);
-      this.tokenTracker.handleTradeUpdate(message);
-      return;
-    }
-
-    console.debug("Unknown message format:", message);
-  }
-
-  // For testing purposes
-  setWebSocket(ws) {
-    this.ws = ws;
-    this.isConnected = true;
-  }
-
-  subscribeToToken(mint) {
-    if (
-      !this.isConnected ||
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN
-    ) {
-      console.debug("Cannot subscribe: WebSocket not connected");
-      return false;
-    }
-
-    this.subscriptions.add(mint);
-    this.ws.send(
-      JSON.stringify({
-        method: "subscribeTokenTrade",
-        keys: [mint],
-      })
-    );
-    return true;
-  }
-
-  unsubscribeFromToken(mint) {
-    if (
-      !this.isConnected ||
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN
-    ) {
-      console.debug("Cannot unsubscribe: WebSocket not connected");
-      return false;
-    }
-
-    this.subscriptions.delete(mint);
-    this.ws.send(
-      JSON.stringify({
-        method: "unsubscribeTokenTrade",
-        keys: [mint],
-      })
-    );
-    return true;
-  }
-
-  subscribeToNewTokens() {
-    if (
-      !this.isConnected ||
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN
-    ) {
-      console.debug("Cannot subscribe to new tokens: WebSocket not connected");
-      return false;
-    }
-
-    this.ws.send(
-      JSON.stringify({
-        method: "subscribeNewToken",
-      })
-    );
-    return true;
-  }
-
-  resubscribeToTokens() {
-    if (
-      !this.isConnected ||
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      this.subscriptions.size === 0
-    ) {
-      return false;
-    }
-
-    const keys = Array.from(this.subscriptions);
-    this.ws.send(
-      JSON.stringify({
-        method: "subscribeTokenTrade",
-        keys,
-      })
-    );
-    return true;
+    
+    // Use setTimeout for reconnect delay
+    this.reconnectTimer = setTimeout(() => {
+      this.connect().catch(error => {
+        console.error('Reconnection attempt failed:', error);
+      });
+    }, config.RECONNECT_INTERVAL);
   }
 
   close() {
+    // Clear any pending reconnect timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     if (this.ws) {
       this.ws.removeAllListeners();
       this.ws.close();
       this.ws = null;
+      this.isConnected = false;
     }
-    this.isConnected = false;
-    process.removeListener("SIGINT", this.sigintHandler);
   }
 }
 
