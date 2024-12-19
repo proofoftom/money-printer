@@ -1,7 +1,7 @@
 const EventEmitter = require("events");
 const config = require("./config");
 const ExitStrategies = require("./ExitStrategies");
-const PositionStateManager = require("./PositionStateManager");
+const Position = require("./Position");
 
 class PositionManager extends EventEmitter {
   constructor(wallet, priceManager) {
@@ -9,7 +9,7 @@ class PositionManager extends EventEmitter {
     this.wallet = wallet;
     this.priceManager = priceManager;
     this.exitStrategies = new ExitStrategies();
-    this.stateManager = new PositionStateManager();
+    this.positions = new Map();
     this.isTrading = true;
   }
 
@@ -29,33 +29,35 @@ class PositionManager extends EventEmitter {
 
   openPosition(token) {
     // Skip if trading is paused or position already exists
-    if (!this.isTrading || this.stateManager.hasPosition(token.mint)) {
+    if (!this.isTrading || this.positions.has(token.mint)) {
       return false;
     }
 
     // Calculate position size based on wallet balance and risk parameters
-    const position = {
-      mint: token.mint,
-      symbol: token.symbol,
-      entryPrice: token.getCurrentPrice(),
-      entryTime: Date.now(),
-      size: this.calculatePositionSize(token),
-      currentPrice: token.getCurrentPrice(),
-      token: token
-    };
+    const size = this.calculatePositionSize(token);
+    const currentPrice = token.getCurrentPrice();
 
-    // Add position to state manager
-    this.stateManager.addPosition(position);
+    // Create new position
+    const position = new Position(token, this.priceManager, {
+      takeProfitLevel: config.TAKE_PROFIT_PERCENT,
+      stopLossLevel: config.STOP_LOSS_PERCENT
+    });
+
+    // Open the position
+    position.open(currentPrice, size);
+
+    // Store position
+    this.positions.set(token.mint, position);
     this.emit("positionOpened", { token, position });
     return true;
   }
 
   updatePosition(token) {
-    const position = this.stateManager.getPosition(token.mint);
+    const position = this.positions.get(token.mint);
     if (!position) return;
 
-    // Update current price
-    position.currentPrice = token.getCurrentPrice();
+    // Update position price
+    position.updatePrice(token.getCurrentPrice());
     
     // Check exit signals
     const exitSignal = this.exitStrategies.checkExitSignals(position);
@@ -64,17 +66,18 @@ class PositionManager extends EventEmitter {
       return;
     }
 
-    // Update position state
-    this.stateManager.updatePosition(position);
     this.emit("positionUpdated", position);
   }
 
   closePosition(mint, reason) {
-    const position = this.stateManager.getPosition(mint);
+    const position = this.positions.get(mint);
     if (!position) return;
 
-    // Remove position from state manager
-    this.stateManager.removePosition(mint);
+    // Close the position
+    position.close(position.currentPrice, reason);
+
+    // Clean up
+    this.positions.delete(mint);
     this.emit("positionClosed", { position, reason });
 
     // Return the closed position for reference
@@ -82,7 +85,7 @@ class PositionManager extends EventEmitter {
   }
 
   getPosition(mint) {
-    return this.stateManager.getPosition(mint);
+    return this.positions.get(mint);
   }
 
   calculatePositionSize(token) {
@@ -92,12 +95,15 @@ class PositionManager extends EventEmitter {
   }
 
   emergencyCloseAll() {
-    const positions = this.stateManager.getAllPositions();
-    positions.forEach(position => {
-      this.closePosition(position.mint, 'emergency');
-    });
+    for (const [mint] of this.positions) {
+      this.closePosition(mint, 'emergency');
+    }
     this.pauseTrading();
     this.emit('emergencyStop');
+  }
+
+  getAllPositions() {
+    return Array.from(this.positions.values());
   }
 }
 

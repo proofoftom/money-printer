@@ -1,97 +1,141 @@
 const ExitStrategies = require('../ExitStrategies');
+const Position = require('../Position');
 
 describe('ExitStrategies', () => {
   let exitStrategies;
-  let mockPosition;
   let mockToken;
-  
+  let mockPriceManager;
+  let position;
+
   beforeEach(() => {
     exitStrategies = new ExitStrategies();
-    
     mockToken = {
-      getCurrentPrice: jest.fn(() => 1.0)
+      mint: 'test-mint',
+      symbol: 'TEST',
+      getCurrentPrice: jest.fn(() => 100)
     };
-    
-    mockPosition = {
-      token: mockToken,
-      entryPrice: 1.0
+    mockPriceManager = {
+      solToUSD: jest.fn(sol => sol * 100)
     };
   });
 
-  test('triggers stop loss at 10% drawdown', () => {
-    mockToken.getCurrentPrice.mockReturnValue(0.89); // 11% drop
-    const signal = exitStrategies.checkExitSignals(mockPosition);
-    
-    expect(signal).toEqual({
-      reason: 'STOP_LOSS',
-      portion: 1.0
+  describe('Default Configuration', () => {
+    beforeEach(() => {
+      position = new Position(mockToken, mockPriceManager, {
+        takeProfitLevel: 100, // 100% for testing
+        stopLossLevel: 10     // 10% for testing
+      });
+      position.open(100, 1);
+    });
+
+    test('should use default full exit portions', () => {
+      // Stop Loss
+      position.updatePrice(89);
+      expect(exitStrategies.checkExitSignals(position)).toEqual({
+        reason: 'STOP_LOSS',
+        portion: 1.0
+      });
+
+      // Reset position
+      position = new Position(mockToken, mockPriceManager, {
+        takeProfitLevel: 100,
+        stopLossLevel: 10
+      });
+      position.open(100, 1);
+
+      // Take Profit
+      position.updatePrice(201);
+      expect(exitStrategies.checkExitSignals(position)).toEqual({
+        reason: 'TAKE_PROFIT',
+        portion: 1.0
+      });
+
+      // Reset position
+      position = new Position(mockToken, mockPriceManager, {
+        takeProfitLevel: 100,
+        stopLossLevel: 10
+      });
+      position.open(100, 1);
+
+      // Trailing Stop
+      position.updatePrice(150);
+      position.updatePrice(119);
+      expect(exitStrategies.checkExitSignals(position)).toEqual({
+        reason: 'TRAILING_STOP',
+        portion: 1.0
+      });
     });
   });
 
-  test('triggers take profit at 50% gain', () => {
-    mockToken.getCurrentPrice.mockReturnValue(1.51); // 51% gain
-    const signal = exitStrategies.checkExitSignals(mockPosition);
-    
-    expect(signal).toEqual({
-      reason: 'TAKE_PROFIT',
-      portion: 1.0
+  describe('Custom Configuration', () => {
+    beforeEach(() => {
+      position = new Position(mockToken, mockPriceManager, {
+        takeProfitLevel: 100,
+        stopLossLevel: 10,
+        stopLossPortion: 0.5,
+        takeProfitPortion: 0.3,
+        trailingStopLevel: 15,    // 15% drop instead of default 20%
+        trailingStopPortion: 0.7
+      });
+      position.open(100, 1);
+    });
+
+    test('should respect custom exit portions', () => {
+      // Stop Loss with 50% exit
+      position.updatePrice(89);
+      expect(exitStrategies.checkExitSignals(position)).toEqual({
+        reason: 'STOP_LOSS',
+        portion: 0.5
+      });
+
+      // Reset position
+      position = new Position(mockToken, mockPriceManager, {
+        takeProfitLevel: 100,
+        stopLossLevel: 10,
+        stopLossPortion: 0.5,
+        takeProfitPortion: 0.3,
+        trailingStopLevel: 15,
+        trailingStopPortion: 0.7
+      });
+      position.open(100, 1);
+
+      // Take Profit with 30% exit
+      position.updatePrice(201);
+      expect(exitStrategies.checkExitSignals(position)).toEqual({
+        reason: 'TAKE_PROFIT',
+        portion: 0.3
+      });
+
+      // Reset position
+      position = new Position(mockToken, mockPriceManager, {
+        takeProfitLevel: 100,
+        stopLossLevel: 10,
+        stopLossPortion: 0.5,
+        takeProfitPortion: 0.3,
+        trailingStopLevel: 15,
+        trailingStopPortion: 0.7
+      });
+      position.open(100, 1);
+
+      // Trailing Stop with custom 15% level and 70% exit
+      position.updatePrice(150);
+      position.updatePrice(128.5); // Just above 15% drop (14.33%)
+      expect(exitStrategies.checkExitSignals(position)).toBeNull();
+
+      position.updatePrice(127); // Just below 15% drop (15.33%)
+      expect(exitStrategies.checkExitSignals(position)).toEqual({
+        reason: 'TRAILING_STOP',
+        portion: 0.7
+      });
     });
   });
 
-  test('updates and triggers trailing stop', () => {
-    // Price rises but stays under take profit threshold
-    mockToken.getCurrentPrice.mockReturnValue(1.4); // 40% gain
-    let signal = exitStrategies.checkExitSignals(mockPosition);
-    expect(signal).toBe(null);
-    expect(exitStrategies.trailingStopPrice).toBe(1.4);
-
-    // Price drops 21% from peak
-    mockToken.getCurrentPrice.mockReturnValue(1.1);
-    signal = exitStrategies.checkExitSignals(mockPosition);
-    
-    expect(signal).toEqual({
-      reason: 'TRAILING_STOP',
-      portion: 1.0
-    });
-  });
-
-  test('returns null when no exit conditions met', () => {
-    mockToken.getCurrentPrice.mockReturnValue(1.05); // 5% gain
-    const signal = exitStrategies.checkExitSignals(mockPosition);
-    
-    expect(signal).toBe(null);
-  });
-
-  test('trailing stop updates with new highs below take profit', () => {
-    // Set initial high
-    mockToken.getCurrentPrice.mockReturnValue(1.2); // 20% gain
-    exitStrategies.checkExitSignals(mockPosition);
-    expect(exitStrategies.trailingStopPrice).toBe(1.2);
-
-    // Set new high
-    mockToken.getCurrentPrice.mockReturnValue(1.3); // 30% gain
-    exitStrategies.checkExitSignals(mockPosition);
-    expect(exitStrategies.trailingStopPrice).toBe(1.3);
-
-    // Lower price shouldn't update trailing stop
-    mockToken.getCurrentPrice.mockReturnValue(1.25);
-    exitStrategies.checkExitSignals(mockPosition);
-    expect(exitStrategies.trailingStopPrice).toBe(1.3);
-  });
-
-  test('take profit takes precedence over trailing stop', () => {
-    // Set trailing stop
-    mockToken.getCurrentPrice.mockReturnValue(1.3); // 30% gain
-    let signal = exitStrategies.checkExitSignals(mockPosition);
-    expect(signal).toBe(null);
-    expect(exitStrategies.trailingStopPrice).toBe(1.3);
-
-    // Hit take profit
-    mockToken.getCurrentPrice.mockReturnValue(1.6); // 60% gain
-    signal = exitStrategies.checkExitSignals(mockPosition);
-    expect(signal).toEqual({
-      reason: 'TAKE_PROFIT',
-      portion: 1.0
-    });
+  test('should not process signals for closed positions', () => {
+    position = new Position(mockToken, mockPriceManager);
+    position.open(100, 1);
+    position.updatePrice(85);
+    position.close(85, 'MANUAL');
+    const signal = exitStrategies.checkExitSignals(position);
+    expect(signal).toBeNull();
   });
 });

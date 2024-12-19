@@ -1,47 +1,59 @@
 class ExitStrategies {
   constructor() {
-    this.trailingStopPrice = null;
+    // Default values that can be overridden by position config
+    this.defaultConfig = {
+      stopLossPortion: 1.0,    // Full exit on stop loss by default
+      takeProfitPortion: 1.0,  // Full exit on take profit by default
+      trailingStopLevel: 20,   // 20% drop from highest price
+      trailingStopPortion: 1.0 // Full exit on trailing stop by default
+    };
   }
 
   checkExitSignals(position) {
-    const token = position.token;
-    const currentPrice = token.getCurrentPrice();
+    if (position.state !== 'OPEN') {
+      return null;
+    }
+
+    const currentPrice = position.currentPrice;
     const entryPrice = position.entryPrice;
-
-    // Calculate price change percentage
     const priceChangePercent = ((currentPrice - entryPrice) / entryPrice) * 100;
+    
+    // Get position-specific config or use defaults
+    const config = {
+      ...this.defaultConfig,
+      ...(position.config || {})  // Handle case where position.config might be undefined
+    };
 
-    // 1. Stop Loss: Exit if price drops 10% below entry
-    if (priceChangePercent <= -10) {
-      return {
-        reason: 'STOP_LOSS',
-        portion: 1.0
+    // 1. Stop Loss (e.g., -10%)
+    if (priceChangePercent <= -config.stopLossLevel) {
+      console.log(`Stop loss triggered for ${position.mint} at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`);
+      return { 
+        reason: 'STOP_LOSS', 
+        portion: config.stopLossPortion 
       };
     }
 
-    // 2. Take Profit: Exit if price rises 50% above entry
-    if (priceChangePercent >= 50) {
-      return {
-        reason: 'TAKE_PROFIT',
-        portion: 1.0
+    // 2. Take Profit (e.g., +50%)
+    if (priceChangePercent >= config.takeProfitLevel) {
+      console.log(`Take profit triggered for ${position.mint} at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`);
+      return { 
+        reason: 'TAKE_PROFIT', 
+        portion: config.takeProfitPortion 
       };
     }
 
-    // 3. Trailing Stop: Update and check trailing stop
-    // Update trailing stop if we have a new high price
-    if (currentPrice > (this.trailingStopPrice || 0)) {
-      this.trailingStopPrice = currentPrice;
-    }
-
-    // Exit if price drops 20% from the highest point
-    if (this.trailingStopPrice && currentPrice <= this.trailingStopPrice * 0.8) {
-      return {
-        reason: 'TRAILING_STOP',
-        portion: 1.0
+    // 3. Trailing Stop
+    const highestPrice = position.highestPrice;
+    const dropFromHighPercent = ((currentPrice - highestPrice) / highestPrice) * 100;
+    
+    if (dropFromHighPercent <= -config.trailingStopLevel) {
+      console.log(`Trailing stop (${config.trailingStopLevel}%) triggered for ${position.mint} at ${currentPrice} (${dropFromHighPercent.toFixed(2)}% from high of ${highestPrice})`);
+      return { 
+        reason: 'TRAILING_STOP', 
+        portion: config.trailingStopPortion 
       };
     }
 
-    // No exit signal
     return null;
   }
 }
