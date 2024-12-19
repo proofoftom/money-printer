@@ -184,17 +184,29 @@ class CLIManager extends EventEmitter {
     });
 
     // Token events
-    this.tokenTracker.on('tokenAdded', ({ token }) => {
+    this.tokenTracker.on('tokenAdded', (token) => {
+      if (!token || !token.mint) {
+        console.error('Invalid token data received in tokenAdded event');
+        return;
+      }
       this.tokenList.set(token.mint, token);
       this.render();
     });
 
-    this.tokenTracker.on('tokenUpdated', ({ token }) => {
+    this.tokenTracker.on('tokenUpdated', (token) => {
+      if (!token || !token.mint) {
+        console.error('Invalid token data received in tokenUpdated event');
+        return;
+      }
       this.tokenList.set(token.mint, token);
       this.render();
     });
 
     this.tokenTracker.on('tokenStateChanged', ({ token, from, to }) => {
+      if (!token || !token.mint || !token.symbol) {
+        console.error('Invalid token data received in tokenStateChanged event');
+        return;
+      }
       if (to === STATES.DEAD) {
         notifier.notify({
           title: 'Token Dead',

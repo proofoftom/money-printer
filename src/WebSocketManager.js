@@ -13,6 +13,7 @@ class WebSocketManager extends EventEmitter {
     this.reconnectTimer = null;
     this.subscribedTokens = new Set();
     this.isSubscribedToNewTokens = false;
+    this.logger = global.moneyPrinter?.logger || console;
 
     // Handle graceful shutdown
     process.on("SIGINT", () => {
@@ -48,35 +49,67 @@ class WebSocketManager extends EventEmitter {
       try {
         const message = JSON.parse(data);
 
+        // Silently ignore subscription confirmation messages
+        if (typeof message === 'string' && message.includes('Successfully subscribed')) {
+          this.logger.debug('Subscription confirmed');
+          return;
+        }
+
+        this.logger.debug('WebSocket message received', { type: message.txType });
+
         switch (message.txType) {
           case "create":
-            this.emit("newToken", {
+            // Validate required fields
+            if (!message.mint || !message.symbol) {
+              this.logger.error('Invalid token creation message', { message });
+              return;
+            }
+
+            const tokenData = {
               mint: message.mint,
-              name: message.name,
+              name: message.name || message.symbol,
               symbol: message.symbol,
               uri: message.uri,
-              marketCapSol: message.marketCapSol,
-              initialBuy: message.initialBuy,
-              vTokensInBondingCurve: message.vTokensInBondingCurve,
-              vSolInBondingCurve: message.vSolInBondingCurve,
-            });
+              marketCapSol: message.marketCapSol || 0,
+              initialBuy: message.initialBuy || false,
+              vTokensInBondingCurve: message.vTokensInBondingCurve || 0,
+              vSolInBondingCurve: message.vSolInBondingCurve || 0,
+            };
+
+            this.logger.debug('New token detected', tokenData);
+            this.emit("newToken", tokenData);
             break;
 
           case "buy":
           case "sell":
-            this.emit("tokenTrade", {
+            if (!message.mint) {
+              this.logger.error('Invalid trade message', { message });
+              return;
+            }
+
+            const tradeData = {
               type: message.txType,
               mint: message.mint,
-              tokenAmount: message.tokenAmount,
-              newTokenBalance: message.newTokenBalance,
-              marketCapSol: message.marketCapSol,
-              vTokensInBondingCurve: message.vTokensInBondingCurve,
-              vSolInBondingCurve: message.vSolInBondingCurve,
-            });
+              tokenAmount: message.tokenAmount || 0,
+              newTokenBalance: message.newTokenBalance || 0,
+              marketCapSol: message.marketCapSol || 0,
+              vTokensInBondingCurve: message.vTokensInBondingCurve || 0,
+              vSolInBondingCurve: message.vSolInBondingCurve || 0,
+            };
+
+            this.logger.debug('Token trade detected', tradeData);
+            this.emit("tokenTrade", tradeData);
             break;
+
+          default:
+            this.logger.warn('Unknown message type', { type: message.txType });
         }
       } catch (error) {
-        console.error("Failed to parse WebSocket message:", error);
+        this.logger.error('Failed to parse WebSocket message', { 
+          error: error.message,
+          data: typeof data === 'string' ? data : '<binary>'
+        });
+        this.emit("error", error);
       }
     });
 

@@ -4,6 +4,7 @@ const SafetyChecker = require("./SafetyChecker");
 const PositionManager = require("./PositionManager");
 const PriceManager = require("./PriceManager");
 const Wallet = require("./Wallet");
+const { Logger } = require("./Logger");
 const fs = require('fs').promises;
 const path = require('path');
 const config = require('./config');
@@ -11,20 +12,10 @@ const ConfigWizard = require('./ConfigWizard');
 const CLIManager = require('./CLIManager');
 const chalk = require('chalk');
 
-// Global error handlers
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught Exception:", error);
-  process.exit(1);
-});
-
-process.on("unhandledRejection", (error) => {
-  console.error("Unhandled Rejection:", error);
-  process.exit(1);
-});
-
 class MoneyPrinter {
   constructor() {
     this.config = config;
+    this.logger = new Logger(this.config.LOGGING);
   }
 
   async initialize() {
@@ -42,12 +33,14 @@ class MoneyPrinter {
       // Initialize components
       await this.initializeComponents();
       
+      this.logger.info('Money Printer initialized successfully');
       console.log(chalk.green.bold('\n✨ Money Printer initialized successfully!\n'));
       
       // Start the CLI interface
       await this.startCLI();
       
     } catch (error) {
+      this.logger.error('Failed to initialize Money Printer', { error: error.message, stack: error.stack });
       console.error(chalk.red.bold('Error initializing Money Printer:', error.message));
       process.exit(1);
     }
@@ -63,94 +56,100 @@ class MoneyPrinter {
   }
 
   async initializeComponents() {
-    // Initialize core components
-    this.wallet = new Wallet(this.config);
-    this.webSocketManager = new WebSocketManager(this.config);
-    await this.webSocketManager.connect();
-    
-    this.safetyChecker = new SafetyChecker(this.config);
-    this.priceManager = new PriceManager(this.config, this.webSocketManager);
-    
-    // Initialize price manager first
-    await this.priceManager.initialize();
-    
-    this.positionManager = new PositionManager(this.config, this.wallet, this.priceManager);
-    this.tokenTracker = new TokenTracker({
-      safetyChecker: this.safetyChecker,
-      positionManager: this.positionManager,
-      priceManager: this.priceManager,
-      webSocketManager: this.webSocketManager
-    });
+    try {
+      this.logger.info('Initializing components');
 
-    // Initialize CLI last
-    this.cli = new CLIManager(this.config, this.tokenTracker);
+      // Initialize core components
+      this.wallet = new Wallet(this.config);
+      this.logger.debug('Wallet initialized');
 
-    // Set up event listeners
-    this.setupEventListeners();
+      this.webSocketManager = new WebSocketManager(this.config);
+      await this.webSocketManager.connect();
+      this.logger.debug('WebSocket manager connected');
+      
+      this.safetyChecker = new SafetyChecker(this.config);
+      this.logger.debug('Safety checker initialized');
+
+      this.priceManager = new PriceManager(this.config, this.webSocketManager);
+      await this.priceManager.initialize();
+      this.logger.debug('Price manager initialized');
+      
+      this.positionManager = new PositionManager(this.config, this.wallet, this.priceManager);
+      this.logger.debug('Position manager initialized');
+
+      this.tokenTracker = new TokenTracker({
+        safetyChecker: this.safetyChecker,
+        positionManager: this.positionManager,
+        priceManager: this.priceManager,
+        webSocketManager: this.webSocketManager
+      });
+      this.logger.debug('Token tracker initialized');
+
+      // Initialize CLI last
+      this.cli = new CLIManager(this.config, this.tokenTracker);
+      this.logger.debug('CLI manager initialized');
+
+      // Set up event listeners
+      this.setupEventListeners();
+      this.logger.info('All components initialized successfully');
+
+    } catch (error) {
+      this.logger.error('Failed to initialize components', { error: error.message, stack: error.stack });
+      throw error;
+    }
   }
 
   setupEventListeners() {
     // Token events
     this.tokenTracker.on("tokenAdded", (token) => {
+      this.logger.info('New token detected', { symbol: token.symbol, mint: token.mint });
       this.cli.updateToken(token);
       this.cli.notify(`New token detected: ${token.symbol}`, { sound: false });
     });
 
     this.tokenTracker.on("tokenUpdated", (token) => {
+      this.logger.debug('Token updated', { symbol: token.symbol, mint: token.mint });
       this.cli.updateToken(token);
     });
 
     this.tokenTracker.on("tokenRemoved", (token) => {
+      this.logger.info('Token removed', { symbol: token.symbol, mint: token.mint });
       this.cli.removeToken(token);
-      this.cli.notify(`Token removed: ${token.symbol}`, { sound: false });
     });
 
     // Position events
-    this.positionManager.on("positionOpened", (position) => {
-      this.cli.updatePosition(position.token, position);
-      this.cli.notify(`Opened position in ${position.symbol}`, { sound: true });
-    });
-
-    this.positionManager.on("positionClosed", (position) => {
-      this.cli.addTrade({
-        timestamp: new Date().toLocaleTimeString(),
-        symbol: position.symbol,
-        type: 'sell',
-        price: position.exitPrice,
+    this.tokenTracker.on("positionOpened", ({ token, position }) => {
+      this.logger.info('Position opened', {
+        symbol: token.symbol,
         size: position.size,
-        pnl: position.pnl
-      });
-      
-      const pnlText = position.pnl >= 0 ? chalk.green(`+${position.pnl.toFixed(3)}`) : chalk.red(position.pnl.toFixed(3));
-      this.cli.notify(`Closed position in ${position.symbol}: ${pnlText} SOL`, {
-        sound: position.pnl >= this.config.NOTIFICATIONS.POSITIONS.EXIT.minProfitPercent
+        entryPrice: position.entryPrice
       });
     });
 
-    // Wallet events
-    this.wallet.on("balanceChanged", (balance) => {
-      this.cli.updateBalanceHistory(balance);
+    this.tokenTracker.on("positionClosed", ({ token, position, pnl }) => {
+      this.logger.info('Position closed', {
+        symbol: token.symbol,
+        pnl,
+        exitPrice: position.exitPrice
+      });
     });
 
-    // CLI events
-    this.cli.on("tradingStateChange", (isRunning) => {
-      if (!isRunning) {
-        this.positionManager.pauseTrading();
-      } else {
-        this.positionManager.resumeTrading();
-      }
+    // Error events
+    this.tokenTracker.on("error", (error) => {
+      this.logger.error('Token tracker error', { error: error.message });
     });
 
-    this.cli.on("emergencyStop", () => {
-      this.positionManager.emergencyCloseAll();
+    // WebSocket events
+    this.webSocketManager.on("error", (error) => {
+      this.logger.error('WebSocket error', { error: error.message });
     });
 
-    this.cli.on("riskAdjusted", (newRisk) => {
-      this.positionManager.setRiskPerTrade(newRisk);
+    this.webSocketManager.on("disconnected", () => {
+      this.logger.warn('WebSocket disconnected');
     });
 
-    this.cli.on("shutdown", () => {
-      this.shutdown();
+    this.webSocketManager.on("reconnecting", (attempt) => {
+      this.logger.info('WebSocket reconnecting', { attempt });
     });
   }
 
@@ -160,36 +159,54 @@ class MoneyPrinter {
     
     // Start rendering
     this.cli.render();
+    this.logger.debug('CLI rendering started');
   }
 
   async shutdown() {
+    this.logger.info('Shutting down Money Printer');
     try {
-      // Close all positions
-      await this.positionManager.emergencyCloseAll();
-      
-      // Close WebSocket connection
-      this.webSocketManager.close();
-      
-      // Save final state
       await this.saveState();
-      
-      console.log(chalk.green.bold('\n👋 Money Printer shut down successfully\n'));
+      this.webSocketManager.close();
+      this.cli.cleanup();
+      this.logger.info('Shutdown completed successfully');
     } catch (error) {
-      console.error(chalk.red.bold('Error during shutdown:', error.message));
+      this.logger.error('Error during shutdown', { error: error.message });
     }
   }
 
   async saveState() {
-    // Save trading history and performance metrics
-    // This will be implemented when we add the data export feature
+    // Implementation of state saving
   }
 }
+
+// Global error handlers
+process.on("uncaughtException", (error) => {
+  const logger = global.moneyPrinter?.logger;
+  if (logger) {
+    logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+  }
+  console.error("Uncaught Exception:", error);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (error) => {
+  const logger = global.moneyPrinter?.logger;
+  if (logger) {
+    logger.error('Unhandled Rejection', { error: error.message, stack: error.stack });
+  }
+  console.error("Unhandled Rejection:", error);
+  process.exit(1);
+});
 
 // Start the application
 if (require.main === module) {
   const printer = new MoneyPrinter();
+  global.moneyPrinter = printer;
   printer.initialize().catch(error => {
-    console.error(chalk.red.bold('Fatal error:', error.message));
+    if (printer.logger) {
+      printer.logger.error('Initialization failed', { error: error.message, stack: error.stack });
+    }
+    console.error('Failed to initialize:', error);
     process.exit(1);
   });
 }
