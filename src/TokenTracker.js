@@ -47,30 +47,28 @@ class TokenTracker extends EventEmitter {
 
       // Unsubscribe and remove dead tokens
       if (to === STATES.DEAD) {
-        this.webSocketManager?.unsubscribeFromToken(token.mint);
         this.removeToken(token.mint);
       }
     });
 
-    // Listen for position opportunities
+    // Listen for ready for position event
     token.on("readyForPosition", ({ token }) => {
-      // Skip if we already have a position
-      if (this.positionManager.getPosition(token.mint)) {
-        return;
+      if (this.positionManager.isTradingEnabled()) {
+        const success = this.positionManager.openPosition(token);
+        if (success) {
+          this.emit("positionOpened", { token });
+        }
       }
-
-      // Check market cap threshold
-      const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-      if (marketCapUSD > config.THRESHOLDS.MAX_ENTRY_CAP_USD) {
-        return;
-      }
-
-      // Open position
-      this.positionManager.openPosition(token);
     });
 
-    this.tokens.set(tokenData.mint, token);
+    this.tokens.set(token.mint, token);
     this.emit("tokenAdded", token);
+
+    // Subscribe to token trades
+    this.webSocketManager.subscribeToToken(token.mint);
+
+    // Check initial state
+    token.checkState();
   }
 
   removeToken(mint) {

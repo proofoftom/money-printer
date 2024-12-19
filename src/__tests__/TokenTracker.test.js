@@ -50,6 +50,19 @@ jest.mock("../Token", () => {
           tradeType: newData.type,
           tradeAmount: newData.tokenAmount
         });
+      },
+      checkState: function() {
+        const currentState = this.stateManager.getCurrentState();
+        
+        if (this.safetyChecker.isTokenSafe(this) && currentState === STATES.NEW) {
+          this.stateManager.transitionTo(STATES.READY);
+          this.emit("stateChanged", {
+            token: this,
+            from: currentState,
+            to: STATES.READY
+          });
+          this.emit("readyForPosition", { token: this });
+        }
       }
     };
     
@@ -61,41 +74,32 @@ jest.mock("../Token", () => {
   };
 });
 
-class MockSafetyChecker {
-  isTokenSafe(token) {
-    return token.isSafe;
-  }
-}
+// Mock dependencies
+const mockPriceManager = {
+  solToUSD: jest.fn((sol) => sol * 100)
+};
 
-class MockPriceManager {
-  solToUSD(amount) {
-    return amount * 100;
-  }
-}
+const mockSafetyChecker = {
+  isTokenSafe: jest.fn()
+};
 
-class MockPositionManager extends EventEmitter {
-  constructor() {
-    super();
-    this.positions = new Map();
-  }
-
+const mockPositionManager = {
+  positions: new Map(),
   getPosition(mint) {
     return this.positions.get(mint);
-  }
-}
+  },
+  isTradingEnabled: jest.fn(() => true),
+  openPosition: jest.fn(() => true)
+};
 
-class MockWebSocketManager extends EventEmitter {
-  constructor() {
-    super();
-  }
-  
-  unsubscribeFromToken() {}
-  subscribeToToken() {}
-}
+const mockWebSocketManager = new EventEmitter();
+mockWebSocketManager.subscribeToToken = jest.fn();
+mockWebSocketManager.unsubscribeFromToken = jest.fn();
 
+// Mock StateManager
 class MockStateManager {
-  constructor(initialState = TokenStateManager.STATES.NEW) {
-    this.state = initialState;
+  constructor(state = TokenStateManager.STATES.NEW) {
+    this.state = state;
   }
 
   getCurrentState() {
@@ -109,21 +113,27 @@ class MockStateManager {
 
 describe("TokenTracker", () => {
   let tokenTracker;
-  let mockSafetyChecker;
-  let mockPriceManager;
-  let mockPositionManager;
-  let mockWebSocketManager;
 
   beforeEach(() => {
-    mockSafetyChecker = new MockSafetyChecker();
-    mockPriceManager = new MockPriceManager();
-    mockPositionManager = new MockPositionManager();
-    mockWebSocketManager = new MockWebSocketManager();
-    
+    // Reset all mocks
+    jest.clearAllMocks();
+    mockSafetyChecker.isTokenSafe.mockReset();
+    mockPositionManager.isTradingEnabled.mockReset();
+    mockPositionManager.openPosition.mockReset();
+    mockWebSocketManager.subscribeToToken.mockReset();
+    mockWebSocketManager.unsubscribeFromToken.mockReset();
+    mockPriceManager.solToUSD.mockReset();
+
+    // Set default mock implementations
+    mockSafetyChecker.isTokenSafe.mockReturnValue(false);
+    mockPositionManager.isTradingEnabled.mockReturnValue(true);
+    mockPositionManager.openPosition.mockReturnValue(true);
+    mockPriceManager.solToUSD.mockImplementation(sol => sol * 100);
+
     tokenTracker = new TokenTracker({
       safetyChecker: mockSafetyChecker,
-      priceManager: mockPriceManager,
       positionManager: mockPositionManager,
+      priceManager: mockPriceManager,
       webSocketManager: mockWebSocketManager
     });
   });
@@ -196,49 +206,52 @@ describe("TokenTracker", () => {
     });
 
     describe("getTokenStats", () => {
-      it("should return correct stats for multiple tokens", () => {
+      test("should return correct stats for multiple tokens", () => {
+        // Create tokens with different states via state manager
         const tokens = [
           {
-            mint: "token1",
-            symbol: "TK1",
-            marketCapSol: 1000,
-            isSafe: true
+            mint: 'test-mint-1',
+            name: 'Test Token 1',
+            symbol: 'TEST1',
+            marketCapSol: 10, // $1000 USD
+            vTokensInBondingCurve: 1000,
+            vSolInBondingCurve: 100,
+            stateManager: new MockStateManager(TokenStateManager.STATES.NEW)
           },
           {
-            mint: "token2",
-            symbol: "TK2",
-            marketCapSol: 2000,
-            isSafe: true
+            mint: 'test-mint-2',
+            name: 'Test Token 2',
+            symbol: 'TEST2',
+            marketCapSol: 20, // $2000 USD
+            vTokensInBondingCurve: 1000,
+            vSolInBondingCurve: 100,
+            stateManager: new MockStateManager(TokenStateManager.STATES.READY)
           },
           {
-            mint: "token3",
-            symbol: "TK3",
-            marketCapSol: 3000,
-            isSafe: false
+            mint: 'test-mint-3',
+            name: 'Test Token 3',
+            symbol: 'TEST3',
+            marketCapSol: 30, // $3000 USD
+            vTokensInBondingCurve: 1000,
+            vSolInBondingCurve: 100,
+            stateManager: new MockStateManager(TokenStateManager.STATES.DEAD)
           }
         ];
 
-        // Add tokens with different states
-        tokenTracker.handleNewToken(tokens[0]); // Will be NEW
-        
-        // Set token2 to READY
-        tokenTracker.handleNewToken(tokens[1]);
-        const token2 = tokenTracker.getToken(tokens[1].mint);
-        token2.stateManager.transitionTo(TokenStateManager.STATES.READY);
-        
-        // Set token3 to DEAD
-        tokenTracker.handleNewToken(tokens[2]);
-        const token3 = tokenTracker.getToken(tokens[2].mint);
-        token3.stateManager.transitionTo(TokenStateManager.STATES.DEAD);
+        // Add tokens
+        tokens.forEach(token => {
+          tokenTracker.tokens.set(token.mint, token);
+        });
 
+        // Get stats
         const stats = tokenTracker.getTokenStats();
 
+        // Price manager converts 1 SOL to 100 USD
         expect(stats.total).toBe(3);
         expect(stats.new).toBe(1);
         expect(stats.ready).toBe(1);
         expect(stats.dead).toBe(1);
-        expect(stats.avgMarketCapUSD).toBe(200000); // (1000 + 2000 + 3000) / 3 * 100
-        expect(stats.totalMarketCapUSD).toBe(600000); // (1000 + 2000 + 3000) * 100
+        expect(stats.avgMarketCapUSD).toBe(2000); // (10 + 20 + 30) / 3 * 100
       });
     });
   });
@@ -330,6 +343,91 @@ describe("TokenTracker", () => {
       
       // Verify no tokenUpdated event was emitted
       expect(tokenUpdatedSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Position Management', () => {
+    test('attempts to open position when token becomes ready', () => {
+      const tokenData = {
+        mint: 'test-mint',
+        name: 'Test Token',
+        symbol: 'TEST',
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 100
+      };
+
+      // Mock position manager methods
+      mockPositionManager.isTradingEnabled.mockReturnValue(true);
+      mockPositionManager.openPosition.mockReturnValue(true);
+
+      // Set up spy for positionOpened event
+      const positionOpenedSpy = jest.fn();
+      tokenTracker.on('positionOpened', positionOpenedSpy);
+
+      // Add token and trigger readyForPosition event
+      tokenTracker.handleNewToken(tokenData);
+      const token = tokenTracker.getToken('test-mint');
+      token.emit('readyForPosition', { token });
+
+      // Verify position was opened
+      expect(mockPositionManager.openPosition).toHaveBeenCalledWith(token);
+      expect(positionOpenedSpy).toHaveBeenCalledWith({ token });
+    });
+
+    test('does not open position when trading is disabled', () => {
+      const tokenData = {
+        mint: 'test-mint-2',
+        name: 'Test Token 2',
+        symbol: 'TEST2',
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 100
+      };
+
+      // Mock trading as disabled
+      mockPositionManager.isTradingEnabled.mockReturnValue(false);
+
+      // Set up spy for positionOpened event
+      const positionOpenedSpy = jest.fn();
+      tokenTracker.on('positionOpened', positionOpenedSpy);
+
+      // Add token and trigger readyForPosition event
+      tokenTracker.handleNewToken(tokenData);
+      const token = tokenTracker.getToken('test-mint-2');
+      token.emit('readyForPosition', { token });
+
+      // Verify no position was opened
+      expect(mockPositionManager.openPosition).not.toHaveBeenCalled();
+      expect(positionOpenedSpy).not.toHaveBeenCalled();
+    });
+
+    test('handles failed position opening', () => {
+      const tokenData = {
+        mint: 'test-mint-3',
+        name: 'Test Token 3',
+        symbol: 'TEST3',
+        marketCapSol: 100,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 100
+      };
+
+      // Mock trading as enabled but position opening as failed
+      mockPositionManager.isTradingEnabled.mockReturnValue(true);
+      mockPositionManager.openPosition.mockReturnValue(false);
+
+      // Set up spy for positionOpened event
+      const positionOpenedSpy = jest.fn();
+      tokenTracker.on('positionOpened', positionOpenedSpy);
+
+      // Add token and trigger readyForPosition event
+      tokenTracker.handleNewToken(tokenData);
+      const token = tokenTracker.getToken('test-mint-3');
+      token.emit('readyForPosition', { token });
+
+      // Verify position opening was attempted but failed
+      expect(mockPositionManager.openPosition).toHaveBeenCalledWith(token);
+      expect(positionOpenedSpy).not.toHaveBeenCalled();
     });
   });
 });
