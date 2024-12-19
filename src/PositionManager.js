@@ -76,6 +76,9 @@ class PositionManager extends EventEmitter {
     // Remove position from state manager
     this.stateManager.removePosition(mint);
     this.emit("positionClosed", { position, reason });
+
+    // Return the closed position for reference
+    return position;
   }
 
   getPosition(mint) {

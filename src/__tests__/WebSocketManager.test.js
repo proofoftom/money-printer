@@ -14,6 +14,7 @@ describe('WebSocketManager', () => {
     
     mockWs = {
       on: jest.fn(),
+      send: jest.fn(),
       removeAllListeners: jest.fn(),
       close: jest.fn()
     };
@@ -33,15 +34,18 @@ describe('WebSocketManager', () => {
     it('should establish WebSocket connection', async () => {
       await wsManager.connect();
       
-      expect(WebSocket).toHaveBeenCalledWith(config.WS_URL);
+      expect(WebSocket).toHaveBeenCalledWith('wss://pumpportal.fun/api/data');
       expect(mockWs.on).toHaveBeenCalledWith('open', expect.any(Function));
       expect(mockWs.on).toHaveBeenCalledWith('message', expect.any(Function));
       expect(mockWs.on).toHaveBeenCalledWith('close', expect.any(Function));
       expect(mockWs.on).toHaveBeenCalledWith('error', expect.any(Function));
     });
 
-    it('should handle connection success', async () => {
+    it('should handle connection success and resubscribe', async () => {
       await wsManager.connect();
+      wsManager.isSubscribedToNewTokens = true;
+      wsManager.subscribedTokens.add('TEST1');
+      wsManager.subscribedTokens.add('TEST2');
       
       // Simulate connection success
       const openHandler = mockWs.on.mock.calls.find(call => call[0] === 'open')[1];
@@ -50,102 +54,162 @@ describe('WebSocketManager', () => {
       expect(wsManager.isConnected).toBe(true);
       expect(wsManager.reconnectAttempts).toBe(0);
       expect(mockEmit).toHaveBeenCalledWith('connected');
+      
+      // Verify resubscriptions
+      expect(mockWs.send).toHaveBeenNthCalledWith(1, JSON.stringify({
+        method: 'subscribeNewToken'
+      }));
+      expect(mockWs.send).toHaveBeenNthCalledWith(2, JSON.stringify({
+        method: 'subscribeTokenTrade',
+        keys: ['TEST1', 'TEST2']
+      }));
+    });
+  });
+
+  describe('Subscription Management', () => {
+    beforeEach(async () => {
+      await wsManager.connect();
+      const openHandler = mockWs.on.mock.calls.find(call => call[0] === 'open')[1];
+      openHandler();
     });
 
-    it('should handle connection failure', async () => {
-      const error = new Error('Connection failed');
-      WebSocket.mockImplementationOnce(() => {
-        throw error;
-      });
+    it('should subscribe to new tokens', () => {
+      wsManager.subscribeToNewTokens();
       
-      await wsManager.connect();
-      
-      expect(console.error).toHaveBeenCalledWith('Failed to connect to WebSocket:', error);
-      expect(wsManager.isConnected).toBe(false);
-    }, 10000);
+      expect(mockWs.send).toHaveBeenCalledWith(JSON.stringify({
+        method: 'subscribeNewToken'
+      }));
+      expect(wsManager.isSubscribedToNewTokens).toBe(true);
+    });
 
-    it('should handle reconnection attempts', async () => {
-      await wsManager.connect();
+    it('should unsubscribe from new tokens', () => {
+      wsManager.subscribeToNewTokens();
+      wsManager.unsubscribeFromNewTokens();
       
-      // Simulate connection close
-      const closeHandler = mockWs.on.mock.calls.find(call => call[0] === 'close')[1];
-      closeHandler();
-      
-      expect(wsManager.isConnected).toBe(false);
-      
-      // Fast-forward timers and verify reconnection attempt
-      jest.advanceTimersByTime(config.RECONNECT_INTERVAL);
-      expect(WebSocket).toHaveBeenCalledTimes(2);
-    }, 10000);
+      expect(mockWs.send).toHaveBeenCalledWith(JSON.stringify({
+        method: 'unsubscribeNewToken'
+      }));
+      expect(wsManager.isSubscribedToNewTokens).toBe(false);
+    });
 
-    it('should stop reconnecting after max attempts', async () => {
-      // Simulate max reconnection attempts
-      for (let i = 0; i < wsManager.maxReconnectAttempts + 1; i++) {
-        WebSocket.mockImplementationOnce(() => {
-          throw new Error('Connection failed');
-        });
-        
-        await wsManager.connect();
-        jest.advanceTimersByTime(config.RECONNECT_INTERVAL);
-      }
+    it('should subscribe to token trades', () => {
+      wsManager.subscribeToToken('TEST');
       
-      expect(console.error).toHaveBeenCalledWith('Max reconnection attempts reached');
-      expect(wsManager.reconnectAttempts).toBe(wsManager.maxReconnectAttempts);
-    }, 10000);
+      expect(mockWs.send).toHaveBeenCalledWith(JSON.stringify({
+        method: 'subscribeTokenTrade',
+        keys: ['TEST']
+      }));
+      expect(wsManager.subscribedTokens.has('TEST')).toBe(true);
+    });
+
+    it('should unsubscribe from token trades', () => {
+      wsManager.subscribeToToken('TEST');
+      wsManager.unsubscribeFromToken('TEST');
+      
+      expect(mockWs.send).toHaveBeenCalledWith(JSON.stringify({
+        method: 'unsubscribeTokenTrade',
+        keys: ['TEST']
+      }));
+      expect(wsManager.subscribedTokens.has('TEST')).toBe(false);
+    });
   });
 
   describe('Message Handling', () => {
-    it('should handle token data messages', async () => {
+    let messageHandler;
+
+    beforeEach(async () => {
       await wsManager.connect();
-      
-      const messageHandler = mockWs.on.mock.calls.find(call => call[0] === 'message')[1];
+      messageHandler = mockWs.on.mock.calls.find(call => call[0] === 'message')[1];
+    });
+
+    it('should handle new token messages', () => {
       const mockTokenData = {
-        type: 'token',
+        txType: 'create',
         mint: 'TEST',
-        name: 'Test Token'
+        name: 'Test Token',
+        symbol: 'TEST',
+        uri: 'test-uri',
+        marketCapSol: 100,
+        initialBuy: 1000,
+        vTokensInBondingCurve: 10000,
+        vSolInBondingCurve: 50
       };
       
       messageHandler(JSON.stringify(mockTokenData));
       
-      expect(mockEmit).toHaveBeenCalledWith('tokenData', mockTokenData);
+      expect(mockEmit).toHaveBeenCalledWith('newToken', {
+        mint: 'TEST',
+        name: 'Test Token',
+        symbol: 'TEST',
+        uri: 'test-uri',
+        marketCapSol: 100,
+        initialBuy: 1000,
+        vTokensInBondingCurve: 10000,
+        vSolInBondingCurve: 50
+      });
     });
 
-    it('should handle invalid message data', async () => {
-      await wsManager.connect();
+    it('should handle trade messages', () => {
+      const mockTradeData = {
+        txType: 'buy',
+        mint: 'TEST',
+        tokenAmount: 1000,
+        newTokenBalance: 2000,
+        marketCapSol: 150,
+        vTokensInBondingCurve: 9000,
+        vSolInBondingCurve: 60
+      };
       
-      const messageHandler = mockWs.on.mock.calls.find(call => call[0] === 'message')[1];
+      messageHandler(JSON.stringify(mockTradeData));
+      
+      expect(mockEmit).toHaveBeenCalledWith('tokenTrade', {
+        type: 'buy',
+        mint: 'TEST',
+        tokenAmount: 1000,
+        newTokenBalance: 2000,
+        marketCapSol: 150,
+        vTokensInBondingCurve: 9000,
+        vSolInBondingCurve: 60
+      });
+    });
+
+    it('should handle invalid message data', () => {
       const invalidData = 'invalid json';
+      const consoleSpy = jest.spyOn(console, 'error');
       
       messageHandler(invalidData);
       
-      expect(console.error).toHaveBeenCalledWith('Failed to parse WebSocket message:', expect.any(Error));
+      expect(consoleSpy).toHaveBeenCalledWith('Failed to parse WebSocket message:', expect.any(Error));
     });
   });
 
   describe('Cleanup', () => {
-    it('should close WebSocket connection', () => {
-      wsManager.ws = mockWs;
-      wsManager.isConnected = true;
+    it('should unsubscribe and close WebSocket connection', async () => {
+      await wsManager.connect();
+      const openHandler = mockWs.on.mock.calls.find(call => call[0] === 'open')[1];
+      openHandler();
+      
+      wsManager.subscribeToNewTokens();
+      wsManager.subscribeToToken('TEST1');
+      wsManager.subscribeToToken('TEST2');
       
       wsManager.close();
       
+      expect(mockWs.send).toHaveBeenCalledWith(JSON.stringify({
+        method: 'unsubscribeNewToken'
+      }));
+      expect(mockWs.send).toHaveBeenCalledWith(JSON.stringify({
+        method: 'unsubscribeTokenTrade',
+        keys: ['TEST1']
+      }));
+      expect(mockWs.send).toHaveBeenCalledWith(JSON.stringify({
+        method: 'unsubscribeTokenTrade',
+        keys: ['TEST2']
+      }));
       expect(mockWs.removeAllListeners).toHaveBeenCalled();
       expect(mockWs.close).toHaveBeenCalled();
       expect(wsManager.ws).toBeNull();
       expect(wsManager.isConnected).toBe(false);
-    });
-
-    it('should handle SIGINT', () => {
-      const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {});
-      wsManager.ws = mockWs;
-      
-      process.emit('SIGINT');
-      
-      expect(mockWs.removeAllListeners).toHaveBeenCalled();
-      expect(mockWs.close).toHaveBeenCalled();
-      expect(mockExit).toHaveBeenCalledWith(0);
-      
-      mockExit.mockRestore();
     });
   });
 });

@@ -30,8 +30,10 @@ class PositionStateManager extends EventEmitter {
     const position = this.positions.get(mint);
     if (position) {
       this.positions.delete(mint);
-      this.emit('positionClosed', position);
+      this.emit('positionRemoved', position);
+      return position;
     }
+    return null;
   }
 
   getPosition(mint) {
