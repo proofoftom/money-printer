@@ -2,8 +2,7 @@ const config = require("./config");
 const MissedOpportunityLogger = require("./MissedOpportunityLogger");
 
 class SafetyChecker {
-  constructor(config, priceManager, safetyConfig = {}) {
-    this.config = config || require("./config");
+  constructor(priceManager, safetyConfig = {}) {
     this.missedOpportunityLogger = new MissedOpportunityLogger(priceManager);
     this.priceManager = priceManager;
     this.safetyConfig = safetyConfig;
@@ -31,30 +30,30 @@ class SafetyChecker {
       if (!this.checkMinimumRequirements(token)) {
         approved = false;
         failedChecks.push({
-          name: "MINIMUM_REQUIREMENTS",
-          reason: this.lastFailureReason?.reason || "minimumRequirements",
+          name: 'MINIMUM_REQUIREMENTS',
+          reason: this.lastFailureReason?.reason || 'minimumRequirements',
           actual: this.lastFailureReason?.value,
-          configPath: "SAFETY.MIN_TOKEN_AGE_SECONDS",
+          configPath: 'SAFETY.MIN_TOKEN_AGE_SECONDS'
         });
-      }
+      } 
       // Check for rug pull signals
       else if (!this.checkRugSignals(token)) {
         approved = false;
         failedChecks.push({
-          name: "RUG_SIGNALS",
-          reason: this.lastFailureReason?.reason || "rugSignals",
+          name: 'RUG_SIGNALS',
+          reason: this.lastFailureReason?.reason || 'rugSignals',
           actual: this.lastFailureReason?.value,
-          configPath: "SAFETY.MAX_TOP_HOLDER_CONCENTRATION",
+          configPath: 'SAFETY.MAX_TOP_HOLDER_CONCENTRATION'
         });
       }
       // Pump-specific checks
       else if (!this.checkPumpDynamics(token)) {
         approved = false;
         failedChecks.push({
-          name: "PUMP_DYNAMICS",
-          reason: this.lastFailureReason?.reason || "pumpDynamics",
+          name: 'PUMP_DYNAMICS',
+          reason: this.lastFailureReason?.reason || 'pumpDynamics',
           actual: this.lastFailureReason?.value,
-          configPath: "THRESHOLDS.PUMP",
+          configPath: 'THRESHOLDS.PUMP'
         });
       }
 
@@ -84,13 +83,13 @@ class SafetyChecker {
   checkMinimumRequirements(token) {
     // Check absolute minimum requirements
     const ageInSeconds = (Date.now() - token.minted) / 1000;
-    if (ageInSeconds < this.config.SAFETY.MIN_TOKEN_AGE_SECONDS) {
+    if (ageInSeconds < config.SAFETY.MIN_TOKEN_AGE_SECONDS) {
       this.setFailureReason("Token too young", ageInSeconds);
       return false;
     }
 
     // Minimum liquidity check
-    if (token.vSolInBondingCurve < this.config.SAFETY.MIN_LIQUIDITY_SOL) {
+    if (token.vSolInBondingCurve < config.SAFETY.MIN_LIQUIDITY_SOL) {
       this.setFailureReason("Insufficient liquidity", token.vSolInBondingCurve);
       return false;
     }
@@ -122,7 +121,7 @@ class SafetyChecker {
     // Check for extreme holder concentration
     if (
       token.getTopHolderConcentration(3) >
-      this.config.SAFETY.MAX_TOP_HOLDER_CONCENTRATION
+      config.SAFETY.MAX_TOP_HOLDER_CONCENTRATION
     ) {
       this.setFailureReason(
         "Extreme holder concentration",
@@ -161,7 +160,7 @@ class SafetyChecker {
   checkPumpDynamics(token) {
     // Fast check for pump characteristics
     const pumpMetrics = token.pumpMetrics;
-    const pumpConfig = this.config.SAFETY.PUMP_DETECTION;
+    const pumpConfig = config.SAFETY.PUMP_DETECTION;
 
     // Check price acceleration
     if (pumpMetrics.priceAcceleration > pumpConfig.MIN_PRICE_ACCELERATION) {
@@ -193,7 +192,7 @@ class SafetyChecker {
     // Check gain rate
     if (pumpMetrics.highestGainRate > pumpConfig.MIN_GAIN_RATE) {
       const priceStats = token.getPriceStats();
-      if (priceStats.volatility < this.config.SAFETY.MAX_PRICE_VOLATILITY) {
+      if (priceStats.volatility < config.SAFETY.MAX_PRICE_VOLATILITY) {
         return true;
       }
     }

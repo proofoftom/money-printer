@@ -21,7 +21,8 @@ class Token extends EventEmitter {
     this.safetyChecker = safetyChecker;
 
     // Initialize state manager
-    this.stateManager = new TokenStateManager(config);
+    this.stateManager = new TokenStateManager();
+
     this.highestMarketCap = this.marketCapSol;
 
     // Initialize metrics tracking
@@ -211,7 +212,7 @@ class Token extends EventEmitter {
 
       // Check for transition to pumped state
       const gainFromInitial = this.stateManager.getGainFromInitial(currentPrice);
-      if (gainFromInitial >= this.config.THRESHOLDS.PUMPED) {
+      if (gainFromInitial >= config.THRESHOLDS.PUMPED) {
         this.stateManager.setState(STATES.PUMPED);
         this.emit("stateChanged", { token: this, from: STATES.PUMPING, to: STATES.PUMPED });
       }

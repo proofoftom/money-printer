@@ -28,8 +28,10 @@ class PricePoint {
   }
 }
 
+const config = require('./config');
+
 class TokenStateManager {
-  constructor(config) {
+  constructor() {
     this.state = STATES.NEW;
     this.unsafeReasons = new Set();
     this.priceHistory = {
@@ -45,7 +47,6 @@ class TokenStateManager {
       failedAttempts: 0,      // Number of failed safety checks
       isFirstPumpEntry: false // Whether position was entered on first pump
     };
-    this.config = config;
     this.unsafe = false;
   }
 
@@ -72,7 +73,7 @@ class TokenStateManager {
     // Check for pumped state transition
     if (this.state === STATES.PUMPING) {
       const gainFromInitial = this.getGainFromInitial(currentPrice);
-      if (gainFromInitial >= this.config.THRESHOLDS.PUMPED) {
+      if (gainFromInitial >= config.THRESHOLDS.PUMPED) {
         return this.setState(STATES.PUMPED);
       }
     }
@@ -95,7 +96,7 @@ class TokenStateManager {
     const currentPrice = this.priceHistory.lastPrice.bodyPrice;
     const priceGain = ((currentPrice - referencePrice) / referencePrice) * 100;
 
-    return priceGain >= this.config.THRESHOLDS.PUMP;
+    return priceGain >= config.THRESHOLDS.PUMP;
   }
 
   isDrawdownTriggered(currentPrice) {
@@ -106,13 +107,13 @@ class TokenStateManager {
 
     const peakPrice = this.priceHistory.peak.bodyPrice;
     const drawdown = ((peakPrice - currentPrice.bodyPrice) / peakPrice) * 100;
-    return drawdown >= this.config.THRESHOLDS.DRAWDOWN;
+    return drawdown >= config.THRESHOLDS.DRAWDOWN;
   }
 
   checkPumpSafety(volume5m) {
     // Check volume hasn't dropped significantly
     const volumeDrop = ((this.metrics.initialVolume5m - volume5m) / this.metrics.initialVolume5m) * 100;
-    if (volumeDrop > this.config.THRESHOLDS.MAX_VOLUME_DROP) {
+    if (volumeDrop > config.THRESHOLDS.MAX_VOLUME_DROP) {
       return false;
     }
     return true;
@@ -126,10 +127,10 @@ class TokenStateManager {
     const pumpGain = ((currentPrice - pumpStartPrice) / pumpStartPrice) * 100;
     
     // Check if within entry window
-    if (pumpGain > this.config.THRESHOLDS.POSITION_ENTRY_WINDOW) return false;
+    if (pumpGain > config.THRESHOLDS.POSITION_ENTRY_WINDOW) return false;
 
     // For first pump entries, require minimum gain
-    if (isFirstPump && pumpGain < this.config.THRESHOLDS.MIN_FIRST_PUMP_GAIN) return false;
+    if (isFirstPump && pumpGain < config.THRESHOLDS.MIN_FIRST_PUMP_GAIN) return false;
 
     return true;
   }
@@ -140,7 +141,7 @@ class TokenStateManager {
 
   getPositionSizeRatio() {
     return this.metrics.isFirstPumpEntry ? 
-      this.config.POSITION_SIZING.FIRST_PUMP_SIZE_RATIO : 1;
+      config.POSITION_SIZING.FIRST_PUMP_SIZE_RATIO : 1;
   }
 
   getGainFromInitial(currentPrice) {
