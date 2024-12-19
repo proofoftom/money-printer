@@ -1,5 +1,6 @@
 // Mock config and TransactionSimulator
-jest.mock('../src/config');
+const mockConfig = require('./__mocks__/config');
+jest.mock('../src/config', () => mockConfig);
 jest.mock('../src/TransactionSimulator');
 
 // Mock WebSocket
@@ -23,7 +24,6 @@ global.WebSocket = class WebSocket {
 
 // Mock Token class extensions
 const Token = require('../src/Token');
-const config = require('../src/config');
 
 class StateManager {
   constructor() {
@@ -31,38 +31,91 @@ class StateManager {
   }
 }
 
+// Mock price manager
+class MockPriceManager {
+  constructor() {
+    this.price = 1.0;
+    this.volume = 1000;
+  }
+
+  solToUSD(sol) {
+    return sol * 225; // Mock SOL/USD price
+  }
+
+  getTokenPrice() {
+    return this.price;
+  }
+
+  getVolume() {
+    return this.volume;
+  }
+
+  subscribeToPrice() {}
+  unsubscribeFromPrice() {}
+}
+
+// Override Token constructor
+const originalTokenConstructor = Token;
+Token = function(mint, priceFeed, transactionSimulator) {
+  this.mint = mint;
+  this.priceManager = priceFeed || new MockPriceManager();
+  this.transactionSimulator = transactionSimulator;
+  this.stateManager = new StateManager();
+  this.initMetrics();
+};
+Token.prototype = originalTokenConstructor.prototype;
+
+Token.prototype.initMetrics = function() {
+  if (!this.metrics || !this.metrics.earlyTrading) {
+    this.metrics = {
+      earlyTrading: {
+        uniqueBuyers: new Set(),
+        buyToSellRatio: 1,
+        volumeAcceleration: 0,
+        suspiciousActivity: [],
+        creatorActivity: {
+          sellCount: 0
+        },
+        tradingPatterns: {
+          rapidTraders: new Set()
+        },
+        buyCount: 0,
+        totalBuyVolume: 0,
+        lastBuyTimestamp: 0
+      }
+    };
+  }
+};
+
 Token.prototype.processMessage = function(msg) {
   if (!this.stateManager) {
     this.stateManager = new StateManager();
   }
 
+  this.initMetrics();
+  const now = Date.now();
+  const config = mockConfig();
+
   switch (msg.txType) {
     case 'create':
-      this.metrics = {
-        earlyTrading: {
-          uniqueBuyers: new Set(),
-          buyToSellRatio: 1,
-          volumeAcceleration: 0,
-          suspiciousActivity: [],
-          creatorActivity: {
-            sellCount: 0
-          },
-          tradingPatterns: {
-            rapidTraders: new Set()
-          }
-        }
-      };
       this.creator = msg.traderPublicKey;
       this.stateManager.state = "new";
       break;
       
     case 'buy':
-      if (!this.metrics?.earlyTrading?.uniqueBuyers) {
-        this.processMessage({ txType: 'create', traderPublicKey: 'creator' });
-      }
+      // Update buy metrics
       this.metrics.earlyTrading.uniqueBuyers.add(msg.traderPublicKey);
       this.metrics.earlyTrading.buyToSellRatio += 0.1;
-      this.metrics.earlyTrading.volumeAcceleration += 0.5;
+      this.metrics.earlyTrading.buyCount++;
+      this.metrics.earlyTrading.totalBuyVolume += msg.amount || 1.0;
+
+      // Calculate volume acceleration
+      const timeDiff = now - this.metrics.earlyTrading.lastBuyTimestamp;
+      if (timeDiff > 0) {
+        const volumeRate = this.metrics.earlyTrading.totalBuyVolume / timeDiff;
+        this.metrics.earlyTrading.volumeAcceleration = volumeRate * this.metrics.earlyTrading.buyCount;
+      }
+      this.metrics.earlyTrading.lastBuyTimestamp = now;
 
       // State transitions based on metrics
       if (this.metrics.earlyTrading.uniqueBuyers.size >= config.SAFETY.MIN_UNIQUE_BUYERS) {
@@ -77,9 +130,6 @@ Token.prototype.processMessage = function(msg) {
       break;
       
     case 'sell':
-      if (!this.metrics?.earlyTrading?.uniqueBuyers) {
-        this.processMessage({ txType: 'create', traderPublicKey: 'creator' });
-      }
       this.metrics.earlyTrading.buyToSellRatio -= 0.1;
       
       // Track creator sells

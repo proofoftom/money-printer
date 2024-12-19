@@ -47,7 +47,16 @@ const mockConfig = {
       MIN_PRICE_GAIN: 20,
       MIN_VOLUME_SPIKE: 3.0
     }
+  },
+  STATES: {
+    NEW: "new",
+    ACCUMULATION: "accumulation",
+    LAUNCHING: "launching",
+    PUMPING: "pumping",
+    DEAD: "dead"
   }
 };
 
-module.exports = mockConfig;
+// Export a function that returns a fresh copy of the config
+// This prevents test pollution
+module.exports = () => JSON.parse(JSON.stringify(mockConfig));
