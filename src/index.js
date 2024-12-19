@@ -15,7 +15,7 @@ const chalk = require('chalk');
 class MoneyPrinter {
   constructor() {
     this.config = config;
-    this.logger = new Logger(this.config.LOGGING);
+    this.logger = new Logger(this.config);
   }
 
   async initialize() {
@@ -86,7 +86,7 @@ class MoneyPrinter {
       this.logger.debug('Token tracker initialized');
 
       // Initialize CLI last
-      this.cli = new CLIManager(this.config, this.tokenTracker);
+      this.cli = new CLIManager(this.config, this.tokenTracker, this.wallet);
       this.logger.debug('CLI manager initialized');
 
       // Set up event listeners

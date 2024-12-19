@@ -8,10 +8,11 @@ const inquirer = require('inquirer');
 const { STATES } = require('./Token');
 
 class CLIManager extends EventEmitter {
-  constructor(config, tokenTracker) {
+  constructor(config, tokenTracker, wallet) {
     super();
     this.config = config;
     this.tokenTracker = tokenTracker;
+    this.wallet = wallet;
     this.isRunning = true;
     this.autoScroll = true;
     this.showCharts = true;
@@ -21,6 +22,7 @@ class CLIManager extends EventEmitter {
     this.tradeHistory = [];
     this.tokenList = new Map();
     this.performanceMetrics = {
+      balance: this.wallet.getBalance(),
       totalPnLSol: 0,
       totalPnLUsd: 0,
       winRate: 0,
@@ -154,6 +156,16 @@ class CLIManager extends EventEmitter {
   }
 
   setupEventListeners() {
+    // Wallet events
+    this.wallet.on('balanceUpdate', (balance) => {
+      this.performanceMetrics.balance = balance;
+      this.balanceHistory.push({
+        timestamp: new Date(),
+        balance
+      });
+      this.render();
+    });
+
     // Position events
     this.tokenTracker.on('positionOpened', ({ position }) => {
       this.activePositions.set(position.mint, position);
@@ -271,6 +283,7 @@ class CLIManager extends EventEmitter {
     const pnlColor = m.totalPnLSol >= 0 ? chalk.green : chalk.red;
     
     this.performanceTable.push(
+      ['Balance (SOL)', chalk.white(m.balance.toFixed(3))],
       ['Total P&L (SOL)', pnlColor(m.totalPnLSol.toFixed(3))],
       ['Total P&L (USD)', pnlColor(`$${m.totalPnLUsd.toFixed(2)}`)],
       ['Win Rate', chalk.white(`${m.winRate.toFixed(1)}%`)],
@@ -513,7 +526,7 @@ class CLIManager extends EventEmitter {
     };
 
     return '\nBalance History (SOL):\n' +
-           asciichart.plot(this.balanceHistory.slice(-50), config);
+           asciichart.plot(this.balanceHistory.slice(-50).map(x => x.balance), config);
   }
 
   render() {
