@@ -18,7 +18,7 @@ class TokenTracker extends EventEmitter {
       return;
     }
 
-    const token = new Token(tokenData, this.priceManager);
+    const token = new Token(tokenData, this.priceManager, this.safetyChecker);
 
     // Listen for state changes
     token.on("stateChanged", ({ token, from, to }) => {
@@ -35,7 +35,7 @@ class TokenTracker extends EventEmitter {
     });
 
     // Listen for position ready events
-    token.on("readyForPosition", async (token) => {
+    token.on("readyForPosition", ({ token, sizeRatio }) => {
       // Check if we already have a position for this token
       if (this.positionManager.getPosition(token.mint)) {
         console.log(`Position already exists for ${token.symbol || token.mint.slice(0, 8)}, skipping`);
@@ -53,22 +53,28 @@ class TokenTracker extends EventEmitter {
         return;
       }
 
-      const success = await this.positionManager.openPosition(
+      // Open position with size ratio
+      this.positionManager.openPosition(
         token.mint,
-        token.marketCapSol
-      );
-      if (success) {
-        this.emit("positionOpened", token);
-      }
+        token.marketCapSol,
+        sizeRatio
+      ).then(success => {
+        if (success) {
+          this.emit("positionOpened", token);
+        }
+      });
     });
 
-    // Listen for unsafe recovery events
-    token.on("unsafeRecovery", (data) => {
-      this.emit("unsafeRecovery", data);
+    // Listen for significant spread events
+    token.on("significantSpread", (data) => {
+      this.emit("significantSpread", data);
     });
 
     this.tokens.set(tokenData.mint, token);
     this.emit("newToken", token);
+
+    // Subscribe to token trades
+    this.webSocketManager.subscribeToToken(tokenData.mint);
   }
 
   handleTradeUpdate(tradeData) {
@@ -95,18 +101,13 @@ class TokenTracker extends EventEmitter {
       this.emit("tokenStateChanged", { token, ...stateChange });
     } else if (!position && token.state === STATES.OPEN) {
       // Position was closed, transition to appropriate state based on current conditions
-      if (token.stateManager.priceHistory.bottom) {
-        const stateChange = token.stateManager.setState(STATES.RECOVERY);
-        this.emit("tokenStateChanged", { token, ...stateChange });
-      } else {
+      if (token.getDrawdownPercentage() >= config.THRESHOLDS.DRAWDOWN) {
         const stateChange = token.stateManager.setState(STATES.DRAWDOWN);
         this.emit("tokenStateChanged", { token, ...stateChange });
+      } else if (token.getGainPercentage() >= config.THRESHOLDS.PUMPED) {
+        const stateChange = token.stateManager.setState(STATES.PUMPED);
+        this.emit("tokenStateChanged", { token, ...stateChange });
       }
-    }
-
-    // Evaluate recovery conditions if in recovery state
-    if (token.state === STATES.RECOVERY) {
-      token.evaluateRecovery(this.safetyChecker);
     }
   }
 

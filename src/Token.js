@@ -51,6 +51,16 @@ class Token extends EventEmitter {
       priceAcceleration: 0
     };
 
+    // Price tracking data structure
+    this.priceData = {
+      trades: [], // Array of {price, volume, timestamp}
+      bodyPrice: null,
+      wickHigh: null,
+      wickLow: null,
+      wickDirection: 'neutral', // 'up', 'down', or 'neutral'
+      lastSpreadEvent: 0
+    };
+
     // Price tracking
     this.currentPrice = this.calculateTokenPrice();
     this.initialPrice = this.currentPrice;
@@ -87,50 +97,63 @@ class Token extends EventEmitter {
   }
 
   update(data) {
-    const oldPrice = this.currentPrice;
     const now = Date.now();
-    
-    if (data.marketCapSol) {
-      if (data.marketCapSol > this.highestMarketCap) {
-        this.highestMarketCap = data.marketCapSol;
-      }
-      this.marketCapSol = data.marketCapSol;
-    }
-
-    if (data.vTokensInBondingCurve) {
-      this.vTokensInBondingCurve = data.vTokensInBondingCurve;
-    }
-
-    if (data.vSolInBondingCurve) {
-      this.vSolInBondingCurve = data.vSolInBondingCurve;
-    }
-
-    // Calculate new price
-    this.currentPrice = this.calculateTokenPrice();
 
     // Handle trade data
     if (data.txType === 'buy' || data.txType === 'sell') {
-      const volumeInSol = Math.abs(data.tokenAmount * this.currentPrice);
-      const volumeInUSD = this.priceManager.solToUSD(volumeInSol);
-      
-      // Update wallet activity with trade data
-      this.updateWalletActivity(data.traderPublicKey, {
-        amount: data.tokenAmount,
-        volumeInSol,
-        volumeInUSD,
-        priceChange: ((this.currentPrice - oldPrice) / oldPrice) * 100,
-        timestamp: now,
-        newBalance: data.newTokenBalance
+      // Record trade for price calculations
+      const price = this.calculateTokenPrice();
+      this.priceData.trades.push({
+        price,
+        volume: Math.abs(data.tokenAmount * price), // Calculate volume from token amount
+        timestamp: now
       });
 
-      // Update volume metrics with actual USD volume using by-second windows
-      this.volume5s = this.getRecentVolume(5 * 1000);    // 5 seconds
-      this.volume10s = this.getRecentVolume(10 * 1000);  // 10 seconds
-      this.volume30s = this.getRecentVolume(30 * 1000);  // 30 seconds
+      // Update market cap and bonding curve data
+      if (data.marketCapSol) {
+        this.marketCapSol = data.marketCapSol;
+        if (data.marketCapSol > this.highestMarketCap) {
+          this.highestMarketCap = data.marketCapSol;
+        }
+      }
+      if (data.vTokensInBondingCurve) {
+        this.vTokensInBondingCurve = data.vTokensInBondingCurve;
+      }
+      if (data.vSolInBondingCurve) {
+        this.vSolInBondingCurve = data.vSolInBondingCurve;
+      }
+
+      // Update wallet data
+      if (data.traderPublicKey && typeof data.newTokenBalance !== 'undefined') {
+        this.updateWalletActivity(data.traderPublicKey, {
+          type: data.txType,
+          amount: data.tokenAmount,
+          price,
+          timestamp: now,
+          newBalance: data.newTokenBalance
+        });
+      }
+
+      // Update volume metrics
+      const tradeVolume = Math.abs(data.tokenAmount * price);
+      this.volume5s += tradeVolume;
+      this.volume10s += tradeVolume;
+      this.volume30s += tradeVolume;
     }
-    // Update wallet balance if no trade (e.g., transfer)
-    else if (data.traderPublicKey && typeof data.newTokenBalance !== "undefined") {
-      this.updateWalletBalance(data.traderPublicKey, data.newTokenBalance, now);
+    // Handle token creation
+    else if (data.txType === 'create') {
+      this.minted = now;
+      this.initialPrice = this.calculateTokenPrice();
+      if (data.initialBuy) {
+        this.updateWalletActivity(data.traderPublicKey, {
+          type: 'create',
+          amount: data.initialBuy,
+          price: this.initialPrice,
+          timestamp: now,
+          newBalance: data.initialBuy,
+          isCreator: true
+        });
+      }
     }
 
     // Update price metrics and check state transitions
@@ -139,9 +162,11 @@ class Token extends EventEmitter {
   }
 
   async handleStateTransitions() {
+    // Calculate current prices
+    const prices = this.calculatePrices();
     const currentPrice = new PricePoint(
-      this.calculateTokenPrice(),
-      this.calculateTokenPrice(),
+      prices.bodyPrice,
+      prices.wickPrice,
       Date.now()
     );
 
@@ -236,6 +261,82 @@ class Token extends EventEmitter {
     }
   }
 
+  calculatePrices() {
+    const now = Date.now();
+    const windowStart = now - config.PRICE_CALC.WINDOW;
+    const recentStart = now - config.PRICE_CALC.RECENT_WINDOW;
+
+    // Filter trades within window
+    this.priceData.trades = this.priceData.trades.filter(t => t.timestamp > windowStart);
+    
+    if (this.priceData.trades.length === 0) {
+      const currentPrice = this.calculateTokenPrice();
+      return {
+        bodyPrice: currentPrice,
+        wickPrice: currentPrice
+      };
+    }
+
+    // Calculate weighted body price
+    let totalWeight = 0;
+    let weightedSum = 0;
+    
+    this.priceData.trades.forEach(trade => {
+      const weight = trade.volume * (trade.timestamp > recentStart ? config.PRICE_CALC.RECENT_WEIGHT : 1);
+      weightedSum += trade.price * weight;
+      totalWeight += weight;
+    });
+
+    const bodyPrice = weightedSum / totalWeight;
+    
+    // Calculate wick prices
+    const wickHigh = Math.max(...this.priceData.trades.map(t => t.price));
+    const wickLow = Math.min(...this.priceData.trades.map(t => t.price));
+    
+    // Determine wick direction
+    const upperWick = wickHigh - bodyPrice;
+    const lowerWick = bodyPrice - wickLow;
+    const wickDirection = upperWick > lowerWick ? 'up' : 
+                         lowerWick > upperWick ? 'down' : 'neutral';
+
+    // Check for spread event
+    const spreadPercentage = ((wickHigh - wickLow) / bodyPrice) * 100;
+    if (spreadPercentage >= config.THRESHOLDS.SPREAD && 
+        now - this.priceData.lastSpreadEvent > config.PRICE_CALC.WINDOW) {
+      this.priceData.lastSpreadEvent = now;
+      this.emit('significantSpread', {
+        token: this,
+        spreadPercentage,
+        wickDirection,
+        bodyPrice,
+        wickHigh,
+        wickLow
+      });
+    }
+
+    // Update price data
+    this.priceData.bodyPrice = bodyPrice;
+    this.priceData.wickHigh = wickHigh;
+    this.priceData.wickLow = wickLow;
+    this.priceData.wickDirection = wickDirection;
+
+    return {
+      bodyPrice,
+      wickPrice: wickDirection === 'up' ? wickHigh : wickLow
+    };
+  }
+
+  getSpreadMetrics() {
+    return {
+      spreadPercentage: this.priceData.wickHigh ? 
+        ((this.priceData.wickHigh - this.priceData.wickLow) / this.priceData.bodyPrice) * 100 : 0,
+      wickDirection: this.priceData.wickDirection,
+      bodyPrice: this.priceData.bodyPrice,
+      wickHigh: this.priceData.wickHigh,
+      wickLow: this.priceData.wickLow
+    };
+  }
+
   getPriceIncrease(seconds) {
     const timeWindow = seconds * 1000;
     const now = Date.now();
@@ -281,27 +382,6 @@ class Token extends EventEmitter {
     }
 
     return totalVolume > 0 ? (buyVolume / totalVolume) * 100 : 0;
-  }
-
-  async evaluateRecovery(safetyChecker) {
-    try {
-      if (this.state !== STATES.RECOVERY) return;
-
-      const isSecure = await safetyChecker.runSecurityChecks(this);
-      if (!isSecure) {
-        const failureReason = safetyChecker.getFailureReason();
-        this.stateManager.addUnsafeReason(failureReason.reason, failureReason.value);
-        this.emit("unsafeRecovery", { 
-          token: this, 
-          marketCap: this.marketCapSol,
-          ...failureReason
-        });
-      } else {
-        this.stateManager.resetUnsafeReasons();
-      }
-    } catch (error) {
-      console.error("Error evaluating recovery:", error);
-    }
   }
 
   updatePriceMetrics() {

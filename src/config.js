@@ -12,11 +12,13 @@ module.exports = {
 
     // State Transition Thresholds (in percent)
     DRAWDOWN: 20, // Price drop to enter drawdown state
-    PUMP: 10, // Price gain to detect pump
-    PUMPED: 55, // Price gain to enter pumped state
+    PUMP: 15, // Minimum gain % to consider a pump
+    PUMPED: 55, // Gain % required to enter pumped state
     POSITION_ENTRY_WINDOW: 25, // Maximum pump percentage to allow position entry
     MAX_VOLUME_DROP: 50, // Maximum allowed volume drop during pump
     MIN_FIRST_PUMP_GAIN: 15, // Minimum gain required for first pump entry
+    DEAD: 80, // Drawdown % to consider token dead
+    SPREAD: 20, // Spread % to emit wick event
 
     // Time and Age Thresholds (in seconds)
     MIN_TIME_SINCE_CREATION: 20, // Minimum token age
@@ -38,6 +40,12 @@ module.exports = {
     // Volume Pattern Thresholds
     MIN_VOLUME_PRICE_CORRELATION: 0.4, // Minimum volume/price correlation
     MAX_WASH_TRADE_PERCENTAGE: 25, // Maximum wash trading percentage
+  },
+
+  PRICE_CALC: {
+    WINDOW: 30000,      // 30 second window for price calculations
+    RECENT_WEIGHT: 2,   // Weight multiplier for trades in last 5 seconds
+    RECENT_WINDOW: 5000 // 5 second window for recent trade weighting
   },
 
   // Safety configuration
