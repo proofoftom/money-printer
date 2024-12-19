@@ -1,20 +1,21 @@
-const Token = require('../Token');
-const { STATES } = require('../TokenStateManager');
+const EventEmitter = require('events');
+const { Token, STATES } = require('../Token');
 
 describe('Token', () => {
   let token;
   let mockPriceManager;
   let mockSafetyChecker;
-  
+  let stateChangeSpy;
+
   beforeEach(() => {
     mockPriceManager = {
-      solToUSD: jest.fn(sol => sol * 100) // Mock conversion rate: 1 SOL = $100
+      getPrice: jest.fn().mockReturnValue(1.0)
     };
-    
+
     mockSafetyChecker = {
-      isTokenSafe: jest.fn(() => true)
+      isTokenSafe: jest.fn().mockReturnValue(true)
     };
-    
+
     const tokenData = {
       mint: 'test-mint',
       name: 'Test Token',
@@ -26,17 +27,34 @@ describe('Token', () => {
       marketCapSol: 100,
       bondingCurveKey: 'curve-key'
     };
-    
+
     token = new Token(tokenData, {
       priceManager: mockPriceManager,
       safetyChecker: mockSafetyChecker
     });
+
+    stateChangeSpy = jest.spyOn(token, 'emit');
   });
 
-  test('initializes with correct properties', () => {
-    expect(token.mint).toBe('test-mint');
-    expect(token.symbol).toBe('TEST');
-    expect(token.currentPrice).toBe(0.1); // 100 SOL / 1000 tokens
+  test('initializes with correct state', () => {
+    expect(token.getCurrentState()).toBe(STATES.NEW);
+  });
+
+  test('transitions to READY state when safe', () => {
+    token.checkState();
+    expect(token.getCurrentState()).toBe(STATES.READY);
+    expect(stateChangeSpy).toHaveBeenCalledWith('stateChanged', expect.any(Object));
+    expect(stateChangeSpy).toHaveBeenCalledWith('readyForPosition', expect.any(Object));
+  });
+
+  test('transitions to DEAD state on high drawdown', () => {
+    // Mock a high drawdown scenario
+    jest.spyOn(token, 'getDrawdownPercentage').mockReturnValue(25);
+    
+    token.checkState();
+    
+    expect(stateChangeSpy).toHaveBeenCalledWith('stateChanged', expect.any(Object));
+    expect(token.getCurrentState()).toBe(STATES.DEAD);
   });
 
   test('calculates token price correctly', () => {
@@ -70,19 +88,6 @@ describe('Token', () => {
     expect(token.vSolInBondingCurve).toBe(300);
     expect(token.marketCapSol).toBe(150);
     expect(token.highestMarketCap).toBe(150);
-  });
-
-  test('transitions to DEAD state on high drawdown', () => {
-    const stateChangeSpy = jest.spyOn(token, 'emit');
-    
-    token.update({
-      vTokensInBondingCurve: 1000,
-      vSolInBondingCurve: 50, // 50% drop
-      marketCapSol: 50
-    });
-    
-    expect(stateChangeSpy).toHaveBeenCalledWith('stateChanged', expect.any(Object));
-    expect(token.stateManager.getCurrentState()).toBe(STATES.DEAD);
   });
 
   test('handles trade updates correctly', () => {

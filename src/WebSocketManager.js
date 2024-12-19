@@ -3,8 +3,9 @@ const EventEmitter = require("events");
 const config = require("./config");
 
 class WebSocketManager extends EventEmitter {
-  constructor() {
+  constructor(config) {
     super();
+    this.config = config;
     this.ws = null;
     this.isConnected = false;
     this.reconnectAttempts = 0;
@@ -179,7 +180,7 @@ class WebSocketManager extends EventEmitter {
       this.connect().catch((error) => {
         console.error("Reconnection attempt failed:", error);
       });
-    }, config.RECONNECT_INTERVAL);
+    }, this.config.RECONNECT_INTERVAL);
   }
 
   close() {

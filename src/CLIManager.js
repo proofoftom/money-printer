@@ -4,9 +4,8 @@ const asciichart = require('asciichart');
 const keypress = require('keypress');
 const notifier = require('node-notifier');
 const EventEmitter = require('events');
-const { TokenStateManager } = require('./TokenStateManager');
 const inquirer = require('inquirer');
-const { STATES } = require('./TokenStateManager');
+const { STATES } = require('./Token');
 
 class CLIManager extends EventEmitter {
   constructor(config, tokenTracker) {
@@ -196,7 +195,7 @@ class CLIManager extends EventEmitter {
     });
 
     this.tokenTracker.on('tokenStateChanged', ({ token, from, to }) => {
-      if (to === TokenStateManager.STATES.DEAD) {
+      if (to === STATES.DEAD) {
         notifier.notify({
           title: 'Token Dead',
           message: `${token.symbol} marked as DEAD (${token.getDrawdownPercentage().toFixed(1)}% drawdown)`

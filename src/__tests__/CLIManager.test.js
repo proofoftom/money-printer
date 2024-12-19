@@ -1,7 +1,7 @@
-const CLIManager = require("../CLIManager");
-const { EventEmitter } = require("events");
+const EventEmitter = require('events');
+const CLIManager = require('../CLIManager');
+const { STATES } = require('../Token');
 const chalk = require("chalk");
-const { TokenStateManager, STATES } = require("../TokenStateManager");
 
 // Mock dependencies
 class MockTokenTracker extends EventEmitter {

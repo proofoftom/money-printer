@@ -1,5 +1,11 @@
 const EventEmitter = require("events");
-const { TokenStateManager, STATES } = require("./TokenStateManager");
+
+// Token state management
+const STATES = {
+  NEW: "NEW",       // Just created
+  READY: "READY",   // Ready for position
+  DEAD: "DEAD",     // Token inactive/done
+};
 
 class Token extends EventEmitter {
   constructor(tokenData, { priceManager, safetyChecker }) {
@@ -20,7 +26,7 @@ class Token extends EventEmitter {
     this.safetyChecker = safetyChecker;
 
     // State management
-    this.stateManager = new TokenStateManager();
+    this.state = STATES.NEW;
     this.highestMarketCap = this.marketCapSol;
 
     // Price tracking
@@ -101,31 +107,47 @@ class Token extends EventEmitter {
     });
   }
 
+  // State management methods
+  getCurrentState() {
+    return this.state;
+  }
+
+  transitionTo(newState) {
+    if (!Object.values(STATES).includes(newState)) {
+      return false;
+    }
+
+    const oldState = this.state;
+    this.state = newState;
+    
+    this.emit("stateChanged", { token: this, from: oldState, to: newState });
+    
+    return {
+      success: true,
+      from: oldState,
+      to: newState
+    };
+  }
+
+  setState(newState) {
+    return this.transitionTo(newState);
+  }
+
   checkState() {
-    const currentState = this.stateManager.getCurrentState();
+    const currentState = this.getCurrentState();
     
     // Check for dead state (20% drawdown from peak)
     if (this.getDrawdownPercentage() >= 20 && currentState !== STATES.DEAD) {
-      this.stateManager.transitionTo(STATES.DEAD);
-      this.emit("stateChanged", {
-        token: this,
-        from: currentState,
-        to: STATES.DEAD
-      });
+      this.transitionTo(STATES.DEAD);
       return;
     }
 
     // Check for ready state
     if (this.safetyChecker.isTokenSafe(this) && currentState === STATES.NEW) {
-      this.stateManager.transitionTo(STATES.READY);
-      this.emit("stateChanged", {
-        token: this,
-        from: currentState,
-        to: STATES.READY
-      });
+      this.transitionTo(STATES.READY);
       this.emit("readyForPosition", { token: this });
     }
   }
 }
 
-module.exports = Token;
+module.exports = { Token, STATES };
