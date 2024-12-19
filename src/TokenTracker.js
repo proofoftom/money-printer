@@ -4,7 +4,7 @@ const config = require("./config");
 const { STATES } = require("./TokenStateManager");
 
 class TokenTracker extends EventEmitter {
-  constructor(safetyChecker, positionManager, priceManager, webSocketManager) {
+  constructor({ safetyChecker, positionManager, priceManager, webSocketManager }) {
     super();
     this.safetyChecker = safetyChecker;
     this.positionManager = positionManager;
@@ -15,18 +15,26 @@ class TokenTracker extends EventEmitter {
 
   handleNewToken(tokenData) {
     if (this.tokens.has(tokenData.mint)) {
+      // Update existing token
+      const token = this.tokens.get(tokenData.mint);
+      token.update(tokenData);
+      this.emit("tokenUpdated", token);
       return;
     }
 
-    const token = new Token(tokenData, this.priceManager, this.safetyChecker);
+    const token = new Token(tokenData, {
+      priceManager: this.priceManager,
+      safetyChecker: this.safetyChecker
+    });
 
     // Listen for state changes
     token.on("stateChanged", ({ token, from, to }) => {
       this.emit("tokenStateChanged", { token, from, to });
+      this.emit("tokenUpdated", token);
 
       // Unsubscribe and remove dead tokens
       if (to === STATES.DEAD) {
-        this.webSocketManager.unsubscribeFromToken(token.mint);
+        this.webSocketManager?.unsubscribeFromToken(token.mint);
         this.removeToken(token.mint);
       }
     });
@@ -50,14 +58,6 @@ class TokenTracker extends EventEmitter {
 
     this.tokens.set(tokenData.mint, token);
     this.emit("tokenAdded", token);
-  }
-
-  handleTokenUpdate(tokenData) {
-    const token = this.tokens.get(tokenData.mint);
-    if (!token) return;
-
-    token.update(tokenData);
-    this.emit("tokenUpdated", token);
   }
 
   removeToken(mint) {
@@ -169,6 +169,38 @@ class TokenTracker extends EventEmitter {
         this.emit('tokenRemoved', { mint, reason: 'liquidity' });
       }
     }
+  }
+
+  getTokenStats() {
+    const stats = {
+      total: this.tokens.size,
+      new: 0,
+      ready: 0,
+      dead: 0,
+      avgMarketCapUSD: 0,
+      totalMarketCapUSD: 0
+    };
+
+    let totalMarketCapSOL = 0;
+    for (const token of this.tokens.values()) {
+      switch (token.stateManager.getCurrentState()) {
+        case STATES.NEW:
+          stats.new++;
+          break;
+        case STATES.READY:
+          stats.ready++;
+          break;
+        case STATES.DEAD:
+          stats.dead++;
+          break;
+      }
+      totalMarketCapSOL += token.marketCapSol;
+    }
+
+    stats.totalMarketCapUSD = this.priceManager.solToUSD(totalMarketCapSOL);
+    stats.avgMarketCapUSD = stats.total > 0 ? this.priceManager.solToUSD(totalMarketCapSOL / stats.total) : 0;
+
+    return stats;
   }
 }
 

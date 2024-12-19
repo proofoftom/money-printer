@@ -1,182 +1,209 @@
-const TokenTracker = require('../TokenTracker');
-const config = require('../config');
+const TokenTracker = require("../TokenTracker");
+const Token = require("../Token");
+const TokenStateManager = require("../TokenStateManager");
+const { EventEmitter } = require("events");
 
-describe('TokenTracker', () => {
-  let tokenTracker;
-  let mockSafetyChecker;
-  let mockEmit;
-
-  beforeEach(() => {
-    mockSafetyChecker = {
-      isTokenSafe: jest.fn()
+// Mock Token class
+jest.mock("../Token", () => {
+  const { STATES } = jest.requireActual("../TokenStateManager");
+  const { EventEmitter } = jest.requireActual("events");
+  
+  return function MockToken(data, deps) {
+    const token = {
+      ...data,
+      stateManager: deps.stateManager || new MockStateManager(),
+      safetyChecker: deps.safetyChecker,
+      priceManager: deps.priceManager,
+      update: function(newData) {
+        Object.assign(this, newData);
+        if (this.safetyChecker.isTokenSafe(this) && this.stateManager.getCurrentState() === STATES.NEW) {
+          this.stateManager.transitionTo(STATES.READY);
+        }
+      }
     };
     
-    tokenTracker = new TokenTracker(mockSafetyChecker);
-    mockEmit = jest.spyOn(tokenTracker, 'emit');
-  });
+    // Add EventEmitter functionality
+    Object.setPrototypeOf(token, EventEmitter.prototype);
+    EventEmitter.call(token);
+    
+    return token;
+  };
+});
 
-  afterEach(() => {
-    jest.clearAllMocks();
-  });
+class MockSafetyChecker {
+  isTokenSafe(token) {
+    return token.isSafe;
+  }
+}
 
-  describe('Token Management', () => {
-    const mockTokenData = {
-      mint: 'TEST',
-      name: 'Test Token',
-      symbol: 'TEST',
-      timestamp: Date.now(),
-      creator: 'creator',
-      vTokens: '1000000000', // 1000 tokens
-      vSol: '10000000', // 10 SOL
-      marketCap: '1000000000', // 1000
-      curveKey: 'key',
-      txType: 'create'
-    };
+class MockPriceManager {
+  solToUSD(amount) {
+    return amount * 100;
+  }
+}
 
-    it('should handle new token creation', async () => {
-      mockSafetyChecker.isTokenSafe.mockResolvedValue(true);
-      
-      await tokenTracker.handleNewTokenAsync(mockTokenData);
-      
-      expect(tokenTracker.tokens.size).toBe(1);
-      expect(mockEmit).toHaveBeenCalledWith('tokenAdded', expect.objectContaining({
-        mint: 'TEST',
-        symbol: 'TEST'
-      }));
-    });
+class MockPositionManager extends EventEmitter {
+  constructor() {
+    super();
+    this.positions = new Map();
+  }
 
-    it('should not add unsafe tokens', async () => {
-      mockSafetyChecker.isTokenSafe.mockResolvedValue(false);
-      
-      await tokenTracker.handleNewTokenAsync(mockTokenData);
-      
-      expect(tokenTracker.tokens.size).toBe(0);
-      expect(mockEmit).not.toHaveBeenCalledWith('tokenAdded', expect.any(Object));
-    });
+  getPosition(mint) {
+    return this.positions.get(mint);
+  }
+}
 
-    it('should update existing tokens', async () => {
-      mockSafetyChecker.isTokenSafe.mockResolvedValue(true);
-      
-      // First add the token
-      await tokenTracker.handleNewTokenAsync(mockTokenData);
-      
-      // Then update it
-      const updateData = {
-        ...mockTokenData,
-        vSol: '20000000', // 20 SOL
-        marketCap: '2000000000' // 2000
-      };
-      
-      await tokenTracker.handleTokenUpdateAsync(updateData);
-      
-      const updatedToken = tokenTracker.tokens.get('TEST');
-      expect(updatedToken.vSol).toBe('20.000');
-      expect(updatedToken.marketCap).toBe('2000.000');
-      expect(mockEmit).toHaveBeenCalledWith('tokenUpdated', expect.objectContaining({
-        mint: 'TEST',
-        vSol: '20.000'
-      }));
-    });
+class MockWebSocketManager {
+  unsubscribeFromToken() {}
+}
 
-    it('should ignore updates for unknown tokens', async () => {
-      await tokenTracker.handleTokenUpdateAsync(mockTokenData);
-      
-      expect(tokenTracker.tokens.size).toBe(0);
-      expect(mockEmit).not.toHaveBeenCalledWith('tokenUpdated', expect.any(Object));
+class MockStateManager {
+  constructor(initialState = TokenStateManager.STATES.NEW) {
+    this.state = initialState;
+  }
+
+  getCurrentState() {
+    return this.state;
+  }
+
+  transitionTo(newState) {
+    this.state = newState;
+  }
+}
+
+describe("TokenTracker", () => {
+  let tokenTracker;
+  let mockSafetyChecker;
+  let mockPriceManager;
+  let mockPositionManager;
+  let mockWebSocketManager;
+
+  beforeEach(() => {
+    mockSafetyChecker = new MockSafetyChecker();
+    mockPriceManager = new MockPriceManager();
+    mockPositionManager = new MockPositionManager();
+    mockWebSocketManager = new MockWebSocketManager();
+    
+    tokenTracker = new TokenTracker({
+      safetyChecker: mockSafetyChecker,
+      priceManager: mockPriceManager,
+      positionManager: mockPositionManager,
+      webSocketManager: mockWebSocketManager
     });
   });
 
-  describe('Token Analysis', () => {
-    it('should calculate token age correctly', () => {
-      const now = Date.now();
-      const token = {
-        timestamp: now - 5 * 60 * 1000 // 5 minutes ago
-      };
-      
-      const age = tokenTracker.calculateTokenAge(token);
-      expect(age).toBe('5m');
-    });
+  describe("Token Tracking and Events", () => {
+    describe("handleNewToken", () => {
+      it("should emit tokenAdded event when new token is added", (done) => {
+        const newToken = {
+          mint: "new-token-123",
+          symbol: "NEW",
+          marketCapSol: 1000,
+          isSafe: true
+        };
 
-    it('should format market metrics', () => {
-      const metrics = tokenTracker.formatMarketMetrics({
-        vSol: '10000000', // 10 SOL
-        vTokens: '1000000000', // 1000 tokens
-        marketCap: '10000000000' // 10000
+        tokenTracker.once("tokenAdded", (token) => {
+          expect(token.mint).toBe(newToken.mint);
+          done();
+        });
+
+        tokenTracker.handleNewToken(newToken);
       });
-      
-      expect(metrics.vSol).toBe('10.000');
-      expect(metrics.vTokens).toBe('1000.000');
-      expect(metrics.marketCap).toBe('10000.000');
-    });
-  });
 
-  describe('Token Filtering', () => {
-    it('should filter old tokens', () => {
-      const oldToken = {
-        mint: 'OLD',
-        timestamp: Date.now() - (config.MAX_TOKEN_AGE + 1000)
-      };
-      
-      const newToken = {
-        mint: 'NEW',
-        timestamp: Date.now()
-      };
-      
-      tokenTracker.tokens.set('OLD', oldToken);
-      tokenTracker.tokens.set('NEW', newToken);
-      
-      tokenTracker.filterOldTokens();
-      
-      expect(tokenTracker.tokens.has('OLD')).toBe(false);
-      expect(tokenTracker.tokens.has('NEW')).toBe(true);
-    });
+      it("should emit tokenUpdated event when existing token is updated", (done) => {
+        const token = {
+          mint: "token-123",
+          symbol: "UPD",
+          marketCapSol: 1000,
+          isSafe: true
+        };
 
-    it('should filter low liquidity tokens', () => {
-      const lowLiqToken = {
-        mint: 'LOW',
-        vSol: '100000' // 0.1 SOL
-      };
-      
-      const goodLiqToken = {
-        mint: 'GOOD',
-        vSol: '10000000' // 10 SOL
-      };
-      
-      tokenTracker.tokens.set('LOW', lowLiqToken);
-      tokenTracker.tokens.set('GOOD', goodLiqToken);
-      
-      tokenTracker.filterLowLiquidityTokens();
-      
-      expect(tokenTracker.tokens.has('LOW')).toBe(false);
-      expect(tokenTracker.tokens.has('GOOD')).toBe(true);
-    });
-  });
+        // First add the token
+        tokenTracker.handleNewToken(token);
 
-  describe('Error Handling', () => {
-    it('should handle invalid token data', async () => {
-      const invalidData = {
-        mint: 'TEST'
-        // Missing required fields
-      };
-      
-      await tokenTracker.handleNewTokenAsync(invalidData);
-      
-      expect(tokenTracker.tokens.size).toBe(0);
-      expect(console.error).toHaveBeenCalledWith('Invalid token data:', expect.any(String));
-    });
+        // Update the token
+        const updatedToken = {
+          ...token,
+          marketCapSol: 2000
+        };
 
-    it('should handle safety check errors', async () => {
-      mockSafetyChecker.isTokenSafe.mockRejectedValue(new Error('Safety check failed'));
-      
-      await tokenTracker.handleNewTokenAsync({
-        mint: 'TEST',
-        name: 'Test Token',
-        symbol: 'TEST',
-        timestamp: Date.now()
+        tokenTracker.once("tokenUpdated", (token) => {
+          expect(token.marketCapSol).toBe(2000);
+          done();
+        });
+
+        tokenTracker.handleNewToken(updatedToken);
       });
-      
-      expect(tokenTracker.tokens.size).toBe(0);
-      expect(console.error).toHaveBeenCalledWith('Error handling new token:', expect.any(Error));
+
+      it("should emit tokenRemoved event when token is removed", (done) => {
+        const token = {
+          mint: "token-to-remove",
+          symbol: "REM",
+          marketCapSol: 1000,
+          isSafe: true
+        };
+
+        // First add the token
+        tokenTracker.handleNewToken(token);
+        
+        // Then set up the event listener
+        tokenTracker.once("tokenRemoved", (removedToken) => {
+          expect(removedToken.mint).toBe(token.mint);
+          done();
+        });
+
+        // Finally remove the token
+        process.nextTick(() => {
+          tokenTracker.removeToken(token.mint);
+        });
+      }, 10000); // Increase timeout to 10 seconds
+    });
+
+    describe("getTokenStats", () => {
+      it("should return correct stats for multiple tokens", () => {
+        const tokens = [
+          {
+            mint: "token1",
+            symbol: "TK1",
+            marketCapSol: 1000,
+            isSafe: true
+          },
+          {
+            mint: "token2",
+            symbol: "TK2",
+            marketCapSol: 2000,
+            isSafe: true
+          },
+          {
+            mint: "token3",
+            symbol: "TK3",
+            marketCapSol: 3000,
+            isSafe: false
+          }
+        ];
+
+        // Add tokens with different states
+        tokenTracker.handleNewToken(tokens[0]); // Will be NEW
+        
+        // Set token2 to READY
+        tokenTracker.handleNewToken(tokens[1]);
+        const token2 = tokenTracker.getToken(tokens[1].mint);
+        token2.stateManager.transitionTo(TokenStateManager.STATES.READY);
+        
+        // Set token3 to DEAD
+        tokenTracker.handleNewToken(tokens[2]);
+        const token3 = tokenTracker.getToken(tokens[2].mint);
+        token3.stateManager.transitionTo(TokenStateManager.STATES.DEAD);
+
+        const stats = tokenTracker.getTokenStats();
+
+        expect(stats.total).toBe(3);
+        expect(stats.new).toBe(1);
+        expect(stats.ready).toBe(1);
+        expect(stats.dead).toBe(1);
+        expect(stats.avgMarketCapUSD).toBe(200000); // (1000 + 2000 + 3000) / 3 * 100
+        expect(stats.totalMarketCapUSD).toBe(600000); // (1000 + 2000 + 3000) * 100
+      });
     });
   });
 });

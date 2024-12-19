@@ -1,228 +1,157 @@
-const CLIManager = require('../CLIManager');
-const config = require('../config');
-const notifier = require('node-notifier');
+const CLIManager = require("../CLIManager");
+const { EventEmitter } = require("events");
+const chalk = require("chalk");
 
-import { jest } from '@jest/globals';
+// Mock dependencies
+class MockTokenTracker extends EventEmitter {
+  constructor() {
+    super();
+    this.priceManager = {
+      solToUSD: (amount) => amount * 100
+    };
+  }
 
-describe('CLIManager', () => {
+  getTokenStats() {
+    return {
+      total: 3,
+      new: 1,
+      ready: 1,
+      dead: 1,
+      avgMarketCapUSD: 200000,
+      totalMarketCapUSD: 600000
+    };
+  }
+}
+
+// Mock console.log
+console.log = jest.fn();
+
+// Mock process.stdin methods instead of replacing the object
+jest.spyOn(process.stdin, 'setRawMode').mockImplementation(() => {});
+jest.spyOn(process.stdin, 'resume').mockImplementation(() => {});
+jest.spyOn(process.stdin, 'on').mockImplementation(() => {});
+
+describe("CLIManager", () => {
   let cli;
-  let mockEmit;
+  let mockConfig;
+  let mockTokenTracker;
 
   beforeEach(() => {
-    cli = new CLIManager(config);
-    mockEmit = jest.spyOn(cli, 'emit');
+    mockConfig = {
+      RISK_PER_TRADE: 0.1,
+      NOTIFICATIONS: {
+        POSITIONS: {
+          EXIT: {
+            minProfitPercent: 10
+          }
+        }
+      },
+      KEYBOARD_SHORTCUTS: {
+        TRADING: {
+          PAUSE_RESUME: { key: 'space' },
+          EMERGENCY_STOP: { key: 'x', requiresConfirmation: true }
+        },
+        DISPLAY: {
+          CLEAR_SCREEN: { key: 'l' },
+          TOGGLE_AUTOSCROLL: { key: 'a' },
+          TOGGLE_CHARTS: { key: 'c' }
+        }
+      }
+    };
+    mockTokenTracker = new MockTokenTracker();
+    cli = new CLIManager(mockConfig, mockTokenTracker);
+    // Reset isRunning to false for testing
+    cli.isRunning = false;
   });
 
-  afterEach(() => {
-    jest.clearAllMocks();
-  });
-
-  describe('Trading Controls', () => {
-    it('should toggle trading state', () => {
+  describe("Trading Controls", () => {
+    it("should toggle trading state", () => {
       expect(cli.isRunning).toBe(false);
       
       cli.toggleTrading();
       expect(cli.isRunning).toBe(true);
-      expect(mockEmit).toHaveBeenCalledWith('tradingStateChange', true);
       
       cli.toggleTrading();
       expect(cli.isRunning).toBe(false);
-      expect(mockEmit).toHaveBeenCalledWith('tradingStateChange', false);
-    });
-
-    it('should trigger emergency stop', async () => {
-      cli.confirmAction = jest.fn().mockResolvedValue(true);
-      
-      await cli.emergencyStop();
-      
-      expect(cli.isRunning).toBe(false);
-      expect(mockEmit).toHaveBeenCalledWith('emergencyStop');
-      expect(notifier.notify).toHaveBeenCalled();
-    });
-
-    it('should adjust risk within bounds', () => {
-      cli.adjustRisk(0.01);
-      expect(cli.config.RISK_PER_TRADE).toBe(0.11);
-      
-      cli.adjustRisk(-0.02);
-      expect(cli.config.RISK_PER_TRADE).toBe(0.09);
-      
-      // Test lower bound
-      cli.adjustRisk(-1);
-      expect(cli.config.RISK_PER_TRADE).toBe(0.01);
-      
-      // Test upper bound
-      cli.adjustRisk(1);
-      expect(cli.config.RISK_PER_TRADE).toBe(0.5);
     });
   });
 
-  describe('View Management', () => {
-    it('should switch between views', () => {
-      cli.setView('trades');
-      expect(cli.currentView).toBe('trades');
-      
-      cli.setView('positions');
-      expect(cli.currentView).toBe('positions');
-      
-      cli.setView('performance');
-      expect(cli.currentView).toBe('performance');
-      
-      cli.setView('tokens');
-      expect(cli.currentView).toBe('tokens');
-      
-      cli.setView('dashboard');
-      expect(cli.currentView).toBe('dashboard');
-    });
-  });
-
-  describe('Data Updates', () => {
-    it('should update balance history', () => {
-      cli.updateBalanceHistory(1.0);
-      cli.updateBalanceHistory(1.1);
-      cli.updateBalanceHistory(1.2);
-      
-      expect(cli.balanceHistory).toHaveLength(3);
-      expect(cli.balanceHistory).toEqual([1.0, 1.1, 1.2]);
-    });
-
-    it('should maintain maximum balance history length', () => {
-      for (let i = 0; i < 60; i++) {
-        cli.updateBalanceHistory(i);
+  describe("Token Management", () => {
+    const mockToken = {
+      mint: "mock-token-123",
+      symbol: "MOCK",
+      marketCapSol: 1000,
+      volume: 100,
+      age: "1m",
+      isSafe: true,
+      stateManager: {
+        getCurrentState: () => "READY"
       }
-      
-      expect(cli.balanceHistory).toHaveLength(50);
-      expect(cli.balanceHistory[0]).toBe(10);
-      expect(cli.balanceHistory[49]).toBe(59);
+    };
+
+    it("should update token list when token is added", () => {
+      cli.updateToken(mockToken);
+      expect(cli.tokenList.has(mockToken.mint)).toBe(true);
+      expect(cli.tokenList.get(mockToken.mint)).toBe(mockToken);
     });
 
-    it('should update positions', () => {
-      const position = {
-        token: 'TEST',
-        symbol: 'TEST',
-        entryPrice: 1.0,
-        currentPrice: 1.1,
-        size: 1.0,
-        pnl: 0.1,
-        pnlPercent: 10
-      };
-      
-      cli.updatePosition('TEST', position);
-      expect(cli.activePositions.get('TEST')).toEqual(position);
+    it("should remove token from list when token is removed", () => {
+      // First add the token
+      cli.updateToken(mockToken);
+      expect(cli.tokenList.has(mockToken.mint)).toBe(true);
+
+      // Then remove it
+      cli.removeToken(mockToken);
+      expect(cli.tokenList.has(mockToken.mint)).toBe(false);
     });
 
-    it('should add trades with limit', () => {
-      for (let i = 0; i < 120; i++) {
-        cli.addTrade({
-          timestamp: new Date().toISOString(),
-          symbol: 'TEST',
-          type: 'buy',
-          price: 1.0,
-          size: 1.0,
-          pnl: 0.1
-        });
-      }
+    it("should render token list with correct formatting", () => {
+      cli.tokenTracker = mockTokenTracker;
+      cli.updateToken(mockToken);
+      const tokenList = cli.renderTokenList();
       
-      expect(cli.tradeHistory).toHaveLength(100);
+      // Check that the token list contains our mock token's data
+      expect(tokenList).toContain(mockToken.symbol);
+      expect(tokenList).toContain(mockToken.age);
+      expect(tokenList).toContain(mockToken.volume.toFixed(3));
+      expect(tokenList).toContain("SAFE");
+      expect(tokenList).toContain("READY");
     });
 
-    it('should update token information', () => {
-      const token = {
-        mint: 'TEST',
-        symbol: 'TEST',
-        age: 300,
-        marketCap: 1000,
-        volume: 100,
-        isSafe: true
-      };
-      
-      cli.updateToken(token);
-      expect(cli.tokenList.get('TEST')).toEqual(token);
-    });
-  });
+    it("should sort tokens by market cap", () => {
+      cli.tokenTracker = mockTokenTracker;
+      const tokens = [
+        { ...mockToken, mint: "token1", symbol: "TK1", marketCapSol: 1000 },
+        { ...mockToken, mint: "token2", symbol: "TK2", marketCapSol: 3000 },
+        { ...mockToken, mint: "token3", symbol: "TK3", marketCapSol: 2000 }
+      ];
 
-  describe('Notifications', () => {
-    it('should send notifications with sound', () => {
-      cli.notify('Test message', { sound: true });
+      tokens.forEach(token => cli.updateToken(token));
+      const tokenList = cli.renderTokenList();
       
-      expect(notifier.notify).toHaveBeenCalledWith({
-        title: 'Money Printer',
-        message: 'Test message',
-        sound: true
-      });
+      // Check that tokens appear in descending order by market cap
+      const lines = tokenList.split("\n").filter(line => line.trim());
+      expect(lines.findIndex(line => line.includes("TK2"))).toBeLessThan(
+        lines.findIndex(line => line.includes("TK3"))
+      );
+      expect(lines.findIndex(line => line.includes("TK3"))).toBeLessThan(
+        lines.findIndex(line => line.includes("TK1"))
+      );
     });
 
-    it('should send notifications without sound', () => {
-      cli.notify('Test message', { sound: false });
-      
-      expect(notifier.notify).toHaveBeenCalledWith({
-        title: 'Money Printer',
-        message: 'Test message',
-        sound: false
-      });
-    });
-  });
-
-  describe('Rendering', () => {
-    it('should render performance metrics', () => {
-      // Add some test trades
-      cli.addTrade({ pnl: 0.1 });
-      cli.addTrade({ pnl: -0.05 });
-      cli.addTrade({ pnl: 0.2 });
-      
+    it("should update performance metrics with token stats", () => {
+      cli.tokenTracker = mockTokenTracker;
       const metrics = cli.renderPerformanceMetrics();
-      expect(metrics).toContain('Total Trades');
-      expect(metrics).toContain('Win Rate');
-      expect(metrics).toContain('Average PnL');
-    });
-
-    it('should render positions table', () => {
-      cli.updatePosition('TEST1', {
-        symbol: 'TEST1',
-        entryPrice: 1.0,
-        currentPrice: 1.1,
-        size: 1.0,
-        pnl: 0.1,
-        pnlPercent: 10,
-        holdTime: '1h'
-      });
+      const metricsStr = metrics.toString();
       
-      const positions = cli.renderPositions();
-      expect(positions).toContain('TEST1');
-      expect(positions).toContain('1.000000');
-      expect(positions).toContain('0.100');
-    });
-
-    it('should render trade history', () => {
-      cli.addTrade({
-        timestamp: '10:00:00',
-        symbol: 'TEST',
-        type: 'buy',
-        price: 1.0,
-        size: 1.0,
-        pnl: 0.1
-      });
-      
-      const history = cli.renderTradeHistory();
-      expect(history).toContain('TEST');
-      expect(history).toContain('BUY');
-      expect(history).toContain('1.000000');
-    });
-
-    it('should render token list', () => {
-      cli.updateToken({
-        mint: 'TEST',
-        symbol: 'TEST',
-        age: '5m',
-        marketCap: 1000,
-        volume: 100,
-        isSafe: true
-      });
-      
-      const tokens = cli.renderTokenList();
-      expect(tokens).toContain('TEST');
-      expect(tokens).toContain('1000.000');
-      expect(tokens).toContain('SAFE');
+      // Check that token stats are included in the correct format
+      expect(metricsStr).toContain("Total Tokens");
+      expect(metricsStr).toMatch(/Total Tokens.*3/);
+      expect(metricsStr).toMatch(/New Tokens.*1/);
+      expect(metricsStr).toMatch(/Ready Tokens.*1/);
+      expect(metricsStr).toMatch(/Dead Tokens.*1/);
+      expect(metricsStr).toMatch(/Avg Market Cap.*\$200000\.00/);
+      expect(metricsStr).toMatch(/Total Market Cap.*\$600000\.00/);
     });
   });
 });

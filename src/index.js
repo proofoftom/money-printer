@@ -67,16 +67,13 @@ class MoneyPrinter {
 
   async initializeComponents() {
     // Initialize core components
-    this.wallet = new Wallet();
-    this.priceManager = new PriceManager();
-    this.tokenTracker = new TokenTracker();
-    this.positionManager = new PositionManager(
-      this.wallet,
-      this.priceManager
-    );
-
-    // Initialize WebSocket
-    this.webSocketManager = new WebSocketManager();
+    this.wallet = new Wallet(this.config);
+    this.webSocketManager = new WebSocketManager(this.config);
+    this.safetyChecker = new SafetyChecker(this.config);
+    this.priceManager = new PriceManager(this.config, this.webSocketManager);
+    this.positionManager = new PositionManager(this.config, this.wallet, this.priceManager);
+    this.tokenTracker = new TokenTracker(this.safetyChecker, this.positionManager, this.priceManager, this.webSocketManager);
+    this.cli = new CLIManager(this.config, this.tokenTracker);
 
     // Set up event listeners
     this.setupEventListeners();
@@ -86,10 +83,16 @@ class MoneyPrinter {
     // Token events
     this.tokenTracker.on("tokenAdded", (token) => {
       this.cli.updateToken(token);
+      this.cli.notify(`New token detected: ${token.symbol}`, { sound: false });
     });
 
     this.tokenTracker.on("tokenUpdated", (token) => {
       this.cli.updateToken(token);
+    });
+
+    this.tokenTracker.on("tokenRemoved", (token) => {
+      this.cli.removeToken(token);
+      this.cli.notify(`Token removed: ${token.symbol}`, { sound: false });
     });
 
     // Position events
@@ -129,7 +132,7 @@ class MoneyPrinter {
     });
 
     this.cli.on("emergencyStop", () => {
-      this.positionManager.closeAllPositions();
+      this.positionManager.emergencyCloseAll();
     });
 
     this.cli.on("riskAdjusted", (newRisk) => {
@@ -147,13 +150,12 @@ class MoneyPrinter {
     
     // Start trading
     await this.webSocketManager.connect();
-    this.cli.toggleTrading();
   }
 
   async shutdown() {
     try {
       // Close all positions
-      await this.positionManager.closeAllPositions();
+      await this.positionManager.emergencyCloseAll();
       
       // Close WebSocket connection
       this.webSocketManager.close();

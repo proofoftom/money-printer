@@ -6,10 +6,11 @@ const notifier = require('node-notifier');
 const EventEmitter = require('events');
 
 class CLIManager extends EventEmitter {
-  constructor(config) {
+  constructor(config, tokenTracker) {
     super();
     this.config = config;
-    this.isRunning = false;
+    this.tokenTracker = tokenTracker;
+    this.isRunning = true;
     this.autoScroll = true;
     this.showCharts = true;
     this.currentView = 'dashboard';
@@ -68,7 +69,8 @@ class CLIManager extends EventEmitter {
         chalk.cyan('Age'),
         chalk.cyan('MCap'),
         chalk.cyan('Volume'),
-        chalk.cyan('Safety')
+        chalk.cyan('Safety'),
+        chalk.cyan('State')
       ],
       style: { head: [], border: [] }
     });
@@ -130,6 +132,7 @@ class CLIManager extends EventEmitter {
     this.isRunning = !this.isRunning;
     this.notify(`Trading ${this.isRunning ? 'resumed' : 'paused'}`);
     this.emit('tradingStateChange', this.isRunning);
+    this.render();
   }
 
   async emergencyStop() {
@@ -208,6 +211,13 @@ class CLIManager extends EventEmitter {
     }
   }
 
+  removeToken(token) {
+    this.tokenList.delete(token.mint);
+    if (this.currentView === 'tokens' || this.currentView === 'dashboard') {
+      this.render();
+    }
+  }
+
   renderBalanceChart() {
     if (!this.showCharts || this.balanceHistory.length < 2) return '';
     
@@ -230,12 +240,30 @@ class CLIManager extends EventEmitter {
     const totalPnL = this.tradeHistory.reduce((sum, t) => sum + t.pnl, 0);
     const avgPnL = totalTrades ? (totalPnL / totalTrades).toFixed(3) : '0.000';
     
+    // Get token stats
+    const tokenStats = this.tokenTracker ? this.tokenTracker.getTokenStats() : { 
+      total: 0, 
+      new: 0, 
+      ready: 0, 
+      dead: 0, 
+      avgMarketCapUSD: 0, 
+      totalMarketCapUSD: 0 
+    };
+    
     this.performanceTable.push(
       ['Total Trades', totalTrades],
       ['Win Rate', `${winRate}%`],
       ['Average PnL', `${avgPnL} SOL`],
       ['Total PnL', `${totalPnL.toFixed(3)} SOL`],
-      ['Active Positions', this.activePositions.size]
+      ['Active Positions', this.activePositions.size],
+      ['', ''],
+      ['Token Stats:', ''],
+      ['Total Tokens', tokenStats.total],
+      ['New Tokens', tokenStats.new],
+      ['Ready Tokens', tokenStats.ready],
+      ['Dead Tokens', tokenStats.dead],
+      ['Avg Market Cap', `$${tokenStats.avgMarketCapUSD.toFixed(2)}`],
+      ['Total Market Cap', `$${tokenStats.totalMarketCapUSD.toFixed(2)}`]
     );
     
     return this.performanceTable.toString();
@@ -282,15 +310,20 @@ class CLIManager extends EventEmitter {
   renderTokenList() {
     this.tokenListTable.length = 0;
     
-    for (const token of this.tokenList.values()) {
+    const sortedTokens = Array.from(this.tokenList.values())
+      .sort((a, b) => b.marketCapSol - a.marketCapSol);
+
+    for (const token of sortedTokens) {
       const safetyColor = token.isSafe ? chalk.green : chalk.red;
+      const stateColor = token.stateManager.getCurrentState() === 'ready' ? chalk.green : chalk.yellow;
       
       this.tokenListTable.push([
         token.symbol,
         token.age,
-        token.marketCap.toFixed(3),
+        `$${this.tokenTracker.priceManager.solToUSD(token.marketCapSol).toFixed(2)}`,
         token.volume.toFixed(3),
-        safetyColor(token.isSafe ? 'SAFE' : 'UNSAFE')
+        safetyColor(token.isSafe ? 'SAFE' : 'UNSAFE'),
+        stateColor(token.stateManager.getCurrentState().toUpperCase())
       ]);
     }
     
