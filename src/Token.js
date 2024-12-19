@@ -408,13 +408,28 @@ class Token extends EventEmitter {
     const now = Date.now();
     const timeWindow = 5 * 1000; // 5 seconds window
     const currentVolume = this.getRecentVolume(timeWindow);
-
-    // Find creator's wallet and use their initial buy as baseline
-    const creatorWallet = Array.from(this.wallets.values()).find(w => w.isCreator);
-    const baseVolume = creatorWallet ? creatorWallet.initialBalance : 1;
     
-    // Calculate percentage change
-    return ((currentVolume - baseVolume) / baseVolume) * 100;
+    console.log(`[${this.symbol}] Volume spike:`, JSON.stringify({
+      currentVolume,
+      trades: Array.from(this.wallets.values()).reduce((sum, w) => sum + w.trades.length, 0)
+    }, null, 2));
+    
+    // If we have no volume, return -100 to indicate no activity
+    if (currentVolume === 0) return -100;
+    
+    // Compare current volume to previous window
+    const previousWindow = this.getRecentVolume(timeWindow * 2) - currentVolume;
+    
+    console.log(`[${this.symbol}] Volume comparison:`, JSON.stringify({
+      currentVolume,
+      previousWindow,
+      spike: previousWindow === 0 ? (currentVolume > 0 ? 100 : -100) : ((currentVolume - previousWindow) / previousWindow) * 100
+    }, null, 2));
+    
+    if (previousWindow === 0) return currentVolume > 0 ? 100 : -100;
+    
+    // Calculate percentage change from previous window
+    return ((currentVolume - previousWindow) / previousWindow) * 100;
   }
 
   getBuyPressure() {
@@ -520,22 +535,38 @@ class Token extends EventEmitter {
   getRecentVolume(timeWindow) {
     const now = Date.now();
     const cutoff = now - timeWindow;
-    let volumeUSD = 0;
-
+    let volumeTokens = 0;
+    
     for (const [_, wallet] of this.wallets) {
-      // Filter trades within timeWindow and sum their volumes
+      // Filter trades within timeWindow and sum their token amounts
       const recentTrades = wallet.trades.filter(
         (trade) => trade.timestamp > cutoff
       );
-      volumeUSD += recentTrades.reduce((sum, trade) => {
-        // Convert token amount to USD value using current price
-        const solValue = trade.amount * this.currentPrice;
-        const usdValue = this.priceManager.solToUSD(solValue);
-        return sum + usdValue;
-      }, 0);
+      
+      for (const trade of recentTrades) {
+        // Make sure we have a valid number for the amount
+        const amount = Number(trade.amount) || 0;
+        volumeTokens += amount;
+      }
     }
-
-    return volumeUSD;
+    
+    // Convert total token volume to USD
+    const solValue = volumeTokens * (this.vSolInBondingCurve / this.vTokensInBondingCurve);
+    const usdValue = this.priceManager.solToUSD(solValue);
+    
+    console.log(`[${this.symbol}] Volume for ${timeWindow/1000}s:`, JSON.stringify({
+      volumeTokens,
+      solValue,
+      usdValue,
+      bondingCurve: {
+        vSol: this.vSolInBondingCurve,
+        vTokens: this.vTokensInBondingCurve,
+        ratio: this.vSolInBondingCurve / this.vTokensInBondingCurve
+      }
+    }, null, 2));
+    
+    // Return 0 if volume is NaN or undefined
+    return isNaN(usdValue) ? 0 : usdValue;
   }
 
   updateWalletActivity(publicKey, tradeData) {
@@ -568,27 +599,10 @@ class Token extends EventEmitter {
       timestamp: now,
     });
 
-    // Update volume metrics with USD value
-    const currentPrice = this.calculateTokenPrice();
-    const solValue = tradeData.tokenAmount * currentPrice;
-    const usdValue = this.priceManager.solToUSD(solValue);
+    // Update volume metrics
     this.volume5s = this.getRecentVolume(5 * 1000); // 5 seconds
     this.volume10s = this.getRecentVolume(10 * 1000); // 10 seconds
     this.volume30s = this.getRecentVolume(30 * 1000); // 30 seconds
-
-    // Cleanup old trades
-    if (
-      now - this.metrics.volumeData.lastCleanup >
-      this.metrics.volumeData.cleanupInterval
-    ) {
-      const cutoff = now - 30 * 60 * 1000; // 30 minutes
-      for (const [_, walletData] of this.wallets) {
-        walletData.trades = walletData.trades.filter(
-          (t) => t.timestamp > cutoff
-        );
-      }
-      this.metrics.volumeData.lastCleanup = now;
-    }
   }
 
   updateWalletBalance(publicKey, newBalance, timestamp) {

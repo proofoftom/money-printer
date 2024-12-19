@@ -14,12 +14,12 @@ const Dashboard = require("./Dashboard");
 const errorLogger = new ErrorLogger();
 
 // Global error handlers
-process.on('uncaughtException', (error) => {
-  handleGlobalError(error, 'UncaughtException');
+process.on("uncaughtException", (error) => {
+  handleGlobalError(error, "UncaughtException");
 });
 
-process.on('unhandledRejection', (error) => {
-  handleGlobalError(error, 'UnhandledRejection');
+process.on("unhandledRejection", (error) => {
+  handleGlobalError(error, "UnhandledRejection");
 });
 
 // Global console override
@@ -27,7 +27,7 @@ const originalConsole = {
   log: console.log,
   error: console.error,
   warn: console.warn,
-  info: console.info
+  info: console.info,
 };
 
 function overrideConsole() {
@@ -76,37 +76,39 @@ function handleGlobalError(error, context, additionalInfo = {}) {
           volume: additionalInfo.position.volume,
           priceHistory: additionalInfo.position.priceHistory?.length,
           volumeHistory: additionalInfo.position.volumeHistory?.length,
-          profitHistory: additionalInfo.position.profitHistory?.length
-        }
+          profitHistory: additionalInfo.position.profitHistory?.length,
+        },
       };
     }
 
     // Log to file
     errorLogger.logError(error, context, additionalInfo);
-    
+
     // Log to dashboard if available
     if (global.dashboard) {
       const errorMessage = additionalInfo.position
-        ? `${context} for position ${additionalInfo.position.mint?.slice(0, 8) || 'unknown'}: ${error.message}`
+        ? `${context} for position ${
+            additionalInfo.position.mint?.slice(0, 8) || "unknown"
+          }: ${error.message}`
         : `${context}: ${error.message}`;
       global.dashboard.logStatus(errorMessage, "error");
     }
-    
+
     // Log to console for debugging
     console.error(`[${context}] ${error.message}`);
     if (additionalInfo.position) {
-      console.error('Position details:', additionalInfo.position);
+      console.error("Position details:", additionalInfo.position);
     }
-    
+
     // Handle fatal errors
-    if (context === 'UncaughtException') {
-      console.error('Fatal error occurred. Shutting down...');
+    if (context === "UncaughtException") {
+      console.error("Fatal error occurred. Shutting down...");
       process.exit(1);
     }
   } catch (loggingError) {
     // Fallback error handling if logging fails
-    console.error('Error in error handler:', loggingError);
-    console.error('Original error:', error);
+    console.error("Error in error handler:", loggingError);
+    console.error("Original error:", error);
     process.exit(1);
   }
 }
@@ -116,12 +118,12 @@ function initializeComponent(component, context) {
   return new Proxy(component, {
     get(target, prop) {
       const value = target[prop];
-      if (typeof value === 'function') {
+      if (typeof value === "function") {
         return function (...args) {
           try {
             const result = value.apply(target, args);
             if (result instanceof Promise) {
-              return result.catch(error => {
+              return result.catch((error) => {
                 handleGlobalError(error, context, { method: prop });
                 throw error; // Re-throw to maintain promise rejection
               });
@@ -134,29 +136,31 @@ function initializeComponent(component, context) {
         };
       }
       return value;
-    }
+    },
   });
 }
 
 // Initialize components with error handling
-const wallet = initializeComponent(new Wallet(), 'Wallet');
-const priceManager = initializeComponent(new PriceManager(), 'PriceManager');
-const positionManager = initializeComponent(new PositionManager(wallet), 'PositionManager');
-const safetyChecker = initializeComponent(new SafetyChecker(config.SAFETY, priceManager), 'SafetyChecker');
+const wallet = initializeComponent(new Wallet(), "Wallet");
+const priceManager = initializeComponent(new PriceManager(), "PriceManager");
+const positionManager = initializeComponent(
+  new PositionManager(wallet),
+  "PositionManager"
+);
+const safetyChecker = initializeComponent(
+  new SafetyChecker(config.SAFETY, priceManager),
+  "SafetyChecker"
+);
 
 // Initialize TokenTracker and WebSocketManager
 const tokenTracker = initializeComponent(
-  new TokenTracker(
-    safetyChecker,
-    positionManager,
-    priceManager
-  ),
-  'TokenTracker'
+  new TokenTracker(safetyChecker, positionManager, priceManager),
+  "TokenTracker"
 );
 
 const wsManager = initializeComponent(
   new WebSocketManager(tokenTracker, priceManager),
-  'WebSocketManager'
+  "WebSocketManager"
 );
 
 // Set WebSocketManager in TokenTracker after initialization
@@ -164,8 +168,14 @@ tokenTracker.webSocketManager = wsManager;
 
 // Create dashboard and store globally for error handler access
 global.dashboard = initializeComponent(
-  new Dashboard(wallet, tokenTracker, positionManager, safetyChecker, priceManager),
-  'Dashboard'
+  new Dashboard(
+    wallet,
+    tokenTracker,
+    positionManager,
+    safetyChecker,
+    priceManager
+  ),
+  "Dashboard"
 );
 
 overrideConsole();
@@ -174,7 +184,10 @@ overrideConsole();
 async function start() {
   try {
     await priceManager.initialize();
-    global.dashboard.logStatus("Money Printer initialized and ready to trade!", "info");
+    global.dashboard.logStatus(
+      "Money Printer initialized and ready to trade!",
+      "info"
+    );
   } catch (error) {
     handleGlobalError(error, "Initialization", { component: "PriceManager" });
     process.exit(1);
@@ -183,7 +196,10 @@ async function start() {
 
 // Set up event listeners for token lifecycle events
 tokenTracker.on("tokenAdded", (token) => {
-  global.dashboard.logStatus(`Token ${token.symbol} (${token.mint}) minted!`, "info");
+  global.dashboard.logStatus(
+    `Token ${token.symbol} (${token.mint}) minted!`,
+    "info"
+  );
   global.dashboard.logStatus(
     `Market cap: ${priceManager.solToUSD(token.marketCapSol)}`,
     "info"
@@ -192,7 +208,7 @@ tokenTracker.on("tokenAdded", (token) => {
 
 tokenTracker.on("tokenStateChanged", ({ token, from, to }) => {
   global.dashboard.logStatus(
-    `Token ${token.symbol} state changed: ${from} -> ${to}`,
+    `Token ${token.symbol} (${token.mint}) state changed: ${from} -> ${to}`,
     "info"
   );
   global.dashboard.logStatus(
@@ -228,13 +244,19 @@ tokenTracker.on("takeProfitExecuted", ({ token, percentage, portion }) => {
     `Sold ${(portion * 100).toFixed(0)}% at ${percentage}% profit`,
     "info"
   );
-  global.dashboard.logStatus(`Current market cap: ${token.marketCapSol} SOL`, "info");
+  global.dashboard.logStatus(
+    `Current market cap: ${token.marketCapSol} SOL`,
+    "info"
+  );
 });
 
 tokenTracker.on("positionClosed", ({ token, reason }) => {
   global.dashboard.logStatus(`Position closed for ${token.symbol}`, "info");
   global.dashboard.logStatus(`Reason: ${reason}`, "info");
-  global.dashboard.logStatus(`Final market cap: ${token.marketCapSol} SOL`, "info");
+  global.dashboard.logStatus(
+    `Final market cap: ${token.marketCapSol} SOL`,
+    "info"
+  );
 });
 
 tokenTracker.on("error", ({ token, error }) => {

@@ -435,6 +435,37 @@ class Dashboard {
     }
   }
 
+  formatUSD(value) {
+    if (value === 0) return "$0";
+    
+    const absValue = Math.abs(value);
+    if (absValue >= 1_000_000) {
+      return `$${(value / 1_000_000).toFixed(2)}M`;
+    } else if (absValue >= 1_000) {
+      return `$${(value / 1_000).toFixed(2)}k`;
+    } else {
+      return `$${value.toFixed(2)}`;
+    }
+  }
+
+  formatTokenRow(token) {
+    const age = this.getAge(token.firstSeen);
+    const mc = this.priceManager.solToUSD(token.marketCapSol);
+    const holders = token.wallets.size;
+    const txCount = Array.from(token.wallets.values()).reduce(
+      (sum, w) => sum + w.trades.length,
+      0
+    );
+    const txPercent = ((txCount / token.totalTxCount) * 100).toFixed(0);
+
+    return [
+      `${token.symbol}`,
+      `${age} | MC: ${this.formatUSD(mc)} | H: ${holders} T: ${txPercent}%`,
+      `VOL   5s: ${this.formatUSD(token.volume5s)} | 10s: ${this.formatUSD(token.volume10s)} | 30s: ${this.formatUSD(token.volume30s)}`,
+      `P1m: ${token.price1m.toFixed(1)}% P5m: ${token.price5m.toFixed(1)}% VS: ${token.volumeSpike.toFixed(0)}% BP: ${token.buyPressure.toFixed(0)}% Gain: ${token.getGainFromInitial().toFixed(1)}%`,
+    ].join("\n");
+  }
+
   logStatus(message, type = "info") {
     try {
       if (!this.statusBox) return;
@@ -703,6 +734,28 @@ class Dashboard {
       });
     } catch (error) {
       throw error;
+    }
+  }
+
+  updateTokens() {
+    try {
+      if (!this.tokenBox) return;
+
+      const tokens = Array.from(this.tokenTracker.tokens.values());
+      const sortedTokens = tokens
+        .filter((t) => !t.isScam)
+        .sort((a, b) => b.getGainFromInitial() - a.getGainFromInitial());
+
+      const content = ["New Tokens"];
+      for (const token of sortedTokens) {
+        content.push("-".repeat(70));
+        content.push(this.formatTokenRow(token));
+      }
+
+      this.tokenBox.setContent(content.join("\n"));
+      this.screen.render();
+    } catch (error) {
+      console.error("Error in updateTokens:", error);
     }
   }
 }
