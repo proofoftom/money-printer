@@ -10,11 +10,26 @@ class PositionManager extends EventEmitter {
     this.priceManager = priceManager;
     this.exitStrategies = new ExitStrategies();
     this.stateManager = new PositionStateManager();
+    this.isTrading = true;
+  }
+
+  pauseTrading() {
+    this.isTrading = false;
+    this.emit('tradingPaused');
+  }
+
+  resumeTrading() {
+    this.isTrading = true;
+    this.emit('tradingResumed');
+  }
+
+  isTradingEnabled() {
+    return this.isTrading;
   }
 
   openPosition(token) {
-    // Skip if position already exists
-    if (this.stateManager.hasPosition(token.mint)) {
+    // Skip if trading is paused or position already exists
+    if (!this.isTrading || this.stateManager.hasPosition(token.mint)) {
       return false;
     }
 
@@ -71,6 +86,15 @@ class PositionManager extends EventEmitter {
     const walletBalance = this.wallet.getBalance();
     const riskAmount = walletBalance * config.RISK_PER_TRADE;
     return Math.min(riskAmount, token.marketCapSol * config.MAX_MCAP_POSITION);
+  }
+
+  emergencyCloseAll() {
+    const positions = this.stateManager.getAllPositions();
+    positions.forEach(position => {
+      this.closePosition(position.mint, 'emergency');
+    });
+    this.pauseTrading();
+    this.emit('emergencyStop');
   }
 }
 
