@@ -1,6 +1,6 @@
 module.exports = {
   // Core settings
-  MIN_TOKEN_AGE_SECONDS: 300, // 5 minutes minimum age
+  MIN_TOKEN_AGE_SECONDS: 0, // 5 minutes minimum age
   MAX_ENTRY_MCAP_USD: 100000, // $100k maximum market cap
   MIN_MCAP_POSITION: 0.001, // 0.1% minimum position size
   MAX_MCAP_POSITION: 0.01, // 1% maximum position size
@@ -16,7 +16,7 @@ module.exports = {
   RECONNECT_INTERVAL: 5000, // 5 seconds between reconnect attempts
 
   // Price settings
-  SOL_USD_PRICE: 100, // Fallback SOL/USD price if API fails
+  SOL_USD_PRICE: 225, // Fallback SOL/USD price if API fails
 
   // Token filtering configuration
   MAX_TOKEN_AGE: 24 * 60 * 60 * 1000, // 24 hours in milliseconds

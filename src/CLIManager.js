@@ -101,6 +101,19 @@ class CLIManager extends EventEmitter {
       ],
       style: { head: [], border: [] }
     });
+
+    // Initialize safety check failures table
+    this.safetyFailuresTable = new Table({
+      head: [
+        chalk.cyan('Token'),
+        chalk.cyan('Time'),
+        chalk.cyan('Reasons')
+      ],
+      style: {
+        head: [],
+        border: []
+      }
+    });
   }
 
   setupKeyboardControls() {
@@ -167,23 +180,28 @@ class CLIManager extends EventEmitter {
     });
 
     // Position events
-    this.tokenTracker.on('positionOpened', ({ position }) => {
+    this.tokenTracker.positionManager.on('positionOpened', ({ token, position }) => {
+      console.log(`Adding position to active positions: ${token.symbol}`);
       this.activePositions.set(position.mint, position);
       this.render();
       
       notifier.notify({
         title: 'Position Opened',
-        message: `Opened ${position.size.toFixed(2)} ${position.symbol} @ ${position.entryPrice.toFixed(4)}`
+        message: `Opened ${position.symbol} at ${position.entryPrice.toFixed(6)} SOL`
       });
     });
 
-    this.tokenTracker.on('positionClosed', ({ position }) => {
+    this.tokenTracker.positionManager.on('positionUpdated', ({ position }) => {
+      this.activePositions.set(position.mint, position);
+      this.render();
+    });
+
+    this.tokenTracker.positionManager.on('positionClosed', ({ position, reason }) => {
       this.activePositions.delete(position.mint);
-      this.tradeHistory.unshift({
-        timestamp: new Date().toLocaleTimeString(),
-        symbol: position.symbol,
-        type: 'CLOSE',
-        price: position.currentPrice,
+      this.addTrade({
+        token: position.token,
+        entryPrice: position.entryPrice,
+        exitPrice: position.currentPrice,
         size: position.size,
         pnl: position.realizedPnLSol
       });
@@ -226,6 +244,10 @@ class CLIManager extends EventEmitter {
         });
       }
       this.render();
+    });
+
+    this.tokenTracker.on('tokenSafetyCheckFailed', (token, reasons) => {
+      this.onTokenSafetyCheckFailed(token, reasons);
     });
   }
 
@@ -571,9 +593,29 @@ class CLIManager extends EventEmitter {
         break;
     }
     
+    // Add safety failures table to output
+    if (this.safetyFailuresTable.length > 0) {
+      console.log('\nFailed Safety Checks:');
+      console.log(this.safetyFailuresTable.toString());
+    }
+    
     // Footer
     console.log(chalk.gray('\nAuto-scroll:', this.autoScroll ? 'ON' : 'OFF'));
     console.log(chalk.gray('Charts:', this.showCharts ? 'ON' : 'OFF'));
+  }
+
+  onTokenSafetyCheckFailed(token, reasons) {
+    const time = new Date().toLocaleTimeString();
+    this.safetyFailuresTable.push([
+      token.symbol,
+      time,
+      reasons.join(', ')
+    ]);
+    
+    // Keep table size manageable
+    if (this.safetyFailuresTable.length > 10) {
+      this.safetyFailuresTable.splice(1, 1);
+    }
   }
 
   cleanup() {

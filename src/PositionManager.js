@@ -1,13 +1,13 @@
 const EventEmitter = require("events");
-const config = require("./config");
 const ExitStrategies = require("./ExitStrategies");
 const Position = require("./Position");
 
 class PositionManager extends EventEmitter {
-  constructor(wallet, priceManager) {
+  constructor(wallet, priceManager, config) {
     super();
     this.wallet = wallet;
     this.priceManager = priceManager;
+    this.config = config;
     this.exitStrategies = new ExitStrategies();
     this.positions = new Map();
     this.isTrading = true;
@@ -29,18 +29,30 @@ class PositionManager extends EventEmitter {
 
   openPosition(token) {
     // Skip if trading is paused or position already exists
-    if (!this.isTrading || this.positions.has(token.mint)) {
+    if (!this.isTrading) {
+      console.log(`Trading is paused, skipping position for ${token.symbol}`);
+      return false;
+    }
+    
+    if (this.positions.has(token.mint)) {
+      console.log(`Position already exists for ${token.symbol}`);
       return false;
     }
 
     // Calculate position size based on wallet balance and risk parameters
     const size = this.calculatePositionSize(token);
     const currentPrice = token.getCurrentPrice();
+    
+    console.log(`Opening position for ${token.symbol}:
+      Size: ${size.toFixed(4)} SOL
+      Current Price: ${currentPrice.toFixed(6)} SOL
+      Market Cap: ${token.marketCapSol.toFixed(4)} SOL
+    `);
 
     // Create new position
     const position = new Position(token, this.priceManager, {
-      takeProfitLevel: config.TAKE_PROFIT_PERCENT,
-      stopLossLevel: config.STOP_LOSS_PERCENT
+      takeProfitLevel: this.config.TAKE_PROFIT_PERCENT,
+      stopLossLevel: this.config.STOP_LOSS_PERCENT
     });
 
     // Open the position
@@ -49,6 +61,8 @@ class PositionManager extends EventEmitter {
     // Store position
     this.positions.set(token.mint, position);
     this.emit("positionOpened", { token, position });
+    
+    console.log(`Successfully opened position for ${token.symbol}`);
     return true;
   }
 
@@ -90,8 +104,8 @@ class PositionManager extends EventEmitter {
 
   calculatePositionSize(token) {
     const walletBalance = this.wallet.getBalance();
-    const riskAmount = walletBalance * config.RISK_PER_TRADE;
-    return Math.min(riskAmount, token.marketCapSol * config.MAX_MCAP_POSITION);
+    const riskAmount = walletBalance * this.config.RISK_PER_TRADE;
+    return Math.min(riskAmount, token.marketCapSol * this.config.MAX_MCAP_POSITION);
   }
 
   emergencyCloseAll() {

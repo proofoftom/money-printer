@@ -125,6 +125,63 @@ describe('Position', () => {
     });
   });
 
+  describe('Metrics Calculation', () => {
+    beforeEach(() => {
+      position.open(100, 1); // Open position at 100 SOL with 1 SOL size
+    });
+
+    test('updates price extremes correctly', () => {
+      position.updatePrice(120); // New high
+      expect(position.highestPrice).toBe(120);
+      expect(position.lowestPrice).toBe(100);
+
+      position.updatePrice(90);  // New low
+      expect(position.highestPrice).toBe(120);
+      expect(position.lowestPrice).toBe(90);
+    });
+
+    test('calculates unrealized P&L correctly', () => {
+      position.updatePrice(120);
+      // 1 SOL position, price increased by 20 SOL
+      expect(position.unrealizedPnLSol).toBe(20);
+      expect(position.unrealizedPnLUsd).toBe(2000); // Using mock conversion rate
+    });
+
+    test('tracks highest unrealized P&L', () => {
+      position.updatePrice(120); // +20 SOL P&L
+      expect(position.highestUnrealizedPnLSol).toBe(20);
+
+      position.updatePrice(110); // +10 SOL P&L
+      expect(position.highestUnrealizedPnLSol).toBe(20); // Should keep highest
+
+      position.updatePrice(130); // +30 SOL P&L
+      expect(position.highestUnrealizedPnLSol).toBe(30); // Should update to new highest
+    });
+
+    test('calculates ROI percentage correctly', () => {
+      position.updatePrice(120);
+      // Price increased from 100 to 120 = 20% increase
+      expect(position.roiPercentage).toBe(20);
+
+      position.updatePrice(90);
+      // Price decreased from 100 to 90 = -10% decrease
+      expect(position.roiPercentage).toBe(-10);
+    });
+
+    test('emits update event with current metrics', () => {
+      const updateSpy = jest.fn();
+      position.on('updated', updateSpy);
+
+      position.updatePrice(120);
+      
+      expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({
+        currentPrice: 120,
+        unrealizedPnLSol: 20,
+        roiPercentage: 20
+      }));
+    });
+  });
+
   describe('Position Metrics', () => {
     test('calculates time in position', () => {
       const startTime = Date.now();

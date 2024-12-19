@@ -28,7 +28,7 @@ class TokenTracker extends EventEmitter {
     this.on('error', () => {});
   }
 
-  handleNewToken(tokenData) {
+  async handleNewToken(tokenData) {
     if (this.tokens.has(tokenData.mint)) {
       // Update existing token
       const token = this.tokens.get(tokenData.mint);
@@ -70,6 +70,12 @@ class TokenTracker extends EventEmitter {
 
     // Check initial state
     token.checkState();
+
+    // Check if token is safe
+    const safetyCheck = await this.safetyChecker.isTokenSafe(token);
+    if (!safetyCheck.safe) {
+      this.emit('tokenSafetyCheckFailed', token, safetyCheck.reasons);
+    }
   }
 
   removeToken(mint) {

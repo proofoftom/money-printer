@@ -44,7 +44,10 @@ class Token extends EventEmitter {
     if (!this.vTokensInBondingCurve || this.vTokensInBondingCurve === 0) {
       return 0;
     }
-    return this.vSolInBondingCurve / this.vTokensInBondingCurve;
+
+    // Market cap in SOL divided by total supply gives us the price per token
+    const totalSupply = this.vTokensInBondingCurve;  // All tokens are in bonding curve initially
+    return this.marketCapSol / totalSupply;
   }
 
   getCurrentPrice() {
@@ -143,7 +146,8 @@ class Token extends EventEmitter {
     }
 
     // Check for ready state
-    if (this.safetyChecker.isTokenSafe(this) && currentState === STATES.NEW) {
+    const safetyCheck = this.safetyChecker.isTokenSafe(this);
+    if (safetyCheck.safe && currentState === STATES.NEW) {
       this.transitionTo(STATES.READY);
       this.emit("readyForPosition", { token: this });
     }

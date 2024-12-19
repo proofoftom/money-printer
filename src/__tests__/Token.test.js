@@ -159,4 +159,58 @@ describe('Token', () => {
     token.update({ marketCapSol: 200 });
     expect(token.highestMarketCap).toBe(200);
   });
+
+  describe('Price Calculation', () => {
+    test('calculates correct price using market cap and total supply', () => {
+      const tokenData = {
+        mint: 'test-mint',
+        symbol: 'TEST',
+        vTokensInBondingCurve: 1000, // Total supply
+        marketCapSol: 100, // Market cap in SOL
+      };
+
+      const token = new Token(tokenData, {
+        priceManager: mockPriceManager,
+        safetyChecker: mockSafetyChecker
+      });
+
+      // Price should be marketCap / totalSupply = 100 / 1000 = 0.1 SOL
+      expect(token.calculateTokenPrice()).toBe(0.1);
+    });
+
+    test('returns 0 price when no tokens in bonding curve', () => {
+      const tokenData = {
+        mint: 'test-mint',
+        symbol: 'TEST',
+        vTokensInBondingCurve: 0,
+        marketCapSol: 100,
+      };
+
+      const token = new Token(tokenData, {
+        priceManager: mockPriceManager,
+        safetyChecker: mockSafetyChecker
+      });
+
+      expect(token.calculateTokenPrice()).toBe(0);
+    });
+  });
+
+  describe('Safety Check Handling', () => {
+    test('transitions to READY when safety check returns safe:true', () => {
+      mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: true, reasons: [] });
+      token.checkState();
+      expect(token.getCurrentState()).toBe(STATES.READY);
+      expect(stateChangeSpy).toHaveBeenCalledWith('readyForPosition', expect.any(Object));
+    });
+
+    test('stays in NEW state when safety check returns safe:false', () => {
+      mockSafetyChecker.isTokenSafe.mockReturnValue({ 
+        safe: false, 
+        reasons: ['Market cap too high'] 
+      });
+      token.checkState();
+      expect(token.getCurrentState()).toBe(STATES.NEW);
+      expect(stateChangeSpy).not.toHaveBeenCalledWith('readyForPosition', expect.any(Object));
+    });
+  });
 });

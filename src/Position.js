@@ -113,19 +113,28 @@ class Position extends EventEmitter {
   updateMetrics() {
     if (this.state !== STATES.OPEN) return;
 
+    // Update price extremes
+    if (this.currentPrice > this.highestPrice) {
+      this.highestPrice = this.currentPrice;
+    }
+    if (this.currentPrice < this.lowestPrice) {
+      this.lowestPrice = this.currentPrice;
+    }
+
     // Calculate unrealized P&L
     this.unrealizedPnLSol = (this.currentPrice - this.entryPrice) * this.size;
     this.unrealizedPnLUsd = this.priceManager.solToUSD(this.unrealizedPnLSol);
-    
-    // Update highest unrealized P&L
-    this.highestUnrealizedPnLSol = Math.max(
-      this.highestUnrealizedPnLSol,
-      this.unrealizedPnLSol
-    );
 
-    // Calculate ROI
-    const invested = this.entryPrice * this.size;
-    this.roiPercentage = (this.unrealizedPnLSol / invested) * 100;
+    // Update highest unrealized P&L
+    if (this.unrealizedPnLSol > this.highestUnrealizedPnLSol) {
+      this.highestUnrealizedPnLSol = this.unrealizedPnLSol;
+    }
+
+    // Calculate ROI percentage
+    this.roiPercentage = ((this.currentPrice - this.entryPrice) / this.entryPrice) * 100;
+
+    // Emit update event with current state
+    this.emit('updated', this.toJSON());
   }
 
   // Position metrics

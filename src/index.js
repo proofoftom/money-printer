@@ -67,14 +67,14 @@ class MoneyPrinter {
       await this.webSocketManager.connect();
       this.logger.debug('WebSocket manager connected');
       
-      this.safetyChecker = new SafetyChecker(this.config);
-      this.logger.debug('Safety checker initialized');
-
       this.priceManager = new PriceManager(this.config, this.webSocketManager);
       await this.priceManager.initialize();
       this.logger.debug('Price manager initialized');
       
-      this.positionManager = new PositionManager(this.config, this.wallet, this.priceManager);
+      this.safetyChecker = new SafetyChecker(this.wallet, this.priceManager);
+      this.logger.debug('Safety checker initialized');
+      
+      this.positionManager = new PositionManager(this.wallet, this.priceManager, this.config);
       this.logger.debug('Position manager initialized');
 
       this.tokenTracker = new TokenTracker({
