@@ -158,8 +158,8 @@ class Dashboard {
       },
     });
 
-    this.drawdownBox = this.grid.set(3, 6, 9, 3, blessed.box, {
-      label: " Drawdown ",
+    this.pumpedBox = this.grid.set(3, 6, 9, 3, blessed.box, {
+      label: " Pumped ",
       content: "Waiting...",
       border: "line",
       tags: false,
@@ -170,8 +170,8 @@ class Dashboard {
       },
     });
 
-    this.recoveryBox = this.grid.set(3, 9, 9, 3, blessed.box, {
-      label: " Recovery ",
+    this.drawdownBox = this.grid.set(3, 9, 9, 3, blessed.box, {
+      label: " Drawdown ",
       content: "Waiting...",
       border: "line",
       tags: false,
@@ -463,8 +463,8 @@ class Dashboard {
       this.walletBox.setContent(this.getWalletStatus());
       this.newTokensBox.setContent(this.getTokensByState("new"));
       this.pumpingBox.setContent(this.getTokensByState("pumping"));
+      this.pumpedBox.setContent(this.getTokensByState("pumped"));
       this.drawdownBox.setContent(this.getTokensByState("drawdown"));
-      this.recoveryBox.setContent(this.getTokensByState("recovery"));
       this.activePositionsBox.setContent(this.getActivePositions());
       this.tradeBox.setContent(this.getTradeHistory());
       this.updateBalanceHistory();
@@ -476,103 +476,183 @@ class Dashboard {
 
   getTokensByState(state) {
     try {
-      const tokens = this.tokenTracker.getTokensByState(state);
+      // Filter tokens to only include those in the requested state
+      const tokens = Array.from(this.tokenTracker.tokens.values()).filter(
+        (token) => token.state.toLowerCase() === state.toLowerCase()
+      );
 
-      if (tokens.length === 0) {
-        return "No tokens in this state";
-      }
+      // Sort by market cap
+      tokens.sort((a, b) => {
+        const mcA = this.priceManager.solToUSD(a.marketCapSol);
+        const mcB = this.priceManager.solToUSD(b.marketCapSol);
+        return mcB - mcA;
+      });
 
-      return tokens
-        .map((token) => {
-          try {
-            // Calculate token age in seconds
-            const now = Date.now();
-            const tokenAge = Math.floor((now - token.minted) / 1000);
-            const ageStr =
-              tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
+      return tokens.map((token) => {
+        try {
+          // Calculate token age in seconds
+          const now = Date.now();
+          const tokenAge = Math.floor((now - token.minted) / 1000);
+          const ageStr =
+            tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
 
-            // Format market cap in USD with k format
-            const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-            const mcFormatted =
-              marketCapUSD >= 1000
-                ? `${(marketCapUSD / 1000).toFixed(1)}k`
-                : marketCapUSD.toFixed(1);
+          // Format market cap in USD with k format
+          const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+          const mcFormatted =
+            marketCapUSD >= 1000
+              ? `${(marketCapUSD / 1000).toFixed(1)}k`
+              : marketCapUSD.toFixed(1);
 
-            // Get holder info
-            const holderCount = token.getHolderCount();
-            const topConcentration = token.getTopHolderConcentration(10);
-            const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(
-              0
-            )}%`;
+          // Get holder info
+          const holderCount = token.getHolderCount();
+          const topConcentration = token.getTopHolderConcentration(10);
+          const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
 
-            // Get volume from token's volume metrics using by-second windows
-            const vol5s = this.formatVolume(token.volume5s || 0);
-            const vol10s = this.formatVolume(token.volume10s || 0);
-            const vol30s = this.formatVolume(token.volume30s || 0);
+          // Get volume from token's volume metrics
+          const vol5s = this.formatVolume(token.volume5s || 0);
+          const vol10s = this.formatVolume(token.volume10s || 0);
+          const vol30s = this.formatVolume(token.volume30s || 0);
 
-            // Format the token info string
-            const symbol = token.symbol || token.mint.slice(0, 8);
-            const rows = [
-              `${symbol.padEnd(12)} ${ageStr.padEnd(
-                3
-              )} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
-              `VOL   5s: $${vol5s.padEnd(5)} | 10s: $${vol10s.padEnd(
-                5
-              )} | 30s: $${vol30s}`,
-            ];
+          // Format the token info string
+          const symbol = token.symbol || token.mint.slice(0, 8);
+          const rows = [
+            `${symbol.padEnd(12)} ${ageStr.padEnd(3)} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
+            `VOL   5s: $${vol5s.padEnd(5)} | 10s: $${vol10s.padEnd(5)} | 30s: $${vol30s}`
+          ];
 
-            // Add pump metrics for new tokens
-            if (
-              state === "new" ||
-              state === "pumping" ||
-              state === "drawdown"
-            ) {
-              const priceIncrease1m = token.getPriceIncrease(60);
-              const priceIncrease5m = token.getPriceIncrease(300);
-              const volumeSpike = token.getVolumeSpike();
-              const buyPressure = token.getBuyPressure();
+          // Add state-specific metrics
+          if (state === "new" || state === "pumping") {
+            const priceIncrease1m = token.getPriceIncrease(60);
+            const priceIncrease5m = token.getPriceIncrease(300);
+            const volumeSpike = token.getVolumeSpike();
+            const buyPressure = token.getBuyPressure();
+            const gainFromStart = token.stateManager.getGainFromInitial(token.stateManager.priceHistory.lastPrice);
 
+            rows.push(
+              `P1m: ${priceIncrease1m.toFixed(1)}% P5m: ${priceIncrease5m.toFixed(1)}% VS: ${volumeSpike.toFixed(0)}% BP: ${buyPressure.toFixed(0)}% Gain: ${gainFromStart.toFixed(1)}%`
+            );
+          }
+          else if (state === "pumped") {
+            const gainFromInitial = token.stateManager.getGainFromInitial(token.stateManager.priceHistory.lastPrice);
+            const drawdownFromPeak = token.stateManager.getDrawdownFromPeak();
+            rows.push(
+              `Total Gain: ${gainFromInitial.toFixed(1)}% Drawdown: ${drawdownFromPeak.toFixed(1)}%`
+            );
+          }
+          else if (state === "drawdown") {
+            const gainFromInitial = token.stateManager.getGainFromInitial(token.stateManager.priceHistory.lastPrice);
+            const drawdownFromPeak = token.stateManager.getDrawdownFromPeak();
+            const failedAttempts = token.stateManager.metrics.failedAttempts;
+            rows.push(
+              `Total Gain: ${gainFromInitial.toFixed(1)}% Drawdown: ${drawdownFromPeak.toFixed(1)}% Failed: ${failedAttempts}`
+            );
+          }
+
+          // Add unsafe reason if present
+          if (token.stateManager.unsafe) {
+            const reasons = Array.from(token.stateManager.unsafeReasons);
+            if (reasons.length > 0) {
               rows.push(
-                `P1m: ${priceIncrease1m.toFixed(
-                  1
-                )}% P5m: ${priceIncrease5m.toFixed(
-                  1
-                )}% VS: ${volumeSpike.toFixed(0)}% BP: ${buyPressure.toFixed(
-                  0
-                )}%`
+                `\x1b[33mUNSAFE: ${reasons.join(", ")}\x1b[0m`
               );
             }
-
-            // Add unsafe reasons for recovery state
-            if (state === "recovery" && token.stateManager.isUnsafe()) {
-              const unsafeReasons = token.stateManager.getUnsafeReasons();
-              if (unsafeReasons.length > 0) {
-                const { reason, value } = unsafeReasons[0];
-                let valueStr = value;
-                switch (reason) {
-                  case "High holder concentration":
-                    valueStr = `${value.toFixed(1)}%`;
-                    break;
-                  case "Token too young":
-                    valueStr = `${Math.floor(value)}s`;
-                    break;
-                  case "Low volume":
-                    valueStr = `$${value.toFixed(2)}`;
-                    break;
-                  default:
-                    valueStr = value.toString();
-                }
-                rows.push(`UNSAFE: ${reason} (${valueStr})`);
-              }
-            }
-
-            rows.push("─".repeat(50)); // Add horizontal rule between tokens
-            return rows.join("\n");
-          } catch (err) {
-            throw err;
           }
-        })
-        .join("\n");
+
+          rows.push("─".repeat(50)); // Add horizontal rule between tokens
+          return rows.join("\n");
+        } catch (err) {
+          console.error(`Error rendering token ${token.mint}:`, err);
+          return "";
+        }
+      }).join("\n");
+    } catch (error) {
+      console.error("Error in getTokensByState:", error);
+      return "";
+    }
+  }
+
+  renderLane(tokens) {
+    try {
+      return tokens.map((token) => {
+        try {
+          // Calculate token age in seconds
+          const now = Date.now();
+          const tokenAge = Math.floor((now - token.minted) / 1000);
+          const ageStr =
+            tokenAge > 59 ? `${Math.floor(tokenAge / 60)}m` : `${tokenAge}s`;
+
+          // Format market cap in USD with k format
+          const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
+          const mcFormatted =
+            marketCapUSD >= 1000
+              ? `${(marketCapUSD / 1000).toFixed(1)}k`
+              : marketCapUSD.toFixed(1);
+
+          // Get holder info
+          const holderCount = token.getHolderCount();
+          const topConcentration = token.getTopHolderConcentration(10);
+          const holdersStr = `H: ${holderCount} T: ${topConcentration.toFixed(0)}%`;
+
+          // Get volume from token's volume metrics using by-second windows
+          const vol5s = this.formatVolume(token.volume5s || 0);
+          const vol10s = this.formatVolume(token.volume10s || 0);
+          const vol30s = this.formatVolume(token.volume30s || 0);
+
+          // Format the token info string
+          const symbol = token.symbol || token.mint.slice(0, 8);
+          const rows = [
+            `${symbol.padEnd(12)} ${ageStr.padEnd(
+              3
+            )} | MC: $${mcFormatted.padEnd(5)} | ${holdersStr}`,
+            `VOL   5s: $${vol5s.padEnd(5)} | 10s: $${vol10s.padEnd(
+              5
+            )} | 30s: $${vol30s}`,
+          ];
+
+          // Add metrics based on state
+          if (token.state === "new" || token.state === "pumping") {
+            const priceIncrease1m = token.getPriceIncrease(60);
+            const priceIncrease5m = token.getPriceIncrease(300);
+            const volumeSpike = token.getVolumeSpike();
+            const buyPressure = token.getBuyPressure();
+            const gainFromStart = token.stateManager.getGainFromInitial(token.stateManager.priceHistory.lastPrice);
+
+            rows.push(
+              `P1m: ${priceIncrease1m.toFixed(1)}% P5m: ${priceIncrease5m.toFixed(1)}% VS: ${volumeSpike.toFixed(0)}% BP: ${buyPressure.toFixed(0)}% Gain: ${gainFromStart.toFixed(1)}%`
+            );
+          }
+          else if (token.state === "pumped") {
+            const gainFromInitial = token.stateManager.getGainFromInitial(token.stateManager.priceHistory.lastPrice);
+            const drawdownFromPeak = token.stateManager.getDrawdownFromPeak();
+            rows.push(
+              `Total Gain: ${gainFromInitial.toFixed(1)}% Drawdown: ${drawdownFromPeak.toFixed(1)}%`
+            );
+          }
+          else if (token.state === "drawdown") {
+            const gainFromInitial = token.stateManager.getGainFromInitial(token.stateManager.priceHistory.lastPrice);
+            const drawdownFromPeak = token.stateManager.getDrawdownFromPeak();
+            const failedAttempts = token.stateManager.metrics.failedAttempts;
+            rows.push(
+              `Total Gain: ${gainFromInitial.toFixed(1)}% Drawdown: ${drawdownFromPeak.toFixed(1)}% Failed: ${failedAttempts}`
+            );
+          }
+
+          // Add unsafe reason if present
+          if (token.stateManager.unsafe) {
+            const reasons = Array.from(token.stateManager.unsafeReasons);
+            if (reasons.length > 0) {
+              rows.push(
+                `\x1b[33mUNSAFE: ${reasons.join(", ")}\x1b[0m`
+              );
+            }
+          }
+
+          rows.push("─".repeat(50)); // Add horizontal rule between tokens
+          return rows.join("\n");
+        } catch (err) {
+          throw err;
+        }
+      });
     } catch (error) {
       throw error;
     }

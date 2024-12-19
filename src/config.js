@@ -8,11 +8,15 @@ module.exports = {
   THRESHOLDS: {
     // Market Cap Thresholds (in USD)
     MAX_ENTRY_CAP_USD: 50000, // Maximum market cap for entering positions ($50k)
-    DEAD_USD: 6000, // Market cap threshold for considering token dead ($6k)
+    DEAD_USD: 7000, // Market cap threshold for considering token dead ($6k)
 
     // State Transition Thresholds (in percent)
-    DRAWDOWN: 25, // Price drop to enter drawdown state
-    PUMP: 25, // Price gain to detect pump
+    DRAWDOWN: 20, // Price drop to enter drawdown state
+    PUMP: 10, // Price gain to detect pump
+    PUMPED: 55, // Price gain to enter pumped state
+    POSITION_ENTRY_WINDOW: 25, // Maximum pump percentage to allow position entry
+    MAX_VOLUME_DROP: 50, // Maximum allowed volume drop during pump
+    MIN_FIRST_PUMP_GAIN: 15, // Minimum gain required for first pump entry
 
     // Time and Age Thresholds (in seconds)
     MIN_TIME_SINCE_CREATION: 20, // Minimum token age
@@ -65,6 +69,7 @@ module.exports = {
     MIN_POSITION_SIZE_SOL: 0.1,
     POSITION_SIZE_MARKET_CAP_RATIO: 0.015, // Increased for larger positions
     MAX_PRICE_IMPACT_BPS: 120, // Allow higher price impact
+    FIRST_PUMP_SIZE_RATIO: 0.25, // Position size ratio for first pump entries (relative to normal size)
 
     // Dynamic position sizing
     USE_DYNAMIC_SIZING: true,

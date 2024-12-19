@@ -2,10 +2,12 @@
 const STATES = {
   NEW: 'new',
   PUMPING: 'pumping',
+  PUMPED: 'pumped',
   DRAWDOWN: 'drawdown',
   OPEN: 'open',
   CLOSED: 'closed',
-  DEAD: 'dead'
+  DEAD: 'dead',
+  RECOVERY: 'recovery'
 };
 
 // Safety check reasons
@@ -31,106 +33,153 @@ class TokenStateManager {
     this.state = STATES.NEW;
     this.unsafeReasons = new Set();
     this.priceHistory = {
-      peak: null,      // Highest price during pump
-      bottom: null,    // Lowest price during drawdown
+      initialPumpPrice: null,  // Price when first entering pump
+      peak: null,             // Highest price during pump/pumped
+      bottom: null,           // Lowest price during drawdown
+      lastPrice: null,
+      pumpStartPrice: null,   // Price at start of current pump
+      pumpStartTime: null     // Time when current pump started
+    };
+    this.metrics = {
+      initialVolume5m: 0,     // 5-minute volume when pump started
+      failedAttempts: 0,      // Number of failed safety checks
+      isFirstPumpEntry: false // Whether position was entered on first pump
     };
     this.config = config;
+    this.unsafe = false;
   }
 
-  // Pump Detection (all conditions must be met)
-  isPumpDetected(metrics) {
-    const {
-      priceIncrease,
-      volumeSpike,
-      buyPressure,
-      isFirstPump,
-      isHeatingUp
-    } = metrics;
+  updatePriceHistory(currentPrice, volume5m) {
+    // Set initial price if not set
+    if (!this.priceHistory.lastPrice) {
+      this.priceHistory.lastPrice = currentPrice;
+      this.priceHistory.initialPumpPrice = currentPrice;
+      return;
+    }
 
-    console.log(`Pump check - Price Increase: ${priceIncrease.toFixed(2)}%, Volume Spike: ${volumeSpike}, Buy Pressure: ${buyPressure}, First Pump: ${isFirstPump}, Heating Up: ${isHeatingUp}`);
+    // Track peak price in pumping/pumped states
+    if ((this.state === STATES.PUMPING || this.state === STATES.PUMPED) && 
+        (!this.priceHistory.peak || currentPrice.bodyPrice > this.priceHistory.peak.bodyPrice)) {
+      this.priceHistory.peak = currentPrice;
+    }
 
-    return priceIncrease >= this.config.THRESHOLDS.PUMP &&
-           volumeSpike &&
-           buyPressure &&
-           (isFirstPump || isHeatingUp);
+    // Track bottom price in drawdown
+    if (this.state === STATES.DRAWDOWN && 
+        (!this.priceHistory.bottom || currentPrice.bodyPrice < this.priceHistory.bottom.bodyPrice)) {
+      this.priceHistory.bottom = currentPrice;
+    }
+
+    // Check for pumped state transition
+    if (this.state === STATES.PUMPING) {
+      const gainFromInitial = this.getGainFromInitial(currentPrice);
+      if (gainFromInitial >= this.config.THRESHOLDS.PUMPED) {
+        return this.setState(STATES.PUMPED);
+      }
+    }
+
+    this.priceHistory.lastPrice = currentPrice;
   }
 
-  // State Transition Checks
-  isDrawdownTriggered(currentPrice, peak) {
-    const drawdown = (peak.bodyPrice - currentPrice.bodyPrice) / peak.bodyPrice * 100;
+  isPumpDetected(metrics, fromDrawdown = false) {
+    // Store pump start data if this is a new pump
+    if (!this.priceHistory.pumpStartPrice) {
+      this.priceHistory.pumpStartPrice = this.priceHistory.lastPrice;
+      this.priceHistory.pumpStartTime = Date.now();
+    }
+
+    // Calculate gain from reference point
+    const referencePrice = fromDrawdown ? 
+      (this.priceHistory.bottom || this.priceHistory.initialPumpPrice).bodyPrice : 
+      this.priceHistory.initialPumpPrice.bodyPrice;
+    
+    const currentPrice = this.priceHistory.lastPrice.bodyPrice;
+    const priceGain = ((currentPrice - referencePrice) / referencePrice) * 100;
+
+    return priceGain >= this.config.THRESHOLDS.PUMP;
+  }
+
+  isDrawdownTriggered(currentPrice) {
+    // Only allow drawdown if token has reached pumped state and we have valid price data
+    if (this.state !== STATES.PUMPED || !this.priceHistory.peak || !currentPrice) {
+      return false;
+    }
+
+    const peakPrice = this.priceHistory.peak.bodyPrice;
+    const drawdown = ((peakPrice - currentPrice.bodyPrice) / peakPrice) * 100;
     return drawdown >= this.config.THRESHOLDS.DRAWDOWN;
   }
 
-  // State Transitions
-  transitionToPumping(pricePoint) {
-    console.log(`Transitioning to pumping - Price: ${pricePoint.bodyPrice}`);
-    this.state = STATES.PUMPING;
-    this.priceHistory.peak = pricePoint;
-    this.priceHistory.bottom = null;
-  }
-
-  transitionToDrawdown(pricePoint) {
-    console.log(`Transitioning to drawdown - Price: ${pricePoint.bodyPrice}`);
-    this.state = STATES.DRAWDOWN;
-    this.priceHistory.bottom = pricePoint;
-  }
-
-  updatePriceHistory(pricePoint) {
-    if (this.state === STATES.PUMPING) {
-      // Update peak if we have a new high
-      if (!this.priceHistory.peak || pricePoint.bodyPrice > this.priceHistory.peak.bodyPrice) {
-        this.priceHistory.peak = pricePoint;
-      }
-    } else if (this.state === STATES.DRAWDOWN) {
-      // Update bottom if we have a new low
-      if (!this.priceHistory.bottom || pricePoint.bodyPrice < this.priceHistory.bottom.bodyPrice) {
-        this.priceHistory.bottom = pricePoint;
-      }
+  checkPumpSafety(volume5m) {
+    // Check volume hasn't dropped significantly
+    const volumeDrop = ((this.metrics.initialVolume5m - volume5m) / this.metrics.initialVolume5m) * 100;
+    if (volumeDrop > this.config.THRESHOLDS.MAX_VOLUME_DROP) {
+      return false;
     }
+    return true;
   }
 
-  // Safety Management
-  addUnsafeReason(reason, value) {
-    if (UNSAFE_REASONS[reason]) {
-      this.unsafeReasons.add({ reason, value });
-    }
+  canEnterPosition(isFirstPump = false) {
+    if (!this.priceHistory.pumpStartTime || !this.priceHistory.pumpStartPrice) return false;
+    
+    const currentPrice = this.priceHistory.lastPrice.bodyPrice;
+    const pumpStartPrice = this.priceHistory.pumpStartPrice.bodyPrice;
+    const pumpGain = ((currentPrice - pumpStartPrice) / pumpStartPrice) * 100;
+    
+    // Check if within entry window
+    if (pumpGain > this.config.THRESHOLDS.POSITION_ENTRY_WINDOW) return false;
+
+    // For first pump entries, require minimum gain
+    if (isFirstPump && pumpGain < this.config.THRESHOLDS.MIN_FIRST_PUMP_GAIN) return false;
+
+    return true;
   }
 
-  removeUnsafeReason(reason) {
-    for (const item of this.unsafeReasons) {
-      if (item.reason === reason) {
-        this.unsafeReasons.delete(item);
-        break;
-      }
-    }
+  markPositionEntered(isFirstPump = false) {
+    this.metrics.isFirstPumpEntry = isFirstPump;
   }
 
-  resetUnsafeReasons() {
-    this.unsafeReasons.clear();
+  getPositionSizeRatio() {
+    return this.metrics.isFirstPumpEntry ? 
+      this.config.POSITION_SIZING.FIRST_PUMP_SIZE_RATIO : 1;
   }
 
-  isUnsafe() {
-    return this.unsafeReasons.size > 0;
+  getGainFromInitial(currentPrice) {
+    if (!this.priceHistory.initialPumpPrice || !currentPrice) return 0;
+    return ((currentPrice.bodyPrice - this.priceHistory.initialPumpPrice.bodyPrice) / 
+            this.priceHistory.initialPumpPrice.bodyPrice) * 100;
   }
 
-  getUnsafeReasons() {
-    return Array.from(this.unsafeReasons);
+  getDrawdownFromPeak() {
+    if (!this.priceHistory.peak || !this.priceHistory.lastPrice) return 0;
+    return ((this.priceHistory.peak.bodyPrice - this.priceHistory.lastPrice.bodyPrice) / 
+            this.priceHistory.peak.bodyPrice) * 100;
   }
 
-  // State Management
   setState(newState) {
     const oldState = this.state;
-    console.log(`State transition - From: ${oldState} to ${newState}`);
     this.state = newState;
 
-    if (newState === STATES.DRAWDOWN) {
-      this.priceHistory.bottom = null; // Reset bottom until confirmed
+    // Reset pump data on new pump
+    if (newState === STATES.PUMPING) {
+      this.priceHistory.pumpStartPrice = null;
+      this.priceHistory.pumpStartTime = null;
     }
 
     return {
       from: oldState,
       to: newState
     };
+  }
+
+  markUnsafe(reason) {
+    this.unsafe = true;
+    this.metrics.failedAttempts++;
+    this.unsafeReasons.add(reason);
+  }
+
+  resetUnsafe() {
+    this.unsafe = false;
+    this.unsafeReasons.clear();
   }
 }
 

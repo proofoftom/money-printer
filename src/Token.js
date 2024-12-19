@@ -3,7 +3,7 @@ const config = require("./config");
 const { TokenStateManager, PricePoint, STATES } = require("./TokenStateManager");
 
 class Token extends EventEmitter {
-  constructor(tokenData, priceManager) {
+  constructor(tokenData, priceManager, safetyChecker) {
     super();
     this.mint = tokenData.mint;
     this.name = tokenData.name;
@@ -18,6 +18,7 @@ class Token extends EventEmitter {
     this.signature = tokenData.signature;
     this.bondingCurveKey = tokenData.bondingCurveKey;
     this.priceManager = priceManager;
+    this.safetyChecker = safetyChecker;
 
     // Initialize state manager
     this.stateManager = new TokenStateManager(config);
@@ -137,53 +138,100 @@ class Token extends EventEmitter {
     this.handleStateTransitions();
   }
 
-  handleStateTransitions() {
+  async handleStateTransitions() {
     const currentPrice = new PricePoint(
       this.calculateTokenPrice(),
       this.calculateTokenPrice(),
       Date.now()
     );
 
-    // Update price history based on current state
-    this.stateManager.updatePriceHistory(currentPrice);
+    // Get 5-minute volume for safety checks
+    const volume5m = this.getRecentVolume(5 * 60 * 1000);
 
-    // Handle state transitions based on current state
+    // Update price history and check for state transitions
+    const stateChange = this.stateManager.updatePriceHistory(currentPrice, volume5m);
+    if (stateChange) {
+      this.emit("stateChanged", { token: this, ...stateChange });
+    }
+
+    // Handle state-specific logic
     if (this.state === STATES.NEW) {
       // Check for initial pump
-      const metrics = {
-        priceIncrease: this.getPriceIncrease(300), // 5 minutes
-        volumeSpike: this.getVolumeSpike(),
-        buyPressure: this.getBuyPressure(),
-        isFirstPump: true,
-        isHeatingUp: this.isHeatingUp()
-      };
-
-      if (this.stateManager.isPumpDetected(metrics)) {
-        this.stateManager.transitionToPumping(currentPrice);
+      if (this.stateManager.isPumpDetected({ currentPrice })) {
+        this.stateManager.setState(STATES.PUMPING);
         this.emit("stateChanged", { token: this, from: STATES.NEW, to: STATES.PUMPING });
       }
     }
-    // Handle pump monitoring and drawdown detection
     else if (this.state === STATES.PUMPING) {
-      if (this.stateManager.isDrawdownTriggered(currentPrice, this.stateManager.priceHistory.peak)) {
-        this.stateManager.transitionToDrawdown(currentPrice);
-        this.emit("stateChanged", { token: this, from: STATES.PUMPING, to: STATES.DRAWDOWN });
+      // Check for first pump entry opportunity
+      if (this.stateManager.canEnterPosition(true)) {
+        // Check volume hasn't dropped too much
+        if (!this.stateManager.checkPumpSafety(volume5m)) {
+          this.stateManager.markUnsafe("Volume dropped significantly during pump");
+          return;
+        }
+
+        // Run safety checks
+        const isSafe = await this.safetyChecker.runSecurityChecks(this);
+        if (isSafe) {
+          this.stateManager.markPositionEntered(true);
+          this.emit("readyForPosition", { 
+            token: this, 
+            sizeRatio: this.stateManager.getPositionSizeRatio() 
+          });
+        } else {
+          this.stateManager.markUnsafe(this.safetyChecker.lastFailureReason);
+        }
+      }
+
+      // Check for transition to pumped state
+      const gainFromInitial = this.stateManager.getGainFromInitial(currentPrice);
+      if (gainFromInitial >= this.config.THRESHOLDS.PUMPED) {
+        this.stateManager.setState(STATES.PUMPED);
+        this.emit("stateChanged", { token: this, from: STATES.PUMPING, to: STATES.PUMPED });
       }
     }
-    // Handle drawdown and check for new pump
+    // Handle pumped state
+    else if (this.state === STATES.PUMPED) {
+      // Check for drawdown
+      if (this.stateManager.isDrawdownTriggered(currentPrice)) {
+        this.stateManager.setState(STATES.DRAWDOWN);
+        this.emit("stateChanged", { token: this, from: STATES.PUMPED, to: STATES.DRAWDOWN });
+      }
+    }
+    // Handle drawdown state
     else if (this.state === STATES.DRAWDOWN) {
-      // Check for new pump
-      const metrics = {
-        priceIncrease: this.getPriceIncrease(300), // 5 minutes
-        volumeSpike: this.getVolumeSpike(),
-        buyPressure: this.getBuyPressure(),
-        isFirstPump: false,
-        isHeatingUp: this.isHeatingUp()
-      };
+      // Check if token is dead
+      const marketCapUSD = this.priceManager.solToUSD(this.marketCapSol);
+      if (marketCapUSD < config.THRESHOLDS.DEAD_USD) {
+        this.stateManager.setState(STATES.DEAD);
+        this.emit("stateChanged", { token: this, from: STATES.DRAWDOWN, to: STATES.DEAD });
+        return;
+      }
 
-      if (this.stateManager.isPumpDetected(metrics)) {
-        this.stateManager.transitionToPumping(currentPrice);
-        this.emit("stateChanged", { token: this, from: STATES.DRAWDOWN, to: STATES.PUMPING });
+      // Check for new pump from drawdown
+      if (this.stateManager.isPumpDetected({ currentPrice }, true)) {
+        // Check if volume has dropped too much
+        if (!this.stateManager.checkPumpSafety(volume5m)) {
+          this.stateManager.markUnsafe("Volume dropped significantly during pump");
+          return;
+        }
+
+        // Run safety checks if within entry window
+        if (this.stateManager.canEnterPosition(false)) {
+          const isSafe = await this.safetyChecker.runSecurityChecks(this);
+          if (isSafe) {
+            this.stateManager.setState(STATES.PUMPING);
+            this.stateManager.markPositionEntered(false);
+            this.emit("stateChanged", { token: this, from: STATES.DRAWDOWN, to: STATES.PUMPING });
+            this.emit("readyForPosition", { 
+              token: this, 
+              sizeRatio: this.stateManager.getPositionSizeRatio() 
+            });
+          } else {
+            this.stateManager.markUnsafe(this.safetyChecker.lastFailureReason);
+          }
+        }
       }
     }
   }
