@@ -116,25 +116,25 @@ class Token extends EventEmitter {
       volumeProfile: new Map(), // Volume analysis
     };
 
-    // Scoring system
+    // Scoring system for evaluating trading opportunities
     this.score = {
-      overall: 0,
-      priceComponent: 0,
-      volumeComponent: 0,
-      timeComponent: 0,
-      lastUpdate: Date.now(),
+      overall: 0,          // Combined score from all components (0-100)
+      priceComponent: 0,   // Score based on price movements and volatility
+      volumeComponent: 0,  // Score based on trading volume and liquidity
+      timeComponent: 0,    // Score based on token age and market maturity
+      lastUpdate: Date.now(), // Timestamp of the last score update
     };
 
-    // Pump detection
+    // State tracking for pump and dump detection
     this.pumpState = {
-      inCooldown: false,
-      cooldownEnd: 0,
-      pumpCount: 0,
-      lastPumpTime: null,
-      firstDipDetected: false,
-      firstDipTime: null,
-      firstDipPrice: null,
-      recoveryHigh: null,
+      inCooldown: false,     // Whether we're in a cooldown period after a pump
+      cooldownEnd: 0,        // Timestamp when the cooldown period ends
+      pumpCount: 0,          // Number of pumps detected for this token
+      lastPumpTime: null,    // Timestamp of the most recent pump
+      firstDipDetected: false, // Whether we've detected the first significant dip
+      firstDipTime: null,    // Timestamp when the first dip was detected
+      firstDipPrice: null,   // Price at the time of the first dip
+      recoveryHigh: null,    // Highest price seen during recovery after first dip
     };
 
     // Start OHLCV updates
