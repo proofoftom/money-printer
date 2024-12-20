@@ -1,0 +1,11 @@
+const STATES = {
+  NEW: "NEW",
+  PUMPING: "PUMPING",
+  DIPPING: "DIPPING",
+  RECOVERING: "RECOVERING",
+  ACTIVE: "ACTIVE",
+  UNSAFE: "UNSAFE",
+  SAFE_QUEUE: "SAFE_QUEUE"
+};
+
+module.exports = STATES;

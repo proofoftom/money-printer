@@ -90,62 +90,69 @@ class SafetyChecker extends EventEmitter {
   }
 
   isTokenSafe(token) {
-    const result = {
-      safe: true,
-      reasons: []
-    };
+    try {
+      const reasons = [];
+      let safe = true;
 
-    // Check minimum token age (5 minutes)
-    const tokenAge = (Date.now() - token.createdAt) / 1000;
-    if (tokenAge < config.MIN_TOKEN_AGE_SECONDS) {
-      result.safe = false;
-      result.reasons.push(`Token too new (${Math.round(tokenAge)}s < ${config.MIN_TOKEN_AGE_SECONDS}s)`);
-    }
+      // Get multipliers based on token state
+      const multipliers = token.state === STATES.MATURE ? 
+        this.config.MATURE_TOKEN_MULTIPLIERS : 
+        { safetyThreshold: 1, minConfidence: 1, minVolume: 1 };
 
-    // Check minimum liquidity
-    if (token.liquiditySol < config.MIN_LIQUIDITY_SOL) {
-      result.safe = false;
-      result.reasons.push(`Insufficient liquidity (${token.liquiditySol.toFixed(2)} < ${config.MIN_LIQUIDITY_SOL} SOL)`);
-    }
-
-    // Check holder count
-    if (token.holderCount < config.MIN_HOLDER_COUNT) {
-      result.safe = false;
-      result.reasons.push(`Too few holders (${token.holderCount} < ${config.MIN_HOLDER_COUNT})`);
-    }
-
-    // Check transaction count
-    if (token.transactionCount < config.MIN_TRANSACTIONS) {
-      result.safe = false;
-      result.reasons.push(`Too few transactions (${token.transactionCount} < ${config.MIN_TRANSACTIONS})`);
-    }
-
-    // Check if wallet has enough balance for minimum position
-    const minPositionSol = token.marketCapSol * config.MIN_MCAP_POSITION;
-    if (this.wallet.balance < minPositionSol) {
-      result.safe = false;
-      result.reasons.push(`Insufficient balance for minimum position (${this.wallet.balance.toFixed(2)} < ${minPositionSol.toFixed(2)} SOL)`);
-    }
-
-    // Only check market activity if we're in recovery phase
-    if (token.pumpState.firstDipDetected && !token.pumpState.inCooldown) {
-      const activityCheck = this.checkMarketActivity(token);
-      if (!activityCheck.safe) {
-        result.safe = false;
-        result.reasons.push(...activityCheck.reasons);
+      // Basic checks
+      if (token.getDrawdownPercentage() >= 90) {
+        safe = false;
+        reasons.push('Token has experienced >90% drawdown');
       }
-    }
 
-    if (!result.safe) {
-      this.emit('safetyCheck', {
-        token,
-        result,
-        type: 'tokenSafety'
+      // Volume checks
+      const minVolume = this.config.MIN_VOLUME * multipliers.minVolume;
+      if (token.volume < minVolume) {
+        safe = false;
+        reasons.push(`Volume too low: ${token.volume} < ${minVolume}`);
+      }
+
+      // Confidence check
+      const minConfidence = this.config.MIN_CONFIDENCE_FOR_ENTRY * multipliers.minConfidence;
+      if (token.confidence < minConfidence) {
+        safe = false;
+        reasons.push(`Confidence too low: ${token.confidence} < ${minConfidence}`);
+      }
+
+      // Holder concentration check
+      const maxHolderConcentration = this.config.MAX_HOLDER_CONCENTRATION / multipliers.safetyThreshold;
+      const topHolderConcentration = token.getTopHolderConcentration(3);
+      if (topHolderConcentration > maxHolderConcentration) {
+        safe = false;
+        reasons.push(`Top holder concentration too high: ${topHolderConcentration}% > ${maxHolderConcentration}%`);
+      }
+
+      // Market activity checks
+      if (token.state === STATES.READY || token.state === STATES.MATURE) {
+        const timeSinceLastTrade = Date.now() - (token.lastTradeTime || 0);
+        if (timeSinceLastTrade > this.config.MAX_TIME_SINCE_LAST_TRADE) {
+          safe = false;
+          reasons.push(`No recent trades: ${timeSinceLastTrade}ms since last trade`);
+        }
+
+        // Check cycle quality for mature tokens
+        if (token.state === STATES.MATURE) {
+          const lastCycleQuality = token.cycleQualityScores[token.cycleQualityScores.length - 1]?.score || 0;
+          if (lastCycleQuality < this.config.MIN_CYCLE_QUALITY_SCORE) {
+            safe = false;
+            reasons.push(`Cycle quality score too low: ${lastCycleQuality}`);
+          }
+        }
+      }
+
+      return { safe, reasons };
+    } catch (error) {
+      this.logger.error('Error in isTokenSafe', {
+        error: error.message,
+        tokenMint: token.mint
       });
-      this.logger.logSafetyCheck(token, result, 'tokenSafety');
+      return { safe: false, reasons: ['Error checking token safety'] };
     }
-
-    return result;
   }
 
   canOpenPosition(token, size) {

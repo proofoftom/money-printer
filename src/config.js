@@ -309,4 +309,32 @@ module.exports = {
       includeMetrics: true,
     },
   },
+
+  // Token lifecycle parameters
+  PUMP_DETECTION_THRESHOLD: 20, // Percentage increase to detect pump
+  PUMP_VOLUME_MULTIPLIER: 2, // Volume increase multiplier to confirm pump
+  DIP_DETECTION_THRESHOLD: 15, // Percentage decrease to detect dip
+  RECOVERY_THRESHOLD: 10, // Percentage increase from dip to detect recovery
+  CYCLE_COOLDOWN_PERIOD: 60 * 1000, // 1 minute cooldown between cycles
+
+  // Confidence adjustments
+  CONFIDENCE_BOOST_NORMAL_TRANSITION: 5,
+  CONFIDENCE_PENALTY_UNEXPECTED_TRANSITION: 10,
+  CONFIDENCE_PENALTY_FAILED_RECOVERY: 15,
+  MIN_CONFIDENCE_FOR_ENTRY: 70,
+
+  // Cycle quality scoring
+  CYCLE_QUALITY_WEIGHTS: {
+    priceAction: 0.4,
+    volume: 0.3,
+    holders: 0.2,
+    time: 0.1
+  },
+
+  // Mature token parameters
+  MATURE_TOKEN_MULTIPLIERS: {
+    safetyThreshold: 1.2, // 20% stricter safety checks for mature tokens
+    minConfidence: 1.3, // 30% higher confidence requirement
+    minVolume: 1.5 // 50% higher volume requirement
+  },
 };

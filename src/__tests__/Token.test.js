@@ -438,4 +438,326 @@ describe('Token', () => {
       expect(token.priceHistory[2].marketCapSol).toBe(130);
     });
   });
+
+  describe('Token Lifecycle', () => {
+    beforeEach(() => {
+      // Initialize with OHLCV data
+      token.ohlcvData = {
+        secondly: [{
+          timestamp: Date.now() - 30000,
+          open: 1,
+          high: 1,
+          low: 1,
+          close: 1,
+          volume: 100
+        }]
+      };
+      
+      // Initialize volume profile indicator
+      token.indicators = {
+        volumeProfile: {
+          get: jest.fn().mockReturnValue(3) // Mock 3x relative volume
+        }
+      };
+
+      token.currentPrice = 1;
+      token.volume = 100;
+      token.tradeCount = 1;
+    });
+
+    describe('State Transitions', () => {
+      test('transitions through pump and dip cycle', () => {
+        expect(token.state).toBe(STATES.NEW);
+
+        // Simulate pump
+        token.currentPrice = 1.3; // 30% increase
+        expect(token.detectPump()).toBe(true);
+        token.setState(STATES.PUMPING, 'Pump detected');
+        expect(token.state).toBe(STATES.PUMPING);
+
+        // Simulate dip
+        token.currentPrice = 0.9; // 30% decrease from pump
+        token.highestPrice = 1.3;
+        expect(token.detectDip()).toBe(true);
+        token.setState(STATES.DIPPING, 'Dip detected');
+        expect(token.state).toBe(STATES.DIPPING);
+
+        // Simulate recovery and attempt position
+        token.currentPrice = 1.1; // 22% recovery from dip
+        token.dipPrice = 0.9;
+        
+        const signalSpy = jest.spyOn(token, 'emit');
+        expect(token.detectRecovery()).toBe(true);
+        expect(signalSpy).toHaveBeenCalledWith('recoveryDetected', expect.any(Object));
+      });
+
+      test('maintains state history', () => {
+        token.setState(STATES.PUMPING, 'Test transition');
+        expect(token.stateHistory).toHaveLength(1);
+        expect(token.stateHistory[0]).toMatchObject({
+          from: STATES.NEW,
+          to: STATES.PUMPING,
+          reason: 'Test transition'
+        });
+      });
+    });
+
+    describe('Safety Checks', () => {
+      test('respects different TTLs for UNSAFE state', () => {
+        // Normal state TTL
+        token.state = STATES.DIPPING;
+        token.lastSafetyCheck.timestamp = Date.now() - 6000; // 6s ago
+        expect(token.requiresSafetyCheck()).toBe(true);
+        
+        // UNSAFE state TTL
+        token.state = STATES.UNSAFE;
+        token.lastSafetyCheck.timestamp = Date.now() - 6000; // 6s ago
+        expect(token.requiresSafetyCheck()).toBe(false); // Should still be valid
+        
+        token.lastSafetyCheck.timestamp = Date.now() - 11000; // 11s ago
+        expect(token.requiresSafetyCheck()).toBe(true); // Should require check
+      });
+
+      test('prevents excessive recovery in UNSAFE state', async () => {
+        token.state = STATES.UNSAFE;
+        token.dipPrice = 1.0;
+        token.currentPrice = 1.35; // 35% recovery
+        
+        expect(await token.detectRecovery()).toBe(false);
+      });
+    });
+
+    describe('Maturity Tracking', () => {
+      test('updates mature flag after completing cycles', () => {
+        expect(token.isMature).toBe(false);
+        
+        token.completeCycle();
+        expect(token.isMature).toBe(false);
+        
+        token.completeCycle();
+        expect(token.isMature).toBe(true);
+      });
+
+      test('maintains cycle quality scores', () => {
+        token.completeCycle();
+        expect(token.cycleQualityScores).toHaveLength(1);
+        expect(token.cycleQualityScores[0]).toMatchObject({
+          cycle: 1,
+          score: expect.any(Number),
+          timestamp: expect.any(Number)
+        });
+      });
+    });
+
+    describe('Recovery Detection', () => {
+      test('emits recovery event for position attempt', async () => {
+        token.state = STATES.DIPPING;
+        token.dipPrice = 1.0;
+        token.currentPrice = 1.15; // 15% recovery
+        
+        const eventSpy = jest.spyOn(token, 'emit');
+        await token.detectRecovery();
+        
+        expect(eventSpy).toHaveBeenCalledWith('recoveryDetected', expect.objectContaining({
+          token: token,
+          recoveryPercent: expect.any(Number),
+          price: expect.any(Number)
+        }));
+      });
+
+      test('includes volume and candle metrics in trading signal', async () => {
+        token.state = STATES.DIPPING;
+        token.dipPrice = 1.0;
+        token.currentPrice = 1.15;
+        
+        const eventSpy = jest.spyOn(token, 'emit');
+        await token.detectRecovery();
+        
+        expect(eventSpy).toHaveBeenCalledWith('tradingSignal', expect.objectContaining({
+          type: 'recovery_confirmed',
+          metrics: expect.objectContaining({
+            volumeSpike: expect.any(Boolean),
+            candleCount: expect.any(Number),
+            recoveryPercent: expect.any(Number)
+          })
+        }));
+      });
+    });
+  });
+
+  describe('Attempt Tracking', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    test('records attempt details during safety checks', async () => {
+      const eventSpy = jest.spyOn(token, 'emit');
+      await token.checkSafetyConditions();
+      
+      expect(token.attempts).toHaveLength(1);
+      expect(token.attempts[0]).toMatchObject({
+        timestamp: expect.any(Number),
+        state: token.state,
+        price: token.currentPrice,
+        volume: token.volume,
+        cycle: token.pumpCycle,
+        metrics: expect.any(Object)
+      });
+      
+      expect(eventSpy).toHaveBeenCalledWith('attemptRecorded', expect.any(Object));
+    });
+
+    test('tracks failed attempts for missed opportunities', async () => {
+      token.safetyChecker.isTokenSafe.mockResolvedValueOnce({ 
+        safe: false, 
+        reasons: ['Test failure'] 
+      });
+      
+      await token.checkSafetyConditions();
+      expect(token.activeTracking.size).toBe(1);
+      
+      // Simulate price increase
+      token.currentPrice = token.currentPrice * 2.5; // 150% increase
+      token.updatePriceTracking();
+      
+      const trackingEntry = Array.from(token.activeTracking.values())[0];
+      expect(trackingEntry.maxGainPercent).toBeGreaterThan(100);
+      expect(trackingEntry.significantGainReported).toBe(true);
+    });
+
+    test('adjusts cooldown periods based on failure patterns', async () => {
+      const initialUnsafeCooldown = token.config.UNSAFE_PUMP_COOLDOWN;
+      const initialSafetyTTL = token.config.SAFETY_CHECK_TTL;
+      
+      // Simulate multiple failures with same reason
+      token.safetyChecker.isTokenSafe.mockResolvedValue({ 
+        safe: false, 
+        reasons: ['Consistent failure'] 
+      });
+      
+      for (let i = 0; i < 6; i++) {
+        await token.checkSafetyConditions();
+      }
+      
+      expect(token.config.UNSAFE_PUMP_COOLDOWN).toBeGreaterThan(initialUnsafeCooldown);
+      expect(token.config.SAFETY_CHECK_TTL).toBeGreaterThan(initialSafetyTTL);
+    });
+
+    test('respects unsafe pump cooldown', async () => {
+      token.state = STATES.UNSAFE;
+      token.unsafePumpCooldown = Date.now();
+      
+      const result = await token.checkSafetyConditions();
+      expect(result.safe).toBe(false);
+      expect(result.reasons).toContain('Unsafe pump cooldown active');
+    });
+  });
+
+  describe('Opportunity Analysis', () => {
+    test('records successful position outcomes', () => {
+      const position = {
+        entryPrice: 1.0,
+        exitPrice: 1.5,
+        entryTime: Date.now() - 1000,
+        exitTime: Date.now(),
+        realizedPnl: 0.5
+      };
+      
+      const eventSpy = jest.spyOn(token, 'emit');
+      token.recordPositionOutcome(position);
+      
+      expect(token.outcomes).toHaveLength(1);
+      expect(token.outcomes[0]).toMatchObject({
+        entryPrice: position.entryPrice,
+        exitPrice: position.exitPrice,
+        pnl: position.realizedPnl,
+        attempts: expect.any(Array)
+      });
+      
+      expect(eventSpy).toHaveBeenCalledWith('outcomeRecorded', expect.any(Object));
+      expect(eventSpy).toHaveBeenCalledWith('analysisLogEntry', expect.objectContaining({
+        type: 'successful_trades'
+      }));
+    });
+
+    test('tracks missed opportunities over time', async () => {
+      // Setup tracking
+      const attempt = {
+        timestamp: Date.now(),
+        price: 1.0,
+        state: STATES.UNSAFE,
+        result: { safe: false, reasons: ['Test'] }
+      };
+      
+      token.trackFailedAttempt(attempt);
+      
+      // Simulate price movement
+      token.currentPrice = 2.1; // 110% increase
+      token.updatePriceTracking();
+      
+      // Fast-forward to end of tracking period
+      jest.advanceTimersByTime(token.config.MISSED_OPPORTUNITY_TRACKING_PERIOD);
+      
+      expect(token.missedOpportunities).toHaveLength(1);
+      expect(token.missedOpportunities[0]).toMatchObject({
+        maxGainPercent: expect.any(Number),
+        timeToMaxGain: expect.any(Number),
+        attempt: expect.objectContaining({
+          price: 1.0
+        })
+      });
+    });
+
+    test('emits events for significant missed opportunities', async () => {
+      const eventSpy = jest.spyOn(token, 'emit');
+      
+      // Setup tracking
+      const attempt = {
+        timestamp: Date.now(),
+        price: 1.0,
+        state: STATES.UNSAFE,
+        result: { safe: false, reasons: ['Test'] }
+      };
+      
+      token.trackFailedAttempt(attempt);
+      
+      // Simulate significant price increase
+      token.currentPrice = 2.5; // 150% increase
+      token.updatePriceTracking();
+      
+      expect(eventSpy).toHaveBeenCalledWith('significantMissedOpportunity', expect.objectContaining({
+        mint: token.mint,
+        gainPercent: expect.any(Number)
+      }));
+    });
+
+    test('categorizes missed opportunities by failure reason', async () => {
+      // Simulate failures with different reasons
+      const reasons = ['liquidity', 'volume', 'price'];
+      
+      for (const reason of reasons) {
+        token.safetyChecker.isTokenSafe.mockResolvedValueOnce({ 
+          safe: false, 
+          reasons: [reason] 
+        });
+        
+        await token.checkSafetyConditions();
+        token.currentPrice *= 2; // 100% increase each time
+        token.updatePriceTracking();
+      }
+      
+      // Check failure patterns
+      for (const reason of reasons) {
+        expect(token.failurePatterns.has(reason)).toBe(true);
+        expect(token.failurePatterns.get(reason)).toMatchObject({
+          count: 1,
+          lastOccurrence: expect.any(Number)
+        });
+      }
+    });
+  });
 });

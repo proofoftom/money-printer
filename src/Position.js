@@ -61,7 +61,7 @@ class Position extends EventEmitter {
 
     // Price tracking
     this.entryPrice = null;
-    this.currentPrice = token.getCurrentPrice();
+    this.currentPrice = token.getCurrentPrice ? token.getCurrentPrice() : token.currentPrice;
     this.highestPrice = null;
     this.lowestPrice = null;
     this.lastPriceUpdate = Date.now();
