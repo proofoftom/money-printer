@@ -1,6 +1,6 @@
 module.exports = {
   // Core settings
-  MIN_TOKEN_AGE_SECONDS: 0, // 5 minutes minimum age
+  MIN_TOKEN_AGE_SECONDS: 300, // 5 minutes minimum age
   MAX_ENTRY_MCAP_USD: 100000, // $100k maximum market cap
   MIN_MCAP_POSITION: 0.001, // 0.1% minimum position size
   MAX_MCAP_POSITION: 0.01, // 1% maximum position size
@@ -12,8 +12,16 @@ module.exports = {
   TRAILING_STOP_PERCENT: 20, // 20% trailing stop
 
   // WebSocket settings
-  WS_URL: "wss://pump.fun/ws",
+  WS_URL: "wss://pumpportal.fun/api/data",
   RECONNECT_INTERVAL: 5000, // 5 seconds between reconnect attempts
+
+  // Logging settings
+  LOGGING: {
+    NEW_TOKENS: false,      // Log new token discoveries
+    TRADES: true,          // Log token trades
+    POSITIONS: true,       // Log position changes
+    SAFETY_CHECKS: false,  // Log safety check results
+  },
 
   // Price settings
   SOL_USD_PRICE: 225, // Fallback SOL/USD price if API fails
@@ -131,75 +139,13 @@ module.exports = {
   },
 
   // Logging configuration
-  LOGGING: {
-    ENABLED: true,
-    LEVEL: "debug", // One of: error, warn, info, debug
-    DIRECTORY: "./logs", // Directory for log files
-    MAX_FILE_SIZE: "20m", // Maximum size of each log file
-    MAX_FILES: "14d", // Keep logs for 14 days
-    FORMAT: "json", // Log format: json or text
-  },
-
-  // Logging settings
+  LOGGING_ENABLED: true,
+  LOG_LEVEL: "debug", // Set to debug level for more verbose logging
   LOGGING_SETTINGS: {
     DIRECTORY: "./logs",
     MAX_SIZE: "20m",
     MAX_FILES: "14d",
-    LEVELS: {
-      ERROR: {
-        enabled: true,
-        file: "error-%DATE%.log",
-        console: true,
-      },
-      TRADE: {
-        enabled: true,
-        file: "trades-%DATE%.log",
-        console: true,
-        format: {
-          timestamp: true,
-          position: true,
-          price: true,
-          size: true,
-          pnl: true,
-        },
-      },
-      SYSTEM: {
-        enabled: true,
-        file: "system-%DATE%.log",
-        console: false,
-        events: {
-          startup: true,
-          shutdown: true,
-          connection: true,
-          configuration: true,
-        },
-      },
-      PERFORMANCE: {
-        enabled: true,
-        file: "performance-%DATE%.log",
-        console: false,
-        metrics: {
-          latency: true,
-          memory: true,
-          cpu: true,
-          throughput: true,
-        },
-        interval: 60000, // Log performance metrics every minute
-      },
-      DEBUG: {
-        enabled: process.env.NODE_ENV === "development",
-        file: "debug-%DATE%.log",
-        console: false,
-        maxLevel: 3, // 1: basic, 2: detailed, 3: verbose
-      },
-    },
-    RETENTION: {
-      ERROR: "30d",
-      TRADE: "90d",
-      SYSTEM: "14d",
-      PERFORMANCE: "7d",
-      DEBUG: "3d",
-    },
+    FORMAT: "json"
   },
 
   // Data Export settings

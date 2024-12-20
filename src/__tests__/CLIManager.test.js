@@ -10,6 +10,7 @@ class MockTokenTracker extends EventEmitter {
     this.priceManager = {
       solToUSD: (amount) => amount * 100
     };
+    this.positionManager = new EventEmitter();
   }
 
   getTokenStats() {
@@ -57,84 +58,93 @@ class MockSafetyChecker {
   }
 }
 
-// Mock console.log and other dependencies
-console.log = jest.fn();
-
-jest.spyOn(process.stdin, 'setRawMode').mockImplementation(() => {});
-jest.spyOn(process.stdin, 'resume').mockImplementation(() => {});
-jest.spyOn(process.stdin, 'on').mockImplementation(() => {});
-
 describe("CLIManager", () => {
   let cli;
   let mockConfig;
   let mockTokenTracker;
+  let mockWallet;
   let mockToken;
   let mockPosition;
 
   beforeEach(() => {
     // Reset mocks
     mockTokenTracker = new MockTokenTracker();
+    mockWallet = {
+      getBalance: jest.fn().mockReturnValue(100),
+      on: jest.fn(),
+      off: jest.fn()
+    };
+
     mockConfig = {
       logLevel: 'info',
       maxTokens: 10,
-      minLiquidity: 1000,
-      minAge: 3600000
+      minMarketCapUSD: 1000,
+      maxMarketCapUSD: 100000,
+      minLiquidityUSD: 1000,
+      minTokenAge: 300,
+      riskPerTrade: 0.1,
+      maxMcapPosition: 0.01,
+      takeProfitPercent: 50,
+      stopLossPercent: 20
     };
 
     mockToken = {
       mint: "mock-token-123",
       symbol: "MOCK",
       marketCapSol: 1000,
-      vSolInBondingCurve: 100,
-      currentPrice: 1.5,
+      marketCapUSD: 100000,
+      getCurrentState: () => STATES.READY,
+      getDrawdownPercentage: () => 5,
       minted: Date.now() - 3600000, // 1 hour ago
-      safetyChecker: new MockSafetyChecker(),
-      stateManager: {
-        getCurrentState: () => STATES.READY
-      },
-      getDrawdownPercentage: () => 5
+      safetyChecker: {
+        getScore: () => 85,
+        checkLiquidity: () => true,
+        checkAge: () => true,
+        checkVolume: () => true
+      }
     };
 
     mockPosition = {
       mint: "mock-token-123",
       symbol: "MOCK",
       state: "OPEN",
-      size: 10,
       entryPrice: 1.0,
-      currentPrice: 1.5,
-      unrealizedPnLSol: 5,
-      unrealizedPnLUsd: 500,
-      roiPercentage: 50,
-      openedAt: Date.now() - 1800000, // 30 minutes ago
-      getTimeInPosition: () => 1800000,
-      getAverageEntryPrice: () => 1.0
+      currentPrice: 1.1,
+      unrealizedPnLSol: 0.1,
+      unrealizedPnLUsd: 10,
+      size: 1,
+      getTimeInPosition: () => 1800000, // 30 minutes
+      getAverageEntryPrice: () => 1.0,
+      roi: 10
     };
 
-    cli = new CLIManager(mockConfig, mockTokenTracker);
+    const balanceHistory = [];
+    for (let i = 0; i < 100; i++) {
+      balanceHistory.push({
+        timestamp: new Date(Date.now() - i * 60000),
+        balance: 100 + Math.sin(i / 10) * 10
+      });
+    }
+
+    cli = new CLIManager(mockConfig, mockTokenTracker, mockWallet);
+    cli.balanceHistory = balanceHistory;
+    
+    // Disable timers and running state for tests
     cli.isRunning = false;
-    
-    // Clear any existing data
-    cli.activePositions.clear();
-    cli.tokenList.clear();
-    cli.tradeHistory = [];
-    
-    // Mock render to prevent side effects
-    cli.render = jest.fn();
+    if (cli.performanceTimer) clearInterval(cli.performanceTimer);
+    if (cli.renderTimer) clearInterval(cli.renderTimer);
   });
 
   afterEach(() => {
-    // Stop performance tracking
-    cli.cleanup();
-    
     // Clear all timers
     jest.clearAllTimers();
     
-    // Clear all mocks
-    jest.clearAllMocks();
-    
-    // Remove all event listeners
-    cli.removeAllListeners();
-    mockTokenTracker.removeAllListeners();
+    // Clean up event listeners
+    if (cli) {
+      cli.removeAllListeners();
+      if (cli.performanceTimer) clearInterval(cli.performanceTimer);
+      if (cli.renderTimer) clearInterval(cli.renderTimer);
+    }
   });
 
   describe("Trading Controls", () => {
@@ -320,10 +330,10 @@ describe("CLIManager", () => {
 
       expect(table).toContain("MOCK");
       expect(table).toContain("1.000");
-      expect(table).toContain("1.500");
-      expect(table).toContain("10.000");
-      expect(table).toContain("5.000");
-      expect(table).toContain("50.0%");
+      expect(table).toContain("1.100");
+      expect(table).toContain("1.000");
+      expect(table).toContain("0.100");
+      expect(table).toContain("10.0%");
       expect(table).toContain("OPEN");
     });
 

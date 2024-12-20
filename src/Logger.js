@@ -1,6 +1,7 @@
 const winston = require('winston');
 require('winston-daily-rotate-file');
 const path = require('path');
+const fs = require('fs');
 
 const LOG_LEVELS = {
   ERROR: 'error',
@@ -12,7 +13,18 @@ const LOG_LEVELS = {
 class Logger {
   constructor(config) {
     this.config = config;
-    this.logDir = path.join(process.cwd(), 'logs');
+    
+    // Ensure logs directory exists relative to app directory
+    const appDir = process.cwd();
+    this.logDir = path.join(appDir, 'logs');
+    
+    // Debug log directory creation
+    console.log('Creating logs directory:', this.logDir);
+    
+    if (!fs.existsSync(this.logDir)) {
+      fs.mkdirSync(this.logDir, { recursive: true });
+    }
+
     this.enabled = config.LOGGING_ENABLED !== false;
 
     const { combine, timestamp, json, colorize, printf } = winston.format;
@@ -40,35 +52,54 @@ class Logger {
             timestamp(),
             consoleFormat
           )
-        }),
-        // File transport with daily rotation
-        new winston.transports.DailyRotateFile({
-          dirname: this.logDir,
-          filename: 'money-printer-%DATE%.log',
-          datePattern: 'YYYY-MM-DD',
-          maxSize: '20m',
-          maxFiles: '14d',
-          format: combine(
-            timestamp(),
-            json()
-          )
         })
       ]
     });
 
-    // Log startup message
-    this.info('Logger initialized', { logDir: this.logDir });
+    // Only add file transport if logging is enabled
+    if (this.enabled) {
+      const fileTransport = new winston.transports.DailyRotateFile({
+        dirname: this.logDir,
+        filename: 'money-printer-%DATE%.log',
+        datePattern: 'YYYY-MM-DD',
+        maxSize: config.LOGGING_SETTINGS?.MAX_SIZE || '20m',
+        maxFiles: config.LOGGING_SETTINGS?.MAX_FILES || '14d',
+        format: combine(
+          timestamp(),
+          json()
+        )
+      });
+
+      // Add error handler for file transport
+      fileTransport.on('error', (error) => {
+        console.error('Error writing to log file:', error);
+      });
+
+      this.logger.add(fileTransport);
+    }
+
+    // Log startup information
+    this.info('Logger initialized', { 
+      logDir: this.logDir,
+      enabled: this.enabled,
+      level: config.LOG_LEVEL || 'info'
+    });
   }
 
   _log(level, message, metadata = {}) {
     if (!this.enabled) return;
 
-    this.logger.log({
-      level,
-      message,
-      ...metadata,
-      timestamp: new Date().toISOString()
-    });
+    try {
+      this.logger.log({
+        level,
+        message,
+        ...metadata,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error writing log:', error);
+      console.log(level, message, metadata);
+    }
   }
 
   error(message, metadata = {}) {

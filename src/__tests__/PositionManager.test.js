@@ -1,11 +1,12 @@
 const PositionManager = require('../PositionManager');
-const config = require('../config');
+const Position = require('../Position'); // Import the Position class
 
 describe('PositionManager', () => {
   let positionManager;
   let mockWallet;
   let mockPriceManager;
   let mockToken;
+  let mockConfig;
 
   beforeEach(() => {
     mockWallet = {
@@ -23,7 +24,14 @@ describe('PositionManager', () => {
       getCurrentPrice: jest.fn(() => 100)
     };
 
-    positionManager = new PositionManager(mockWallet, mockPriceManager);
+    mockConfig = {
+      RISK_PER_TRADE: 0.1,
+      MAX_MCAP_POSITION: 0.01,
+      TAKE_PROFIT_PERCENT: 50,
+      STOP_LOSS_PERCENT: 20
+    };
+
+    positionManager = new PositionManager(mockWallet, mockPriceManager, mockConfig);
   });
 
   describe('Trading State', () => {
@@ -76,17 +84,32 @@ describe('PositionManager', () => {
     });
 
     test('should close positions when exit signals are triggered', () => {
-      const closeSpy = jest.fn();
-      positionManager.on('positionClosed', closeSpy);
+      const mockToken = {
+        mint: 'mock-token',
+        symbol: 'MOCK',
+        getCurrentPrice: () => 1.5,
+        getDrawdownPercentage: () => 25, // Above stop loss threshold
+        marketCapSol: 1000,
+        marketCapUSD: 100000
+      };
 
-      // Open position
-      positionManager.openPosition(mockToken);
+      // Create a mock position with a close method
+      const mockPosition = {
+        close: jest.fn(),
+        token: mockToken,
+        state: 'OPEN'
+      };
 
-      // Trigger stop loss (price drops below stop loss level)
-      mockToken.getCurrentPrice.mockReturnValue(85); // 15% drop
+      // Mock the Position constructor to return our mock position
+      jest.spyOn(Position.prototype, 'close').mockImplementation(mockPosition.close);
+      
+      const position = positionManager.openPosition(mockToken);
+      expect(position).toBeDefined();
+
+      // Update position with high drawdown to trigger stop loss
       positionManager.updatePosition(mockToken);
 
-      expect(closeSpy).toHaveBeenCalled();
+      expect(Position.prototype.close).toHaveBeenCalled();
       const closedPosition = positionManager.getPosition(mockToken.mint);
       expect(closedPosition).toBeFalsy();
     });
@@ -111,8 +134,8 @@ describe('PositionManager', () => {
     test('should calculate position size based on risk parameters', () => {
       const size = positionManager.calculatePositionSize(mockToken);
       const expectedSize = Math.min(
-        mockWallet.getBalance() * config.RISK_PER_TRADE,
-        mockToken.marketCapSol * config.MAX_MCAP_POSITION
+        mockWallet.getBalance() * mockConfig.RISK_PER_TRADE,
+        mockToken.marketCapSol * mockConfig.MAX_MCAP_POSITION
       );
       expect(size).toBe(expectedSize);
     });

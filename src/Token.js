@@ -38,6 +38,28 @@ class Token extends EventEmitter {
     this.lastTradeAmount = null;
     this.lastTradeTime = null;
     this.tokenBalance = null;
+
+    // Safety check interval
+    this.safetyCheckInterval = null;
+    this.startSafetyChecks();
+  }
+
+  startSafetyChecks() {
+    // Clear any existing interval
+    if (this.safetyCheckInterval) {
+      clearInterval(this.safetyCheckInterval);
+    }
+
+    // Start regular safety checks every 2 seconds
+    this.safetyCheckInterval = setInterval(() => {
+      this.checkState();
+    }, 2000);
+  }
+
+  cleanup() {
+    if (this.safetyCheckInterval) {
+      clearInterval(this.safetyCheckInterval);
+    }
   }
 
   calculateTokenPrice() {
@@ -74,11 +96,21 @@ class Token extends EventEmitter {
       this.tokenBalance = data.newTokenBalance;
     }
 
-    // Track trade type
-    if (data.type === 'buy' || data.type === 'sell') {
-      this.lastTradeType = data.type;
+    // Track trade type from WebSocket message
+    if (data.txType === 'buy' || data.txType === 'sell') {
+      this.lastTradeType = data.txType;
       this.lastTradeAmount = data.tokenAmount;
       this.lastTradeTime = Date.now();
+      
+      // Emit trade event with detailed info
+      this.emit('trade', {
+        token: this,
+        type: data.txType,
+        amount: data.tokenAmount,
+        newBalance: data.newTokenBalance,
+        marketCapSol: this.marketCapSol,
+        price: this.calculateTokenPrice()
+      });
     }
 
     // Update highest market cap
@@ -105,7 +137,7 @@ class Token extends EventEmitter {
     // Emit update event
     this.emit('updated', {
       token: this,
-      tradeType: data.type,
+      tradeType: data.txType,
       tradeAmount: data.tokenAmount
     });
   }
@@ -139,18 +171,36 @@ class Token extends EventEmitter {
   checkState() {
     const currentState = this.getCurrentState();
     
+    // Check if token is safe
+    const safetyCheck = this.safetyChecker.isTokenSafe(this);
+    
+    if (currentState === STATES.NEW) {
+      if (safetyCheck.safe) {
+        // Token is safe, transition to READY and emit readyForPosition
+        this.transitionTo(STATES.READY);
+        this.emit('readyForPosition', this);
+        
+        // Stop regular safety checks once ready
+        this.cleanup();
+      } else {
+        // Log safety check failure reasons
+        console.debug(`Safety check failed for ${this.symbol}:`, safetyCheck.reasons);
+      }
+    } else if (currentState === STATES.READY) {
+      if (!safetyCheck.safe) {
+        // Token is no longer safe, transition to DEAD
+        this.transitionTo(STATES.DEAD);
+        this.cleanup();
+      }
+    }
+
     // Check for dead state (20% drawdown from peak)
     if (this.getDrawdownPercentage() >= 20 && currentState !== STATES.DEAD) {
       this.transitionTo(STATES.DEAD);
-      return;
+      this.cleanup();
     }
 
-    // Check for ready state
-    const safetyCheck = this.safetyChecker.isTokenSafe(this);
-    if (safetyCheck.safe && currentState === STATES.NEW) {
-      this.transitionTo(STATES.READY);
-      this.emit("readyForPosition", { token: this });
-    }
+    return currentState;
   }
 }
 

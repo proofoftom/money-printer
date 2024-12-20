@@ -373,14 +373,24 @@ class CLIManager extends EventEmitter {
   }
 
   notify(message, options = {}) {
-    console.log(chalk.yellow(message));
+    // Sanitize message by removing null bytes and trimming
+    const sanitizedMessage = typeof message === 'string' 
+      ? message.replace(/\0/g, '').trim()
+      : String(message).replace(/\0/g, '').trim();
+
+    console.log(chalk.yellow(sanitizedMessage));
     
     if (options.notification !== false) {
-      notifier.notify({
-        title: 'Money Printer',
-        message,
-        sound: options.sound || false
-      });
+      try {
+        notifier.notify({
+          title: 'Money Printer',
+          message: sanitizedMessage,
+          sound: options.sound || false,
+          timeout: 5
+        });
+      } catch (error) {
+        console.error('Failed to send notification:', error.message);
+      }
     }
   }
 

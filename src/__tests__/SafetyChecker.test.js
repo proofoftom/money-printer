@@ -29,35 +29,49 @@ describe('SafetyChecker', () => {
   });
 
   test('accepts token with valid parameters', () => {
-    expect(safetyChecker.isTokenSafe(mockToken)).toBe(true);
+    const result = safetyChecker.isTokenSafe(mockToken);
+    expect(result.safe).toBe(true);
+    expect(result.reasons).toHaveLength(0);
   });
 
   test('rejects token that is too young', () => {
     mockToken.minted = Date.now() - 1000; // 1 second old
-    expect(safetyChecker.isTokenSafe(mockToken)).toBe(false);
+    const result = safetyChecker.isTokenSafe(mockToken);
+    expect(result.safe).toBe(false);
+    expect(result.reasons).toContainEqual(`Token too new (1s < ${config.MIN_TOKEN_AGE_SECONDS}s)`);
   });
 
   test('rejects token with market cap too high', () => {
     mockToken.marketCapSol = 2000; // $200k market cap
-    expect(safetyChecker.isTokenSafe(mockToken)).toBe(false);
+    const result = safetyChecker.isTokenSafe(mockToken);
+    expect(result.safe).toBe(false);
+    expect(result.reasons).toContainEqual('Market cap too high ($200000 > $100000)');
   });
 
   test('rejects token with unaffordable minimum position', () => {
     mockWallet.getBalance.mockReturnValue(0.0001); // Very low balance
-    expect(safetyChecker.isTokenSafe(mockToken)).toBe(false);
+    const result = safetyChecker.isTokenSafe(mockToken);
+    expect(result.safe).toBe(false);
+    expect(result.reasons).toContainEqual('Insufficient balance for min position (0.001 SOL needed)');
   });
 
   test('rejects token with zero price', () => {
     mockToken.getCurrentPrice.mockReturnValue(0);
-    expect(safetyChecker.isTokenSafe(mockToken)).toBe(false);
+    const result = safetyChecker.isTokenSafe(mockToken);
+    expect(result.safe).toBe(false);
+    expect(result.reasons).toContainEqual('Zero or negative price');
   });
 
   test('rejects token with no liquidity', () => {
     mockToken.vTokensInBondingCurve = 0;
-    expect(safetyChecker.isTokenSafe(mockToken)).toBe(false);
+    const result = safetyChecker.isTokenSafe(mockToken);
+    expect(result.safe).toBe(false);
+    expect(result.reasons).toContainEqual('Insufficient bonding curve liquidity');
 
     mockToken.vTokensInBondingCurve = 1000;
     mockToken.vSolInBondingCurve = 0;
-    expect(safetyChecker.isTokenSafe(mockToken)).toBe(false);
+    const result2 = safetyChecker.isTokenSafe(mockToken);
+    expect(result2.safe).toBe(false);
+    expect(result2.reasons).toContainEqual('Insufficient bonding curve liquidity');
   });
 });

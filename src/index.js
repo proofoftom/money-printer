@@ -59,24 +59,27 @@ class MoneyPrinter {
     try {
       this.logger.info('Initializing components');
 
-      // Initialize core components
+      // Initialize core components in correct order
       this.wallet = new Wallet(this.config);
       this.logger.debug('Wallet initialized');
 
-      this.webSocketManager = new WebSocketManager(this.config);
-      await this.webSocketManager.connect();
-      this.logger.debug('WebSocket manager connected');
-      
-      this.priceManager = new PriceManager(this.config, this.webSocketManager);
+      this.priceManager = new PriceManager(this.config);
       await this.priceManager.initialize();
       this.logger.debug('Price manager initialized');
-      
+
+      this.webSocketManager = new WebSocketManager(this.config, this.logger);
+      await this.webSocketManager.connect();
+      this.logger.debug('WebSocket manager connected');
+
+      // SafetyChecker needs wallet and priceManager
       this.safetyChecker = new SafetyChecker(this.wallet, this.priceManager);
       this.logger.debug('Safety checker initialized');
-      
-      this.positionManager = new PositionManager(this.wallet, this.priceManager, this.config);
+
+      // PositionManager needs wallet
+      this.positionManager = new PositionManager(this.config, this.wallet);
       this.logger.debug('Position manager initialized');
 
+      // Initialize token tracker last since it depends on other components
       this.tokenTracker = new TokenTracker({
         safetyChecker: this.safetyChecker,
         positionManager: this.positionManager,
@@ -85,7 +88,7 @@ class MoneyPrinter {
       });
       this.logger.debug('Token tracker initialized');
 
-      // Initialize CLI last
+      // Initialize CLI manager
       this.cli = new CLIManager(this.config, this.tokenTracker, this.wallet);
       this.logger.debug('CLI manager initialized');
 
@@ -93,8 +96,12 @@ class MoneyPrinter {
       this.setupEventListeners();
       this.logger.info('All components initialized successfully');
 
+      return true;
     } catch (error) {
-      this.logger.error('Failed to initialize components', { error: error.message, stack: error.stack });
+      this.logger.error('Failed to initialize components', { 
+        error: error.message,
+        stack: error.stack 
+      });
       throw error;
     }
   }

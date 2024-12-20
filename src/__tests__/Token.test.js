@@ -41,10 +41,21 @@ describe('Token', () => {
   });
 
   test('transitions to READY state when safe', () => {
+    mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: true, reasons: [] });
     token.checkState();
     expect(token.getCurrentState()).toBe(STATES.READY);
     expect(stateChangeSpy).toHaveBeenCalledWith('stateChanged', expect.any(Object));
     expect(stateChangeSpy).toHaveBeenCalledWith('readyForPosition', expect.any(Object));
+  });
+
+  test('stays in NEW state when not safe', () => {
+    mockSafetyChecker.isTokenSafe.mockReturnValue({ 
+      safe: false, 
+      reasons: ['Market cap too high'] 
+    });
+    token.checkState();
+    expect(token.getCurrentState()).toBe(STATES.NEW);
+    expect(stateChangeSpy).not.toHaveBeenCalledWith('readyForPosition', expect.any(Object));
   });
 
   test('transitions to DEAD state on high drawdown', () => {
@@ -203,7 +214,7 @@ describe('Token', () => {
       expect(stateChangeSpy).toHaveBeenCalledWith('readyForPosition', expect.any(Object));
     });
 
-    test('stays in NEW state when safety check returns safe:false', () => {
+    test('stays in NEW state when not safe', () => {
       mockSafetyChecker.isTokenSafe.mockReturnValue({ 
         safe: false, 
         reasons: ['Market cap too high'] 
