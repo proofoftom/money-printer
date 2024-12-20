@@ -1,6 +1,7 @@
 const EventEmitter = require("events");
 const ExitStrategies = require("./ExitStrategies");
 const Position = require("./Position");
+const winston = require('winston');
 
 class PositionManager extends EventEmitter {
   constructor(wallet, priceManager, config) {
@@ -11,6 +12,20 @@ class PositionManager extends EventEmitter {
     this.exitStrategies = new ExitStrategies();
     this.positions = new Map();
     this.isTrading = true;
+
+    // Initialize logger
+    this.logger = winston.createLogger({
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+      ),
+      transports: [
+        new winston.transports.File({ 
+          filename: 'logs/positions.log',
+          level: 'info'
+        })
+      ]
+    });
   }
 
   pauseTrading() {
@@ -28,38 +43,66 @@ class PositionManager extends EventEmitter {
   }
 
   openPosition(token) {
-    // Skip if trading is paused or position already exists
     if (!this.isTrading) {
-      console.log(`Trading is paused, skipping position for ${token.symbol}`);
+      this.logger.info('Trading paused, skipping position', {
+        action: 'skip_position',
+        symbol: token.symbol,
+        mint: token.mint
+      });
       return false;
     }
     
     if (this.positions.has(token.mint)) {
-      console.log(`Position already exists for ${token.symbol}`);
+      this.logger.info('Position already exists', {
+        action: 'skip_position',
+        symbol: token.symbol,
+        mint: token.mint
+      });
       return false;
     }
 
-    // Calculate position size based on wallet balance and risk parameters
     const size = this.calculatePositionSize(token);
     const currentPrice = token.getCurrentPrice();
     
-    console.log(`Opening position for ${token.symbol}:
-      Size: ${size.toFixed(4)} SOL
-      Current Price: ${currentPrice.toFixed(6)} SOL
-      Market Cap: ${token.marketCapSol.toFixed(4)} SOL
-    `);
+    this.logger.info('Opening position', {
+      action: 'open_position',
+      symbol: token.symbol,
+      mint: token.mint,
+      metrics: {
+        timeFromCreation: Date.now() - token.createdAt,
+        currentPrice: currentPrice,
+        positionSize: size,
+        marketCapSol: token.marketCapSol,
+        priceVelocity: token.getPriceVelocity(),
+        volume: token.getVolumeSinceCreation(),
+        tradeCount: token.getTradeCount()
+      }
+    });
 
-    // Create new position
     const position = new Position(token, this.priceManager, {
       takeProfitLevel: this.config.TAKE_PROFIT_PERCENT,
       stopLossLevel: this.config.STOP_LOSS_PERCENT
     });
 
-    // Open the position
-    position.open(currentPrice, size);
+    position.on('updated', (state) => {
+      this.logger.debug('Position updated', {
+        action: 'position_update',
+        symbol: token.symbol,
+        mint: token.mint,
+        metrics: {
+          currentPrice: state.currentPrice,
+          priceVelocity: state.priceVelocity,
+          unrealizedPnL: state.unrealizedPnLSol,
+          roiPercentage: state.roiPercentage,
+          volume: state.volumeSinceCreation,
+          tradeCount: state.tradeCountSinceCreation
+        }
+      });
+    });
 
-    // Store position
+    position.open(currentPrice, size);
     this.positions.set(token.mint, position);
+
     this.emit("positionOpened", { token, position });
     
     console.log(`Successfully opened position for ${token.symbol}`);
@@ -70,14 +113,23 @@ class PositionManager extends EventEmitter {
     const position = this.positions.get(token.mint);
     if (!position) return;
 
-    // Update position price
     position.updatePrice(token.getCurrentPrice());
     
-    // Check exit signals
     const exitSignal = this.exitStrategies.checkExitSignals(position);
     if (exitSignal) {
+      this.logger.info('Exit signal triggered', {
+        action: 'exit_signal',
+        symbol: token.symbol,
+        mint: token.mint,
+        reason: exitSignal.reason,
+        metrics: {
+          currentPrice: position.currentPrice,
+          entryPrice: position.entryPrice,
+          roiPercentage: position.roiPercentage,
+          timeHeld: Date.now() - position.openedAt
+        }
+      });
       this.closePosition(token.mint, exitSignal.reason);
-      return;
     }
 
     this.emit("positionUpdated", position);
@@ -87,10 +139,29 @@ class PositionManager extends EventEmitter {
     const position = this.positions.get(mint);
     if (!position) return;
 
-    // Close the position
-    position.close(position.currentPrice, reason);
+    const finalState = position.getState();
+    this.logger.info('Closing position', {
+      action: 'close_position',
+      symbol: position.symbol,
+      mint: position.mint,
+      reason: reason,
+      metrics: {
+        timeToEntry: finalState.timeToEntry,
+        timeHeld: Date.now() - position.openedAt,
+        entryPrice: position.entryPrice,
+        exitPrice: position.currentPrice,
+        initialPumpPeak: finalState.initialPumpPeak,
+        timeToPumpPeak: finalState.timeToPumpPeak,
+        finalPriceVelocity: finalState.priceVelocity,
+        totalVolume: finalState.volumeSinceCreation,
+        totalTrades: finalState.tradeCountSinceCreation,
+        executionSlippage: finalState.executionSlippage,
+        realizedPnL: finalState.realizedPnLSol,
+        roiPercentage: finalState.roiPercentage
+      }
+    });
 
-    // Clean up
+    position.close(position.currentPrice, reason);
     this.positions.delete(mint);
     this.emit("positionClosed", { position, reason });
 

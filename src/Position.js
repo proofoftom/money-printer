@@ -28,6 +28,17 @@ class Position extends EventEmitter {
     this.openedAt = null;
     this.closedAt = null;
 
+    // Pump metrics
+    this.tokenCreatedAt = token.createdAt;
+    this.timeToEntry = null;
+    this.initialPumpPeak = null;
+    this.timeToPumpPeak = null;
+    this.priceVelocity = 0;
+    this.volumeSinceCreation = 0;
+    this.tradeCountSinceCreation = 0;
+    this.lastPriceUpdate = Date.now();
+    this.executionSlippage = 0;
+
     // Price tracking
     this.entryPrice = null;
     this.currentPrice = token.getCurrentPrice();
@@ -51,21 +62,18 @@ class Position extends EventEmitter {
 
     this.state = STATES.OPEN;
     this.entryPrice = price;
-    this.currentPrice = price;
-    this.highestPrice = price;
-    this.lowestPrice = price;
     this.size = size;
     this.openedAt = Date.now();
+    
+    // Calculate pump metrics
+    this.timeToEntry = this.openedAt - this.tokenCreatedAt;
+    this.initialPumpPeak = Math.max(price, this.token.getHighestPrice());
+    this.timeToPumpPeak = this.token.getHighestPriceTime() - this.tokenCreatedAt;
+    this.volumeSinceCreation = this.token.getVolumeSinceCreation();
+    this.tradeCountSinceCreation = this.token.getTradeCount();
 
-    this.trades.push({
-      type: 'ENTRY',
-      price,
-      size,
-      timestamp: this.openedAt
-    });
-
-    this.updateMetrics();
-    this.emit('opened', this.toJSON());
+    this.updatePriceMetrics(price);
+    this.emit('opened', this.getState());
   }
 
   close(price, reason) {
@@ -74,55 +82,47 @@ class Position extends EventEmitter {
     }
 
     this.state = STATES.CLOSED;
-    this.currentPrice = price;
     this.closedAt = Date.now();
-
-    this.trades.push({
-      type: 'EXIT',
-      price,
-      size: this.size,
-      timestamp: this.closedAt,
-      reason
-    });
-
-    // Calculate final P&L
-    const pnlSol = (price - this.entryPrice) * this.size;
-    this.realizedPnLSol += pnlSol;
-    this.realizedPnLUsd += this.priceManager.solToUSD(pnlSol);
-    this.unrealizedPnLSol = 0;
-    this.unrealizedPnLUsd = 0;
-
-    this.updateMetrics();
-    this.emit('closed', this.toJSON());
+    
+    // Calculate execution slippage
+    const expectedPrice = this.currentPrice;
+    this.executionSlippage = ((expectedPrice - price) / expectedPrice) * 100;
+    
+    this.updatePriceMetrics(price);
+    this.calculateFinalPnL(price);
+    
+    this.emit('closed', { ...this.getState(), reason });
   }
 
-  // Price and P&L updates
   updatePrice(newPrice) {
-    if (this.state !== STATES.OPEN) {
-      throw new Error(`Cannot update price in state: ${this.state}`);
-    }
-
-    this.currentPrice = newPrice;
-    this.highestPrice = Math.max(this.highestPrice, newPrice);
-    this.lowestPrice = Math.min(this.lowestPrice, newPrice);
-
-    this.updateMetrics();
-    this.emit('priceUpdated', this.toJSON());
-  }
-
-  updateMetrics() {
     if (this.state !== STATES.OPEN) return;
 
-    // Update price extremes
-    if (this.currentPrice > this.highestPrice) {
-      this.highestPrice = this.currentPrice;
-    }
-    if (this.currentPrice < this.lowestPrice) {
-      this.lowestPrice = this.currentPrice;
-    }
+    const now = Date.now();
+    const timeDelta = now - this.lastPriceUpdate;
+    const priceDelta = newPrice - this.currentPrice;
+    
+    // Update price velocity (price change per second)
+    this.priceVelocity = timeDelta > 0 ? priceDelta / (timeDelta / 1000) : 0;
+    
+    // Update volume and trade metrics
+    this.volumeSinceCreation = this.token.getVolumeSinceCreation();
+    this.tradeCountSinceCreation = this.token.getTradeCount();
+    
+    this.updatePriceMetrics(newPrice);
+    this.lastPriceUpdate = now;
+    
+    this.emit('updated', this.getState());
+  }
+
+  updatePriceMetrics(price) {
+    if (this.state !== STATES.OPEN) return;
+
+    this.currentPrice = price;
+    this.highestPrice = Math.max(this.highestPrice, price);
+    this.lowestPrice = Math.min(this.lowestPrice, price);
 
     // Calculate unrealized P&L
-    this.unrealizedPnLSol = (this.currentPrice - this.entryPrice) * this.size;
+    this.unrealizedPnLSol = (price - this.entryPrice) * this.size;
     this.unrealizedPnLUsd = this.priceManager.solToUSD(this.unrealizedPnLSol);
 
     // Update highest unrealized P&L
@@ -131,10 +131,16 @@ class Position extends EventEmitter {
     }
 
     // Calculate ROI percentage
-    this.roiPercentage = ((this.currentPrice - this.entryPrice) / this.entryPrice) * 100;
+    this.roiPercentage = ((price - this.entryPrice) / this.entryPrice) * 100;
+  }
 
-    // Emit update event with current state
-    this.emit('updated', this.toJSON());
+  calculateFinalPnL(price) {
+    // Calculate final P&L
+    const pnlSol = (price - this.entryPrice) * this.size;
+    this.realizedPnLSol += pnlSol;
+    this.realizedPnLUsd += this.priceManager.solToUSD(pnlSol);
+    this.unrealizedPnLSol = 0;
+    this.unrealizedPnLUsd = 0;
   }
 
   // Position metrics
@@ -153,8 +159,7 @@ class Position extends EventEmitter {
     return totalValue / totalSize;
   }
 
-  // Serialization
-  toJSON() {
+  getState() {
     return {
       mint: this.mint,
       symbol: this.symbol,
@@ -175,7 +180,16 @@ class Position extends EventEmitter {
       createdAt: this.createdAt,
       openedAt: this.openedAt,
       closedAt: this.closedAt,
-      config: this.config
+      config: this.config,
+      tokenCreatedAt: this.tokenCreatedAt,
+      timeToEntry: this.timeToEntry,
+      initialPumpPeak: this.initialPumpPeak,
+      timeToPumpPeak: this.timeToPumpPeak,
+      priceVelocity: this.priceVelocity,
+      volumeSinceCreation: this.volumeSinceCreation,
+      tradeCountSinceCreation: this.tradeCountSinceCreation,
+      lastPriceUpdate: this.lastPriceUpdate,
+      executionSlippage: this.executionSlippage
     };
   }
 }
