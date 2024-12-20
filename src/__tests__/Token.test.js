@@ -131,7 +131,9 @@ describe('Token', () => {
         marketCapSol: 150,
         timestamp: Date.now(),
         vTokensInBondingCurve: 1100,
-        vSolInBondingCurve: 110
+        vSolInBondingCurve: 110,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 100
       };
 
       token.update(tradeData);
@@ -142,6 +144,7 @@ describe('Token', () => {
       expect(token.marketCapSol).toBe(tradeData.marketCapSol);
       expect(token.vTokensInBondingCurve).toBe(tradeData.vTokensInBondingCurve);
       expect(token.vSolInBondingCurve).toBe(tradeData.vSolInBondingCurve);
+      expect(token.getHolderBalance(tradeData.traderPublicKey)).toBe(tradeData.newTokenBalance);
 
       expect(token.emit).toHaveBeenCalledWith('updated', expect.any(Object));
       expect(mockLogger.debug).toHaveBeenCalledWith('Token updated', expect.any(Object));
@@ -165,7 +168,9 @@ describe('Token', () => {
         tokenAmount: 'invalid',
         marketCapSol: 150,
         vTokensInBondingCurve: 1100,
-        vSolInBondingCurve: 110
+        vSolInBondingCurve: 110,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 100
       };
 
       expect(() => {
@@ -180,7 +185,9 @@ describe('Token', () => {
         tokenAmount: 100,
         marketCapSol: 150,
         vTokensInBondingCurve: 1100,
-        vSolInBondingCurve: 110
+        vSolInBondingCurve: 110,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 100
       };
 
       token.update(tradeData);
@@ -190,6 +197,123 @@ describe('Token', () => {
       token.update(tradeData);
       expect(token.volume).toBe(tradeData.tokenAmount * 2);
       expect(token.tradeCount).toBe(2);
+    });
+  });
+
+  describe('Holder Tracking', () => {
+    test('tracks holder balances correctly', () => {
+      const trader1 = 'trader1';
+      const trader2 = 'trader2';
+
+      // First buy from trader1
+      token.update({
+        txType: 'buy',
+        tokenAmount: 100,
+        marketCapSol: 150,
+        vTokensInBondingCurve: 900,
+        vSolInBondingCurve: 110,
+        traderPublicKey: trader1,
+        newTokenBalance: 100
+      });
+
+      expect(token.getHolderBalance(trader1)).toBe(100);
+      expect(token.getHolderCount()).toBe(1);
+
+      // Buy from trader2
+      token.update({
+        txType: 'buy',
+        tokenAmount: 50,
+        marketCapSol: 160,
+        vTokensInBondingCurve: 850,
+        vSolInBondingCurve: 120,
+        traderPublicKey: trader2,
+        newTokenBalance: 50
+      });
+
+      expect(token.getHolderBalance(trader2)).toBe(50);
+      expect(token.getHolderCount()).toBe(2);
+
+      // Sell all from trader1
+      token.update({
+        txType: 'sell',
+        tokenAmount: 100,
+        marketCapSol: 140,
+        vTokensInBondingCurve: 950,
+        vSolInBondingCurve: 100,
+        traderPublicKey: trader1,
+        newTokenBalance: 0
+      });
+
+      expect(token.getHolderBalance(trader1)).toBe(0);
+      expect(token.getHolderCount()).toBe(1);
+    });
+
+    test('calculates total supply correctly', () => {
+      // Initial state
+      expect(token.calculateTotalSupply()).toBe(defaultTokenData.vTokensInBondingCurve);
+
+      // After a buy
+      token.update({
+        txType: 'buy',
+        tokenAmount: 100,
+        marketCapSol: 150,
+        vTokensInBondingCurve: 900,
+        vSolInBondingCurve: 110,
+        traderPublicKey: 'trader1',
+        newTokenBalance: 100
+      });
+
+      expect(token.calculateTotalSupply()).toBe(1000); // 900 in curve + 100 held
+
+      // After another buy
+      token.update({
+        txType: 'buy',
+        tokenAmount: 50,
+        marketCapSol: 160,
+        vTokensInBondingCurve: 850,
+        vSolInBondingCurve: 120,
+        traderPublicKey: 'trader2',
+        newTokenBalance: 50
+      });
+
+      expect(token.calculateTotalSupply()).toBe(1000); // 850 in curve + 150 held
+    });
+
+    test('calculates top holder concentration', () => {
+      // Add three holders with different balances
+      token.update({
+        txType: 'buy',
+        tokenAmount: 500,
+        marketCapSol: 150,
+        vTokensInBondingCurve: 400,
+        vSolInBondingCurve: 110,
+        traderPublicKey: 'trader1',
+        newTokenBalance: 500
+      });
+
+      token.update({
+        txType: 'buy',
+        tokenAmount: 300,
+        marketCapSol: 160,
+        vTokensInBondingCurve: 200,
+        vSolInBondingCurve: 120,
+        traderPublicKey: 'trader2',
+        newTokenBalance: 300
+      });
+
+      token.update({
+        txType: 'buy',
+        tokenAmount: 100,
+        marketCapSol: 170,
+        vTokensInBondingCurve: 100,
+        vSolInBondingCurve: 130,
+        traderPublicKey: 'trader3',
+        newTokenBalance: 100
+      });
+
+      // Total supply = 1000 (100 in curve + 900 held)
+      // Top 2 holders (500 + 300 = 800) out of 1000 total = 80%
+      expect(token.getTopHolderConcentration(2)).toBe(80);
     });
   });
 
@@ -227,7 +351,9 @@ describe('Token', () => {
         tokenAmount: 100,
         marketCapSol: 10,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 10
+        vSolInBondingCurve: 10,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 0
       }); // 90% drawdown
       token.checkSafetyConditions();
       
@@ -271,7 +397,9 @@ describe('Token', () => {
         tokenAmount: 100,
         marketCapSol: 80,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 80
+        vSolInBondingCurve: 80,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 0
       }); // 20% drawdown
       expect(token.getDrawdownPercentage()).toBe(20);
 
@@ -280,7 +408,9 @@ describe('Token', () => {
         tokenAmount: 100,
         marketCapSol: 50,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 50
+        vSolInBondingCurve: 50,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 0
       }); // 50% drawdown
       expect(token.getDrawdownPercentage()).toBe(50);
     });
@@ -291,21 +421,27 @@ describe('Token', () => {
         tokenAmount: 100,
         marketCapSol: 120,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 120
+        vSolInBondingCurve: 120,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 100
       });
       token.update({ 
         txType: 'buy',
         tokenAmount: 100,
         marketCapSol: 150,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 150
+        vSolInBondingCurve: 150,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 200
       });
       token.update({ 
         txType: 'sell',
         tokenAmount: 100,
         marketCapSol: 130,
         vTokensInBondingCurve: 1000,
-        vSolInBondingCurve: 130
+        vSolInBondingCurve: 130,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 100
       });
 
       expect(token.priceHistory.length).toBe(3);

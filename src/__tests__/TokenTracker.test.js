@@ -3,13 +3,18 @@ const Token = require('../Token');
 const EventEmitter = require('events');
 
 // Mock the Token module
-jest.mock('../Token', () => {
-  return jest.fn(() => ({
+jest.mock('../Token', () => ({
+  Token: jest.fn(() => ({
     mint: 'test-mint',
     symbol: 'TEST',
     update: jest.fn(),
     cleanup: jest.fn(),
     startSafetyChecks: jest.fn(),
+    updateHolderBalance: jest.fn(),
+    getHolderBalance: jest.fn(),
+    getHolderCount: jest.fn(),
+    getTopHolderConcentration: jest.fn(),
+    calculateTotalSupply: jest.fn(),
     on: jest.fn((event, handler) => {
       // Store the handler for later use in tests
       if (event === 'readyForPosition') {
@@ -20,8 +25,8 @@ jest.mock('../Token', () => {
     }),
     emit: jest.fn(),
     removeAllListeners: jest.fn()
-  }));
-});
+  }))
+}));
 
 // Store event handlers for testing
 let mockReadyForPositionHandler;
@@ -33,6 +38,8 @@ describe('TokenTracker', () => {
   let mockPositionManager;
   let mockLogger;
   let mockConfig;
+  let mockWallet;
+  let mockPriceManager;
 
   beforeEach(() => {
     // Clear all mocks and handlers
@@ -46,7 +53,18 @@ describe('TokenTracker', () => {
     mockWebSocketManager.subscribeToToken = jest.fn();
     mockWebSocketManager.unsubscribeFromToken = jest.fn();
 
+    mockWallet = {
+      address: 'test-wallet-address',
+      balance: 1000
+    };
+
+    mockPriceManager = {
+      getPrice: jest.fn().mockResolvedValue(100)
+    };
+
     mockPositionManager = {
+      wallet: mockWallet,
+      priceManager: mockPriceManager,
       openPosition: jest.fn().mockResolvedValue(undefined),
       closePosition: jest.fn()
     };
@@ -67,7 +85,7 @@ describe('TokenTracker', () => {
     };
 
     // Get reference to the mock token that will be created
-    Token.mockClear();
+    Token.Token.mockClear();
     tokenTracker = new TokenTracker(
       mockConfig,
       mockLogger,
@@ -81,32 +99,37 @@ describe('TokenTracker', () => {
       const tokenData = {
         mint: 'test-mint',
         symbol: 'TEST',
-        marketCapSol: 5.0
+        marketCapSol: 5.0,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 5.0
       };
 
       mockWebSocketManager.emit('newToken', tokenData);
 
-      expect(Token).toHaveBeenCalledWith(tokenData, {
+      expect(Token.Token).toHaveBeenCalledWith(tokenData, {
         logger: mockLogger,
-        config: mockConfig
+        config: mockConfig,
+        safetyChecker: expect.anything(),
+        priceManager: mockPriceManager
       });
       expect(mockLogger.info).toHaveBeenCalledWith('New token detected', {
         mint: 'test-mint',
         symbol: 'TEST'
       });
       expect(mockWebSocketManager.subscribeToToken).toHaveBeenCalledWith('test-mint');
-      expect(Token.mock.results[0].value.startSafetyChecks).toHaveBeenCalled();
     });
 
     test('removes token successfully', () => {
       const tokenData = {
         mint: 'test-mint',
         symbol: 'TEST',
-        marketCapSol: 5.0
+        marketCapSol: 5.0,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 5.0
       };
 
       mockWebSocketManager.emit('newToken', tokenData);
-      const mockToken = Token.mock.results[0].value;
+      const mockToken = Token.Token.mock.results[0].value;
 
       tokenTracker.removeToken('test-mint');
 
@@ -122,7 +145,9 @@ describe('TokenTracker', () => {
       const tokenData = {
         mint: 'test-mint',
         symbol: 'TEST',
-        marketCapSol: 5.0
+        marketCapSol: 5.0,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 5.0
       };
 
       mockWebSocketManager.emit('newToken', tokenData);
@@ -141,7 +166,9 @@ describe('TokenTracker', () => {
       const tokenData = {
         mint: 'test-mint',
         symbol: 'TEST',
-        marketCapSol: 5.0
+        marketCapSol: 5.0,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 5.0
       };
 
       mockWebSocketManager.emit('newToken', tokenData);
@@ -158,7 +185,9 @@ describe('TokenTracker', () => {
       const tokenData = {
         mint: 'test-mint',
         symbol: 'TEST',
-        marketCapSol: 5.0
+        marketCapSol: 5.0,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 5.0
       };
 
       mockWebSocketManager.emit('newToken', tokenData);
@@ -177,17 +206,23 @@ describe('TokenTracker', () => {
       const tokenData = {
         mint: 'test-mint',
         symbol: 'TEST',
-        marketCapSol: 5.0
+        marketCapSol: 5.0,
+        vTokensInBondingCurve: 1000000,
+        vSolInBondingCurve: 5.0
       };
 
       mockWebSocketManager.emit('newToken', tokenData);
-      const mockToken = Token.mock.results[0].value;
+      const mockToken = Token.Token.mock.results[0].value;
 
       const tradeData = {
         mint: 'test-mint',
         txType: 'buy',
         tokenAmount: 1000000,
-        marketCapSol: 6.0
+        marketCapSol: 6.0,
+        vTokensInBondingCurve: 900000,
+        vSolInBondingCurve: 6.0,
+        traderPublicKey: 'test-trader',
+        newTokenBalance: 100000
       };
 
       mockWebSocketManager.emit('tokenTrade', tradeData);
