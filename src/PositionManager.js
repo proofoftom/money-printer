@@ -79,9 +79,10 @@ class PositionManager extends EventEmitter {
       }
     });
 
-    const position = new Position(token, this.priceManager, {
+    const position = new Position(token, this.priceManager, this.wallet, {
       takeProfitLevel: this.config.TAKE_PROFIT_PERCENT,
-      stopLossLevel: this.config.STOP_LOSS_PERCENT
+      stopLossLevel: this.config.STOP_LOSS_PERCENT,
+      TRANSACTION_FEES: this.config.TRANSACTION_FEES
     });
 
     position.on('updated', (state) => {

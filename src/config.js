@@ -81,6 +81,12 @@ module.exports = {
   MAX_PRICE_DROP_PERCENT: 0.5, // 50% drop from initial price
   MAX_HOLDER_CONCENTRATION: 30, // Maximum percentage of supply held by top 10 holders
 
+  // Transaction fees in SOL
+  TRANSACTION_FEES: {
+    BUY: 0.02,  // Higher fee for buying due to token account creation
+    SELL: 0.01  // Standard transaction fee for selling
+  },
+
   // Keyboard shortcuts
   KEYBOARD_SHORTCUTS: {
     TRADING: {

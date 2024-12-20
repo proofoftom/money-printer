@@ -3,8 +3,10 @@ const { EventEmitter } = require("events");
 const config = require("./config");
 
 class Wallet extends EventEmitter {
-  constructor(config) {
+  constructor(config, logger) {
     super();
+    this.config = config;
+    this.logger = logger;
     const initialBalance = parseFloat((config.RISK_PER_TRADE * 10).toFixed(4));
     this.balance = initialBalance;
     this.totalPnL = 0;
@@ -19,6 +21,7 @@ class Wallet extends EventEmitter {
       averagePnL: 0,
       winRate: 0,
     };
+    this.transactionFees = 0;
 
     console.log(
       `Wallet initialized with balance: ${this.balance.toFixed(4)} SOL`
@@ -39,6 +42,77 @@ class Wallet extends EventEmitter {
 
   getBalance() {
     return this.balance;
+  }
+
+  getTotalTransactionFees() {
+    return this.transactionFees;
+  }
+
+  // Check if we have enough balance for a trade including fees
+  canAffordTrade(amount, isBuy = true) {
+    const requiredFee = isBuy ? 
+      this.config.TRANSACTION_FEES.BUY : 
+      this.config.TRANSACTION_FEES.SELL;
+    
+    const totalRequired = amount + requiredFee;
+    return this.balance >= totalRequired;
+  }
+
+  // Handle transaction fees
+  async deductTransactionFee(isBuy = true) {
+    const fee = isBuy ? 
+      this.config.TRANSACTION_FEES.BUY : 
+      this.config.TRANSACTION_FEES.SELL;
+
+    this.balance -= fee;
+    this.transactionFees += fee;
+
+    this.logger.info('Transaction fee deducted', {
+      type: isBuy ? 'buy' : 'sell',
+      fee,
+      newBalance: this.balance,
+      totalFees: this.transactionFees
+    });
+
+    this.emit('feeDeducted', {
+      fee,
+      type: isBuy ? 'buy' : 'sell',
+      balance: this.balance,
+      totalFees: this.transactionFees
+    });
+
+    return fee;
+  }
+
+  // Process a trade
+  async processTrade(amount, isBuy = true) {
+    if (!this.canAffordTrade(amount, isBuy)) {
+      this.logger.warn('Insufficient balance for trade', {
+        required: amount + (isBuy ? this.config.TRANSACTION_FEES.BUY : this.config.TRANSACTION_FEES.SELL),
+        available: this.balance,
+        type: isBuy ? 'buy' : 'sell'
+      });
+      return false;
+    }
+
+    // Deduct the trade amount
+    if (isBuy) {
+      this.balance -= amount;
+    } else {
+      this.balance += amount;
+    }
+
+    // Handle the transaction fee
+    await this.deductTransactionFee(isBuy);
+
+    this.emit('tradeProcessed', {
+      type: isBuy ? 'buy' : 'sell',
+      amount,
+      balance: this.balance,
+      transactionFees: this.transactionFees
+    });
+
+    return true;
   }
 
   recordTrade(trade) {
@@ -93,6 +167,7 @@ class Wallet extends EventEmitter {
       totalPnL: this.totalPnL,
       ...this.stats,
       trades: this.trades,
+      transactionFees: this.transactionFees
     };
   }
 }

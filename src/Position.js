@@ -7,14 +7,18 @@ const STATES = {
 };
 
 class Position extends EventEmitter {
-  constructor(token, priceManager, config = {}) {
+  constructor(token, priceManager, wallet, config = {}) {
     super();
     this.token = token;
     this.priceManager = priceManager;
+    this.wallet = wallet;
     this.config = {
-      // Default settings that can be overridden
-      takeProfitLevel: 50, // 50%
-      stopLossLevel: 10,   // 10%
+      takeProfitLevel: 50,
+      stopLossLevel: 10,
+      TRANSACTION_FEES: {
+        BUY: 0,
+        SELL: 0
+      },
       ...config
     };
 
@@ -39,25 +43,38 @@ class Position extends EventEmitter {
     this.lastPriceUpdate = Date.now();
     this.executionSlippage = 0;
 
-    // Price tracking
-    this.entryPrice = null;
-    this.currentPrice = token.getCurrentPrice();
-    this.highestPrice = null;
-    this.lowestPrice = null;
-
     // P&L tracking
     this.unrealizedPnLSol = 0;
     this.unrealizedPnLUsd = 0;
     this.realizedPnLSol = 0;
     this.realizedPnLUsd = 0;
+    this.realizedPnLWithFeesSol = 0;
+    this.realizedPnLWithFeesUsd = 0;
+    this.transactionFees = 0;
     this.highestUnrealizedPnLSol = 0;
     this.roiPercentage = 0;
+    this.roiPercentageWithFees = 0;
+
+    // Price tracking
+    this.entryPrice = null;
+    this.currentPrice = token.getCurrentPrice();
+    this.highestPrice = null;
+    this.lowestPrice = null;
   }
 
-  // State management
-  open(price, size) {
+  async open(price, size) {
     if (this.state !== STATES.PENDING) {
       throw new Error(`Cannot open position in state: ${this.state}`);
+    }
+
+    // Check if we can afford the trade
+    if (!this.wallet.canAffordTrade(size * price, true)) {
+      throw new Error('Insufficient balance to open position');
+    }
+
+    const success = await this.wallet.processTrade(size * price, true);
+    if (!success) {
+      throw new Error('Failed to process trade');
     }
 
     this.state = STATES.OPEN;
@@ -76,9 +93,15 @@ class Position extends EventEmitter {
     this.emit('opened', this.getState());
   }
 
-  close(price, reason) {
+  async close(price, reason) {
     if (this.state !== STATES.OPEN) {
       throw new Error(`Cannot close position in state: ${this.state}`);
+    }
+
+    const tradeAmount = price * this.size;
+    const success = await this.wallet.processTrade(tradeAmount, false);
+    if (!success) {
+      throw new Error('Failed to process trade');
     }
 
     this.state = STATES.CLOSED;
@@ -135,10 +158,23 @@ class Position extends EventEmitter {
   }
 
   calculateFinalPnL(price) {
-    // Calculate final P&L
+    // Calculate P&L without fees
     const pnlSol = (price - this.entryPrice) * this.size;
-    this.realizedPnLSol += pnlSol;
-    this.realizedPnLUsd += this.priceManager.solToUSD(pnlSol);
+    this.realizedPnLSol = pnlSol;
+    this.realizedPnLUsd = this.priceManager.solToUSD(pnlSol);
+
+    // Calculate P&L with fees
+    const totalFees = this.config.TRANSACTION_FEES.BUY + this.config.TRANSACTION_FEES.SELL;
+    this.transactionFees = totalFees;
+    this.realizedPnLWithFeesSol = pnlSol - totalFees;
+    this.realizedPnLWithFeesUsd = this.priceManager.solToUSD(this.realizedPnLWithFeesSol);
+
+    // Update ROI calculations
+    const initialInvestment = this.entryPrice * this.size;
+    this.roiPercentage = (pnlSol / initialInvestment) * 100;
+    this.roiPercentageWithFees = ((pnlSol - totalFees) / initialInvestment) * 100;
+
+    // Reset unrealized values
     this.unrealizedPnLSol = 0;
     this.unrealizedPnLUsd = 0;
   }
@@ -173,8 +209,12 @@ class Position extends EventEmitter {
       unrealizedPnLUsd: this.unrealizedPnLUsd,
       realizedPnLSol: this.realizedPnLSol,
       realizedPnLUsd: this.realizedPnLUsd,
+      realizedPnLWithFeesSol: this.realizedPnLWithFeesSol,
+      realizedPnLWithFeesUsd: this.realizedPnLWithFeesUsd,
+      transactionFees: this.transactionFees,
       highestUnrealizedPnLSol: this.highestUnrealizedPnLSol,
       roiPercentage: this.roiPercentage,
+      roiPercentageWithFees: this.roiPercentageWithFees,
       timeInPosition: this.getTimeInPosition(),
       trades: this.trades,
       createdAt: this.createdAt,
