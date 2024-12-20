@@ -75,8 +75,8 @@ class MoneyPrinter {
       this.safetyChecker = new SafetyChecker(this.wallet, this.priceManager);
       this.logger.debug('Safety checker initialized');
 
-      // PositionManager needs wallet
-      this.positionManager = new PositionManager(this.config, this.wallet);
+      // PositionManager needs wallet, priceManager and config
+      this.positionManager = new PositionManager(this.wallet, this.priceManager, this.config);
       this.logger.debug('Position manager initialized');
 
       // Initialize token tracker last since it depends on other components
