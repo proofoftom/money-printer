@@ -23,9 +23,9 @@ class WebSocketManager extends EventEmitter {
   }
 
   sanitizeString(str) {
-    if (typeof str !== 'string') return str;
+    if (typeof str !== "string") return str;
     // Remove null bytes and trim whitespace
-    return str.replace(/\0/g, '').trim();
+    return str.replace(/\0/g, "").trim();
   }
 
   sanitizeTokenData(data) {
@@ -98,10 +98,6 @@ class WebSocketManager extends EventEmitter {
               vTokensInBondingCurve: message.vTokensInBondingCurve || 0,
               vSolInBondingCurve: message.vSolInBondingCurve || 0,
             });
-
-            if (this.config.LOGGING.NEW_TOKENS) {
-              this.logger.debug("New token detected", tokenData);
-            }
             this.emit("newToken", tokenData);
             break;
 
