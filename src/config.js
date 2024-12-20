@@ -1,6 +1,6 @@
 module.exports = {
   // Core settings
-  MIN_TOKEN_AGE_SECONDS: 5, // 5 seconds minimum age
+  MIN_TOKEN_AGE_SECONDS: 30, // 30 seconds minimum age
   MAX_ENTRY_MCAP_USD: 100000, // $100k maximum market cap
   MIN_MCAP_POSITION: 0.001, // 0.1% minimum position size
   MAX_MCAP_POSITION: 0.01, // 1% maximum position size

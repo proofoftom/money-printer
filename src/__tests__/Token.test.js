@@ -280,38 +280,26 @@ describe('Token', () => {
     });
 
     test('calculates top holder concentration', () => {
+      // Set initial token supply
+      token.vTokensInBondingCurve = 100; // 100 tokens in curve
+
       // Add three holders with different balances
-      token.update({
-        txType: 'buy',
-        tokenAmount: 500,
-        marketCapSol: 150,
-        vTokensInBondingCurve: 400,
-        vSolInBondingCurve: 110,
-        traderPublicKey: 'trader1',
-        newTokenBalance: 500
-      });
+      token.updateHolderBalance('trader1', 500);
+      token.updateHolderBalance('trader2', 300);
+      token.updateHolderBalance('trader3', 100);
 
-      token.update({
-        txType: 'buy',
-        tokenAmount: 300,
-        marketCapSol: 160,
-        vTokensInBondingCurve: 200,
-        vSolInBondingCurve: 120,
-        traderPublicKey: 'trader2',
-        newTokenBalance: 300
-      });
+      // Debug logging
+      const totalSupply = token.vTokensInBondingCurve + token.totalSupplyOutsideCurve;
+      console.log('Total supply:', totalSupply);
+      console.log('Tokens in curve:', token.vTokensInBondingCurve);
+      console.log('Total supply outside curve:', token.totalSupplyOutsideCurve);
+      console.log('Holders:', Array.from(token.holders.entries()));
+      console.log('Top 2 holdings:', Array.from(token.holders.values())
+        .sort((a, b) => b - a)
+        .slice(0, 2)
+        .reduce((a, b) => a + b, 0));
 
-      token.update({
-        txType: 'buy',
-        tokenAmount: 100,
-        marketCapSol: 170,
-        vTokensInBondingCurve: 100,
-        vSolInBondingCurve: 130,
-        traderPublicKey: 'trader3',
-        newTokenBalance: 100
-      });
-
-      // Total supply = 1000 (100 in curve + 900 held)
+      // Total supply = 1000 (100 in curve + 900 outside)
       // Top 2 holders (500 + 300 = 800) out of 1000 total = 80%
       expect(token.getTopHolderConcentration(2)).toBe(80);
     });

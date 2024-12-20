@@ -69,6 +69,10 @@ class Token extends EventEmitter {
     this.marketCapSol = tokenData.marketCapSol;
     this.totalSupplyOutsideCurve = 0;
     this.holders = new Map();
+    this.holderHistory = [{
+      timestamp: Date.now(),
+      count: 0
+    }];
     this.totalSupply = this.calculateTotalSupply();
 
     // Price tracking
@@ -268,12 +272,31 @@ class Token extends EventEmitter {
   }
 
   updateHolderBalance(traderPublicKey, newBalance) {
-    if (newBalance === 0) {
-      this.holders.delete(traderPublicKey);
-    } else {
+    const oldBalance = this.holders.get(traderPublicKey) || 0;
+    
+    if (newBalance > 0) {
       this.holders.set(traderPublicKey, newBalance);
+    } else {
+      this.holders.delete(traderPublicKey);
     }
-    this.totalSupply = this.calculateTotalSupply();
+
+    // Update holder history when the count changes
+    const currentCount = this.holders.size;
+    const lastHistory = this.holderHistory[this.holderHistory.length - 1];
+    
+    if (lastHistory.count !== currentCount) {
+      this.holderHistory.push({
+        timestamp: Date.now(),
+        count: currentCount
+      });
+
+      // Keep only last hour of holder history
+      const oneHourAgo = Date.now() - 3600000;
+      this.holderHistory = this.holderHistory.filter(h => h.timestamp >= oneHourAgo);
+    }
+
+    this.totalSupplyOutsideCurve = Array.from(this.holders.values()).reduce((a, b) => a + b, 0);
+    this.emit('holderUpdated', { traderPublicKey, oldBalance, newBalance });
   }
 
   getHolderBalance(traderPublicKey) {
@@ -285,14 +308,15 @@ class Token extends EventEmitter {
   }
 
   getTopHolderConcentration(topNHolders = 10) {
-    if (this.totalSupply === 0) return 0;
+    const totalSupply = this.vTokensInBondingCurve + this.totalSupplyOutsideCurve;
+    if (totalSupply === 0) return 0;
 
     const topNHoldings = Array.from(this.holders.values())
       .sort((a, b) => b - a)
       .slice(0, topNHolders)
       .reduce((a, b) => a + b, 0);
 
-    return (topNHoldings / this.totalSupply) * 100;
+    return (topNHoldings / totalSupply) * 100;
   }
 
   checkSafetyConditions() {
