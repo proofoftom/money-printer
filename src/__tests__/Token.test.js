@@ -5,18 +5,38 @@ describe('Token', () => {
   let token;
   let mockPriceManager;
   let mockSafetyChecker;
-  let stateChangeSpy;
+  let mockLogger;
+  let mockConfig;
+  let defaultTokenData;
 
   beforeEach(() => {
+    // Setup mock dependencies
     mockPriceManager = {
       getPrice: jest.fn().mockReturnValue(1.0)
     };
 
     mockSafetyChecker = {
-      isTokenSafe: jest.fn().mockReturnValue(true)
+      isTokenSafe: jest.fn().mockReturnValue({ safe: true, reasons: [] })
     };
 
-    const tokenData = {
+    mockLogger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn()
+    };
+
+    mockConfig = {
+      SAFETY_CHECK_INTERVAL: 2000,
+      LOGGING: {
+        POSITIONS: false,
+        TRADES: false,
+        NEW_TOKENS: false,
+        SAFETY_CHECKS: false
+      }
+    };
+
+    defaultTokenData = {
       mint: 'test-mint',
       name: 'Test Token',
       symbol: 'TEST',
@@ -28,200 +48,270 @@ describe('Token', () => {
       bondingCurveKey: 'curve-key'
     };
 
-    token = new Token(tokenData, {
+    // Create token instance
+    token = new Token(defaultTokenData, {
       priceManager: mockPriceManager,
-      safetyChecker: mockSafetyChecker
+      safetyChecker: mockSafetyChecker,
+      logger: mockLogger,
+      config: mockConfig
     });
 
-    stateChangeSpy = jest.spyOn(token, 'emit');
+    // Spy on token events
+    jest.spyOn(token, 'emit');
   });
 
-  test('initializes with correct state', () => {
-    expect(token.getCurrentState()).toBe(STATES.NEW);
+  afterEach(() => {
+    // Clean up intervals
+    token.cleanup();
   });
 
-  test('transitions to READY state when safe', () => {
-    mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: true, reasons: [] });
-    token.checkState();
-    expect(token.getCurrentState()).toBe(STATES.READY);
-    expect(stateChangeSpy).toHaveBeenCalledWith('stateChanged', expect.any(Object));
-    expect(stateChangeSpy).toHaveBeenCalledWith('readyForPosition', expect.any(Object));
-  });
-
-  test('stays in NEW state when not safe', () => {
-    mockSafetyChecker.isTokenSafe.mockReturnValue({ 
-      safe: false, 
-      reasons: ['Market cap too high'] 
-    });
-    token.checkState();
-    expect(token.getCurrentState()).toBe(STATES.NEW);
-    expect(stateChangeSpy).not.toHaveBeenCalledWith('readyForPosition', expect.any(Object));
-  });
-
-  test('transitions to DEAD state on high drawdown', () => {
-    // Mock a high drawdown scenario
-    jest.spyOn(token, 'getDrawdownPercentage').mockReturnValue(25);
-    
-    token.checkState();
-    
-    expect(stateChangeSpy).toHaveBeenCalledWith('stateChanged', expect.any(Object));
-    expect(token.getCurrentState()).toBe(STATES.DEAD);
-  });
-
-  test('calculates token price correctly', () => {
-    expect(token.calculateTokenPrice()).toBe(0.1);
-    
-    // Test with zero tokens
-    token.vTokensInBondingCurve = 0;
-    expect(token.calculateTokenPrice()).toBe(0);
-  });
-
-  test('calculates drawdown percentage correctly', () => {
-    token.highestMarketCap = 100;
-    token.marketCapSol = 90;
-    expect(token.getDrawdownPercentage()).toBe(10);
-    
-    // Test with zero highest market cap
-    token.highestMarketCap = 0;
-    expect(token.getDrawdownPercentage()).toBe(0);
-  });
-
-  test('updates token data correctly', () => {
-    const updateData = {
-      vTokensInBondingCurve: 2000,
-      vSolInBondingCurve: 300,
-      marketCapSol: 150
-    };
-    
-    token.update(updateData);
-    
-    expect(token.vTokensInBondingCurve).toBe(2000);
-    expect(token.vSolInBondingCurve).toBe(300);
-    expect(token.marketCapSol).toBe(150);
-    expect(token.highestMarketCap).toBe(150);
-  });
-
-  test('handles trade updates correctly', () => {
-    const tradeData = {
-      type: 'buy',
-      tokenAmount: 100,
-      vTokensInBondingCurve: 1100,
-      vSolInBondingCurve: 150,
-      marketCapSol: 150,
-      newTokenBalance: 500
-    };
-
-    // Set up event listeners to test events
-    const priceChangedHandler = jest.fn();
-    const updatedHandler = jest.fn();
-    token.on('priceChanged', priceChangedHandler);
-    token.on('updated', updatedHandler);
-
-    token.update(tradeData);
-
-    // Check trade tracking properties
-    expect(token.lastTradeType).toBe('buy');
-    expect(token.lastTradeAmount).toBe(100);
-    expect(token.lastTradeTime).toBeDefined();
-    expect(token.tokenBalance).toBe(500);
-
-    // Check core token data updates
-    expect(token.vTokensInBondingCurve).toBe(1100);
-    expect(token.vSolInBondingCurve).toBe(150);
-    expect(token.marketCapSol).toBe(150);
-
-    // Check if price changed event was emitted
-    expect(priceChangedHandler).toHaveBeenCalledWith({
-      token: token,
-      oldPrice: 0.1, // 100/1000 from initial setup
-      newPrice: token.calculateTokenPrice(), // 150/1100
-      tradeType: 'buy'
+  describe('Initialization', () => {
+    test('initializes with correct state and properties', () => {
+      expect(token.mint).toBe(defaultTokenData.mint);
+      expect(token.name).toBe(defaultTokenData.name);
+      expect(token.symbol).toBe(defaultTokenData.symbol);
+      expect(token.state).toBe(STATES.NEW);
+      expect(token.marketCapSol).toBe(defaultTokenData.marketCapSol);
+      expect(token.highestMarketCap).toBe(defaultTokenData.marketCapSol);
+      expect(token.vTokensInBondingCurve).toBe(defaultTokenData.vTokensInBondingCurve);
+      expect(token.vSolInBondingCurve).toBe(defaultTokenData.vSolInBondingCurve);
     });
 
-    // Check if updated event was emitted
-    expect(updatedHandler).toHaveBeenCalledWith({
-      token: token,
-      tradeType: 'buy',
-      tradeAmount: 100
+    test('initializes with correct price calculations', () => {
+      const expectedPrice = defaultTokenData.vSolInBondingCurve / defaultTokenData.vTokensInBondingCurve;
+      expect(token.currentPrice).toBe(expectedPrice);
+      expect(token.initialPrice).toBe(expectedPrice);
     });
-  });
 
-  test('handles partial updates correctly', () => {
-    const partialUpdate = {
-      vTokensInBondingCurve: 1200
-    };
+    test('throws error on missing required fields', () => {
+      const invalidData = { ...defaultTokenData };
+      delete invalidData.mint;
 
-    token.update(partialUpdate);
-    expect(token.vTokensInBondingCurve).toBe(1200);
-    expect(token.vSolInBondingCurve).toBe(100); // Should remain unchanged
-    expect(token.marketCapSol).toBe(100); // Should remain unchanged
-  });
+      expect(() => {
+        new Token(invalidData, {
+          priceManager: mockPriceManager,
+          safetyChecker: mockSafetyChecker,
+          logger: mockLogger,
+          config: mockConfig
+        });
+      }).toThrow('Missing required field: mint');
+    });
 
-  test('tracks highest market cap', () => {
-    // Initial marketCapSol is 100
-    token.update({ marketCapSol: 150 });
-    expect(token.highestMarketCap).toBe(150);
-
-    // Lower market cap shouldn't update highestMarketCap
-    token.update({ marketCapSol: 120 });
-    expect(token.highestMarketCap).toBe(150);
-
-    // Higher market cap should update highestMarketCap
-    token.update({ marketCapSol: 200 });
-    expect(token.highestMarketCap).toBe(200);
-  });
-
-  describe('Price Calculation', () => {
-    test('calculates correct price using market cap and total supply', () => {
-      const tokenData = {
-        mint: 'test-mint',
-        symbol: 'TEST',
-        vTokensInBondingCurve: 1000, // Total supply
-        marketCapSol: 100, // Market cap in SOL
+    test('throws error on invalid numeric fields', () => {
+      const invalidData = { 
+        ...defaultTokenData,
+        vTokensInBondingCurve: 'invalid'
       };
 
-      const token = new Token(tokenData, {
-        priceManager: mockPriceManager,
-        safetyChecker: mockSafetyChecker
-      });
-
-      // Price should be marketCap / totalSupply = 100 / 1000 = 0.1 SOL
-      expect(token.calculateTokenPrice()).toBe(0.1);
+      expect(() => {
+        new Token(invalidData, {
+          priceManager: mockPriceManager,
+          safetyChecker: mockSafetyChecker,
+          logger: mockLogger,
+          config: mockConfig
+        });
+      }).toThrow('Invalid numeric value for field: vTokensInBondingCurve');
     });
 
-    test('returns 0 price when no tokens in bonding curve', () => {
-      const tokenData = {
-        mint: 'test-mint',
-        symbol: 'TEST',
-        vTokensInBondingCurve: 0,
-        marketCapSol: 100,
-      };
-
-      const token = new Token(tokenData, {
-        priceManager: mockPriceManager,
-        safetyChecker: mockSafetyChecker
-      });
-
-      expect(token.calculateTokenPrice()).toBe(0);
+    test('throws error on missing dependencies', () => {
+      expect(() => {
+        new Token(defaultTokenData, {
+          priceManager: mockPriceManager,
+          logger: mockLogger
+        });
+      }).toThrow('Missing required dependencies');
     });
   });
 
-  describe('Safety Check Handling', () => {
-    test('transitions to READY when safety check returns safe:true', () => {
+  describe('Trade Updates', () => {
+    test('handles trade updates correctly', () => {
+      const tradeData = {
+        txType: 'buy',
+        tokenAmount: 100,
+        marketCapSol: 150,
+        timestamp: Date.now(),
+        vTokensInBondingCurve: 1100,
+        vSolInBondingCurve: 110
+      };
+
+      token.update(tradeData);
+
+      expect(token.lastTradeType).toBe(tradeData.txType);
+      expect(token.lastTradeAmount).toBe(tradeData.tokenAmount);
+      expect(token.lastTradeTime).toBeDefined();
+      expect(token.marketCapSol).toBe(tradeData.marketCapSol);
+      expect(token.vTokensInBondingCurve).toBe(tradeData.vTokensInBondingCurve);
+      expect(token.vSolInBondingCurve).toBe(tradeData.vSolInBondingCurve);
+
+      expect(token.emit).toHaveBeenCalledWith('updated', expect.any(Object));
+      expect(mockLogger.debug).toHaveBeenCalledWith('Token updated', expect.any(Object));
+    });
+
+    test('throws error on missing trade data fields', () => {
+      const invalidTradeData = {
+        txType: 'buy',
+        tokenAmount: 100
+      };
+
+      expect(() => {
+        token.update(invalidTradeData);
+      }).toThrow('Missing required trade data field');
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    test('throws error on invalid numeric trade data', () => {
+      const invalidTradeData = {
+        txType: 'buy',
+        tokenAmount: 'invalid',
+        marketCapSol: 150,
+        vTokensInBondingCurve: 1100,
+        vSolInBondingCurve: 110
+      };
+
+      expect(() => {
+        token.update(invalidTradeData);
+      }).toThrow('Invalid numeric value for trade data field');
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    test('updates volume and trade count', () => {
+      const tradeData = {
+        txType: 'buy',
+        tokenAmount: 100,
+        marketCapSol: 150,
+        vTokensInBondingCurve: 1100,
+        vSolInBondingCurve: 110
+      };
+
+      token.update(tradeData);
+      expect(token.volume).toBe(tradeData.tokenAmount);
+      expect(token.tradeCount).toBe(1);
+
+      token.update(tradeData);
+      expect(token.volume).toBe(tradeData.tokenAmount * 2);
+      expect(token.tradeCount).toBe(2);
+    });
+  });
+
+  describe('Safety Checks', () => {
+    test('transitions to READY when safe', () => {
       mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: true, reasons: [] });
-      token.checkState();
-      expect(token.getCurrentState()).toBe(STATES.READY);
-      expect(stateChangeSpy).toHaveBeenCalledWith('readyForPosition', expect.any(Object));
+      token.state = STATES.NEW; // Ensure we start in NEW state
+      token.checkSafetyConditions();
+      
+      expect(token.state).toBe(STATES.READY);
+      expect(token.emit).toHaveBeenCalledWith('stateChanged', expect.any(Object));
+      expect(token.emit).toHaveBeenCalledWith('readyForPosition', expect.any(Object));
+      expect(mockLogger.info).toHaveBeenCalledWith('Token state changed', expect.any(Object));
     });
 
-    test('stays in NEW state when not safe', () => {
+    test('transitions to UNSAFE when not safe', () => {
+      const reasons = ['Market cap too low'];
       mockSafetyChecker.isTokenSafe.mockReturnValue({ 
         safe: false, 
-        reasons: ['Market cap too high'] 
+        reasons 
       });
-      token.checkState();
-      expect(token.getCurrentState()).toBe(STATES.NEW);
-      expect(stateChangeSpy).not.toHaveBeenCalledWith('readyForPosition', expect.any(Object));
+      
+      token.state = STATES.NEW; // Ensure we start in NEW state
+      token.checkSafetyConditions();
+      expect(token.state).toBe(STATES.UNSAFE);
+      expect(token.emit).toHaveBeenCalledWith('stateChanged', expect.objectContaining({
+        reasons
+      }));
+      expect(mockLogger.info).toHaveBeenCalledWith('Token state changed', expect.any(Object));
+    });
+
+    test('transitions to DEAD on high drawdown', () => {
+      token.update({ 
+        txType: 'sell',
+        tokenAmount: 100,
+        marketCapSol: 10,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 10
+      }); // 90% drawdown
+      token.checkSafetyConditions();
+      
+      expect(token.state).toBe(STATES.DEAD);
+      expect(token.emit).toHaveBeenCalledWith('stateChanged', expect.any(Object));
+      expect(mockLogger.info).toHaveBeenCalledWith('Token state changed', expect.any(Object));
+    });
+
+    test('handles safety checker errors gracefully', () => {
+      mockSafetyChecker.isTokenSafe.mockImplementation(() => {
+        throw new Error('Safety check failed');
+      });
+
+      token.checkSafetyConditions();
+      expect(mockLogger.error).toHaveBeenCalledWith('Error checking safety conditions', expect.any(Object));
+      // State should remain unchanged
+      expect(token.state).toBe(STATES.NEW);
+    });
+  });
+
+  describe('Cleanup', () => {
+    test('cleans up resources properly', () => {
+      token.cleanup();
+      expect(mockLogger.debug).toHaveBeenCalledWith('Token cleaned up', expect.any(Object));
+    });
+
+    test('handles cleanup errors gracefully', () => {
+      jest.spyOn(token, 'removeAllListeners').mockImplementation(() => {
+        throw new Error('Cleanup failed');
+      });
+
+      token.cleanup();
+      expect(mockLogger.error).toHaveBeenCalledWith('Error cleaning up token', expect.any(Object));
+    });
+  });
+
+  describe('Metrics', () => {
+    test('calculates drawdown percentage correctly', () => {
+      token.update({ 
+        txType: 'sell',
+        tokenAmount: 100,
+        marketCapSol: 80,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 80
+      }); // 20% drawdown
+      expect(token.getDrawdownPercentage()).toBe(20);
+
+      token.update({ 
+        txType: 'sell',
+        tokenAmount: 100,
+        marketCapSol: 50,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 50
+      }); // 50% drawdown
+      expect(token.getDrawdownPercentage()).toBe(50);
+    });
+
+    test('tracks price history', () => {
+      token.update({ 
+        txType: 'buy',
+        tokenAmount: 100,
+        marketCapSol: 120,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 120
+      });
+      token.update({ 
+        txType: 'buy',
+        tokenAmount: 100,
+        marketCapSol: 150,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 150
+      });
+      token.update({ 
+        txType: 'sell',
+        tokenAmount: 100,
+        marketCapSol: 130,
+        vTokensInBondingCurve: 1000,
+        vSolInBondingCurve: 130
+      });
+
+      expect(token.priceHistory.length).toBe(3);
+      expect(token.priceHistory[0].marketCapSol).toBe(120);
+      expect(token.priceHistory[1].marketCapSol).toBe(150);
+      expect(token.priceHistory[2].marketCapSol).toBe(130);
     });
   });
 });

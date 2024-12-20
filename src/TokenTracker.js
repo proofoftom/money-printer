@@ -1,168 +1,99 @@
-const EventEmitter = require("events");
-const { Token, STATES } = require("./Token");
-const config = require("./config");
+const { EventEmitter } = require('events');
+const Token = require('./Token');
 
 class TokenTracker extends EventEmitter {
-  constructor({
-    safetyChecker,
-    positionManager,
-    priceManager,
-    webSocketManager,
-    logger,
-  }) {
+  constructor(config, logger, webSocketManager, positionManager) {
     super();
-    this.safetyChecker = safetyChecker;
-    this.positionManager = positionManager;
-    this.priceManager = priceManager;
-    this.webSocketManager = webSocketManager;
+    this.config = config;
     this.logger = logger;
+    this.webSocketManager = webSocketManager;
+    this.positionManager = positionManager;
     this.tokens = new Map();
-    this.config = webSocketManager.config; // Get config from WebSocketManager
 
     // Set up WebSocket event listeners
-    this.webSocketManager.on("newToken", (tokenData) => {
-      this.handleNewToken(tokenData);
-    });
+    if (this.webSocketManager) {
+      this.webSocketManager.on("newToken", (tokenData) => {
+        this.handleNewToken(tokenData);
+      });
 
-    this.webSocketManager.on("tokenTrade", (tradeData) => {
-      if (this.tokens.has(tradeData.mint)) {
-        const token = this.tokens.get(tradeData.mint);
-
-        // Log trade data if enabled
-        if (this.config.LOGGING.TRADES) {
-          this.logger.debug(`Trade received for ${token.symbol}:`, {
-            type: tradeData.txType,
-            amount: tradeData.tokenAmount,
-            marketCap: tradeData.marketCapSol,
-          });
-        }
-
-        // Update token with trade data
-        token.update(tradeData);
-
-        // Forward trade event to listeners
-        this.emit("tokenTrade", {
-          token,
-          type: tradeData.txType,
-          amount: tradeData.tokenAmount,
-          marketCapSol: tradeData.marketCapSol,
-        });
-
-        // Also emit general update
-        this.emit("tokenUpdated", token);
-      }
-    });
-
-    // Set up error handler to prevent unhandled errors
-    this.on("error", () => {});
+      this.webSocketManager.on("tokenTrade", (tradeData) => {
+        this.handleTokenTrade(tradeData);
+      });
+    }
   }
 
   async handleNewToken(tokenData) {
-    if (this.tokens.has(tokenData.mint)) {
-      // Update existing token
-      const token = this.tokens.get(tokenData.mint);
-      token.update(tokenData);
-      this.emit("tokenUpdated", token);
-      return;
+    try {
+      this.logger.info('New token detected', {
+        mint: tokenData.mint,
+        symbol: tokenData.symbol
+      });
+
+      // Create new Token instance
+      const token = new Token(tokenData, {
+        logger: this.logger,
+        config: this.config
+      });
+
+      // Set up token event listeners
+      token.on('readyForPosition', async () => {
+        if (this.config.TRADING.ENABLED) {
+          try {
+            await this.positionManager.openPosition(token);
+          } catch (error) {
+            this.logger.error('Failed to open position', error);
+          }
+        } else {
+          this.logger.info('Trading is disabled, skipping position opening');
+        }
+      });
+
+      token.on('stateChanged', ({ oldState, newState }) => {
+        this.logger.debug('Token state changed', {
+          mint: token.mint,
+          oldState,
+          newState
+        });
+      });
+
+      // Store token
+      this.tokens.set(tokenData.mint, token);
+
+      // Subscribe to token trades
+      this.webSocketManager.subscribeToToken(tokenData.mint);
+
+      // Start safety checks
+      token.startSafetyChecks();
+
+    } catch (error) {
+      this.logger.error('Error handling new token:', error);
     }
+  }
 
-    const token = new Token(tokenData, {
-      priceManager: this.priceManager,
-      safetyChecker: this.safetyChecker,
-      logger: this.logger,
-      config: this.config
-    });
+  handleTokenTrade(tradeData) {
+    const token = this.tokens.get(tradeData.mint);
+    if (token) {
+      token.update(tradeData);
 
-    // Listen for state changes
-    token.on("stateChanged", ({ token, from, to }) => {
-      if (this.config.LOGGING.POSITIONS) {
-        this.logger.debug(`Token ${token.symbol} state changed from ${from} to ${to}`);
-      }
-      this.emit("tokenStateChanged", { token, from, to });
-      this.emit("tokenUpdated", token);
+      this.logger.debug('Token trade detected', {
+        mint: tradeData.mint,
+        txType: tradeData.txType
+      });
 
-      // Unsubscribe and remove dead tokens
-      if (to === STATES.DEAD) {
-        if (this.config.LOGGING.POSITIONS) {
-          this.logger.debug(`Token ${token.symbol} is dead, removing from tracking`);
-        }
-        this.removeToken(token.mint);
-      }
-    });
-
-    // Listen for ready for position events
-    token.on("readyForPosition", (token) => {
-      if (this.config.LOGGING.POSITIONS) {
-        this.logger.debug(`Token ${token.symbol} is ready for position`);
-      }
-
-      // Attempt to open position
-      try {
-        const position = this.positionManager.openPosition(token);
-        if (position && this.config.LOGGING.POSITIONS) {
-          this.logger.debug(`Opened position for ${token.symbol}:`, {
-            size: position.size,
-            entryPrice: position.entryPrice,
-          });
-        }
-      } catch (error) {
-        this.logger.error(`Failed to open position for ${token.symbol}:`, error);
-      }
-    });
-
-    // Add token to tracking
-    this.tokens.set(token.mint, token);
-    this.emit("tokenAdded", token);
-
-    // Subscribe to token trades
-    this.webSocketManager.subscribeToToken(token.mint);
-
-    // Check initial state
-    token.checkState();
-
-    // Check if token is safe
-    const safetyCheck = await this.safetyChecker.isTokenSafe(token);
-    if (!safetyCheck.safe && this.config.LOGGING.SAFETY_CHECKS) {
-      this.emit("tokenSafetyCheckFailed", token, safetyCheck.reasons);
+      this.logger.debug('Token updated', {
+        mint: tradeData.mint,
+        marketCapSol: tradeData.marketCapSol
+      });
     }
   }
 
   removeToken(mint) {
     const token = this.tokens.get(mint);
     if (token) {
-      // Clean up token resources
       token.cleanup();
-
-      // Unsubscribe from trades
-      this.webSocketManager.unsubscribeFromToken(mint);
-
-      // Remove from tracking
       this.tokens.delete(mint);
-      this.emit("tokenRemoved", token);
+      this.webSocketManager.unsubscribeFromToken(mint);
     }
-  }
-
-  getToken(mint) {
-    return this.tokens.get(mint);
-  }
-
-  getTokenStats() {
-    const stats = {
-      totalTokens: this.tokens.size,
-      activeTokens: 0,
-      deadTokens: 0,
-    };
-
-    for (const token of this.tokens.values()) {
-      const state = token.getCurrentState();
-      if (state === STATES.DEAD) {
-        stats.deadTokens++;
-      } else {
-        stats.activeTokens++;
-      }
-    }
-
-    return stats;
   }
 }
 

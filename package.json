@@ -7,6 +7,8 @@
     "start": "node src/index.js",
     "dashboard": "node src/index.js --dashboard",
     "config": "node src/index.js --config",
+    "test:integration": "jest src/__tests__/integration --testTimeout=30000",
+    "test:unit": "jest src/__tests__/*.test.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

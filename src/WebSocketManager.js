@@ -7,13 +7,13 @@ class WebSocketManager extends EventEmitter {
     super();
     this.config = config;
     this.logger = logger;
-    this.ws = null;
     this.isConnected = false;
     this.reconnectAttempts = 0;
+    this.subscribedTokens = new Set();
+    this.subscribedToNewTokens = false;
     this.maxReconnectAttempts = 5;
     this.reconnectTimer = null;
-    this.subscribedTokens = new Set();
-    this.isSubscribedToNewTokens = false;
+    this.ws = null;
 
     // Handle graceful shutdown
     process.on("SIGINT", () => {
@@ -68,72 +68,34 @@ class WebSocketManager extends EventEmitter {
 
         // Silently ignore subscription confirmation messages
         if (
-          typeof message === "string" &&
-          message.includes("Successfully subscribed")
+          message.method === "subscribeNewToken" ||
+          message.method === "subscribeTokenTrade" ||
+          message.method === "unsubscribeTokenTrade"
         ) {
-          this.logger.debug("Subscription confirmed");
           return;
         }
 
-        this.logger.debug("WebSocket message received", {
-          type: message.txType,
-        });
+        if (message.txType === "create") {
+          if (!message.mint || !message.symbol) {
+            this.logger.error("Invalid token creation message", { data });
+            return;
+          }
 
-        switch (message.txType) {
-          case "create":
-            // Validate required fields
-            if (!message.mint || !message.symbol) {
-              this.logger.error("Invalid token creation message", { message });
-              return;
-            }
-
-            const tokenData = this.sanitizeTokenData({
-              mint: message.mint,
-              name: message.name,
-              symbol: message.symbol,
-              traderPublicKey: message.traderPublicKey,
-              bondingCurveKey: message.bondingCurveKey,
-              minted: Date.now(),
-              marketCapSol: message.marketCapSol || 0,
-              vTokensInBondingCurve: message.vTokensInBondingCurve || 0,
-              vSolInBondingCurve: message.vSolInBondingCurve || 0,
-            });
-            this.emit("newToken", tokenData);
-            break;
-
-          case "buy":
-          case "sell":
-            if (!message.mint) {
-              this.logger.error("Invalid trade message", { message });
-              return;
-            }
-
-            const tradeData = this.sanitizeTokenData({
-              txType: message.txType,
-              mint: message.mint,
-              traderPublicKey: message.traderPublicKey,
-              tokenAmount: message.tokenAmount,
-              newTokenBalance: message.newTokenBalance,
-              marketCapSol: message.marketCapSol || 0,
-              vTokensInBondingCurve: message.vTokensInBondingCurve || 0,
-              vSolInBondingCurve: message.vSolInBondingCurve || 0,
-            });
-
-            if (this.config.LOGGING.TRADES) {
-              this.logger.debug("Token trade detected", tradeData);
-            }
-            this.emit("tokenTrade", tradeData);
-            break;
-
-          default:
-            this.logger.warn("Unknown message type", { type: message.txType });
+          this.emit("newToken", message);
+        } else if (message.txType === "buy" || message.txType === "sell") {
+          this.emit("tokenTrade", message);
         }
       } catch (error) {
-        this.logger.error("Failed to parse WebSocket message", {
-          error: error.message,
-          data: typeof data === "string" ? data : "<binary>",
-        });
-        this.emit("error", error);
+        // Silently log invalid JSON messages
+        if (error instanceof SyntaxError) {
+          this.logger.error("Failed to parse WebSocket message", {
+            data: data.toString().substring(0, 100), // Log only first 100 chars to avoid huge logs
+            error: error.message,
+          });
+          return;
+        }
+        // Re-throw other types of errors
+        throw error;
       }
     });
 
@@ -149,7 +111,7 @@ class WebSocketManager extends EventEmitter {
   }
 
   subscribeToNewTokens() {
-    if (!this.isConnected || this.isSubscribedToNewTokens) return;
+    if (!this.isConnected || this.subscribedToNewTokens) return;
 
     this.ws.send(
       JSON.stringify({
@@ -157,11 +119,11 @@ class WebSocketManager extends EventEmitter {
       })
     );
 
-    this.isSubscribedToNewTokens = true;
+    this.subscribedToNewTokens = true;
   }
 
   unsubscribeFromNewTokens() {
-    if (!this.isConnected || !this.isSubscribedToNewTokens) return;
+    if (!this.isConnected || !this.subscribedToNewTokens) return;
 
     this.ws.send(
       JSON.stringify({
@@ -169,7 +131,7 @@ class WebSocketManager extends EventEmitter {
       })
     );
 
-    this.isSubscribedToNewTokens = false;
+    this.subscribedToNewTokens = false;
   }
 
   subscribeToToken(mint) {
@@ -200,7 +162,7 @@ class WebSocketManager extends EventEmitter {
 
   resubscribeAll() {
     // Resubscribe to new tokens if previously subscribed
-    if (this.isSubscribedToNewTokens) {
+    if (this.subscribedToNewTokens) {
       this.ws.send(
         JSON.stringify({
           method: "subscribeNewToken",
