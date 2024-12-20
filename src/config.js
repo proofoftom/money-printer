@@ -1,6 +1,6 @@
 module.exports = {
   // Core settings
-  MIN_TOKEN_AGE_SECONDS: 300, // 5 minutes minimum age
+  MIN_TOKEN_AGE_SECONDS: 5, // 5 minutes minimum age
   MAX_ENTRY_MCAP_USD: 100000, // $100k maximum market cap
   MIN_MCAP_POSITION: 0.001, // 0.1% minimum position size
   MAX_MCAP_POSITION: 0.01, // 1% maximum position size
@@ -17,10 +17,10 @@ module.exports = {
 
   // Logging settings
   LOGGING: {
-    NEW_TOKENS: false,      // Log new token discoveries
-    TRADES: true,          // Log token trades
-    POSITIONS: true,       // Log position changes
-    SAFETY_CHECKS: false,  // Log safety check results
+    NEW_TOKENS: false, // Log new token discoveries
+    TRADES: true, // Log token trades
+    POSITIONS: true, // Log position changes
+    SAFETY_CHECKS: false, // Log safety check results
   },
 
   // Price settings
@@ -145,7 +145,7 @@ module.exports = {
     DIRECTORY: "./logs",
     MAX_SIZE: "20m",
     MAX_FILES: "14d",
-    FORMAT: "json"
+    FORMAT: "json",
   },
 
   // Data Export settings

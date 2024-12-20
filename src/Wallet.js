@@ -37,6 +37,10 @@ class Wallet extends EventEmitter {
     this.emit("balanceUpdate", this.balance);
   }
 
+  getBalance() {
+    return this.balance;
+  }
+
   recordTrade(trade) {
     const { token, entryPrice, exitPrice, size, profitLoss, reason } = trade;
 
@@ -81,10 +85,6 @@ class Wallet extends EventEmitter {
       PnL: ${profitLoss.toFixed(4)} SOL
       Reason: ${reason}
     `);
-  }
-
-  getBalance() {
-    return this.balance;
   }
 
   getStatistics() {
