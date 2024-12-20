@@ -1,125 +1,138 @@
-const EventEmitter = require("events");
+const EventEmitter = require('events');
+const Position = require('./Position');
 
 class PositionManager extends EventEmitter {
-  constructor({ wallet, priceManager, logger, config }) {
+  constructor(priceManager, wallet, config = {}) {
     super();
-    this.wallet = wallet;
+    
     this.priceManager = priceManager;
-    this.logger = logger;
-    this.config = config;
+    this.wallet = wallet;
     this.positions = new Map();
     this.tradingEnabled = true;
+    
+    // Default config
+    this.config = {
+      RISK_PER_TRADE: 0.01, // 1% of wallet per trade
+      MAX_MCAP_POSITION: 0.001, // 0.1% of market cap
+      STOP_LOSS_LEVEL: 0.1, // 10% stop loss
+      TAKE_PROFIT_LEVEL: 0.5, // 50% take profit
+      TRAILING_STOP_LEVEL: 0.2, // 20% trailing stop
+      ...config
+    };
+    
+    this.logger = {
+      info: console.log,
+      warn: console.warn,
+      error: console.error
+    };
   }
 
-  openPosition(token) {
-    if (!this.tradingEnabled) {
-      this.logger.info("Trading is disabled, cannot open position");
-      return null;
-    }
+  isTradingEnabled() {
+    return this.tradingEnabled;
+  }
 
-    if (this.positions.has(token.mint)) {
-      this.logger.info(`Position already exists for ${token.symbol}`);
-      return null;
-    }
+  pauseTrading() {
+    this.tradingEnabled = false;
+    this.emit('tradingPaused');
+  }
 
+  resumeTrading() {
+    this.tradingEnabled = true;
+    this.emit('tradingResumed');
+  }
+
+  calculatePositionSize(token) {
+    const walletBalance = this.wallet.getBalance();
+    const maxRiskAmount = walletBalance * this.config.RISK_PER_TRADE;
+    const maxMcapAmount = token.marketCapSol * this.config.MAX_MCAP_POSITION;
+    return Math.min(maxRiskAmount, maxMcapAmount);
+  }
+
+  async openPosition(token, positionSize) {
     try {
-      const walletBalance = this.wallet.getBalance();
-      const maxRiskAmount = walletBalance * this.config.RISK_PER_TRADE;
-      const maxMcapAmount = token.marketCapSol * this.config.MAX_MCAP_POSITION;
-      const positionSize = Math.min(maxRiskAmount, maxMcapAmount);
+      if (!this.tradingEnabled) {
+        this.logger.info("Trading is disabled, cannot open position");
+        return null;
+      }
 
-      if (!this.wallet.canAffordTrade(positionSize)) {
+      if (this.positions.has(token.mint)) {
+        throw new Error('Position already exists for this token');
+      }
+
+      const size = positionSize || this.calculatePositionSize(token);
+      if (!this.wallet.canAffordTrade(size)) {
         this.logger.warn("Insufficient funds for position");
         return null;
       }
 
-      const position = {
-        mint: token.mint,
-        symbol: token.symbol,
-        size: positionSize,
-        entryPrice: token.currentPrice,
-        currentPrice: token.currentPrice,
-        openTime: Date.now(),
-      };
-
+      const position = new Position(token, this.priceManager, this.wallet, {
+        ...this.config,
+        token  // Pass token reference for OHLCV data
+      });
+      
+      // Open the position
+      await position.open(token.getCurrentPrice(), size);
+      
       this.positions.set(token.mint, position);
       this.emit("positionOpened", { position, token });
-
+      
+      // Subscribe to position updates
+      position.on('updated', (state) => {
+        this.emit('positionUpdated', { mint: token.mint, state });
+      });
+      
+      position.on('closed', (state) => {
+        this.positions.delete(token.mint);
+        this.emit('positionClosed', { mint: token.mint, state });
+      });
+      
       return position;
     } catch (error) {
-      this.logger.error("Failed to open position:", error);
-      return null;
+      this.logger.error("Failed to open position", {
+        symbol: token.symbol,
+        error: error.message,
+      });
+      throw error;
     }
   }
 
-  closePosition(mint, reason = "") {
-    const position = this.positions.get(mint);
-    if (!position) return false;
-
-    try {
-      this.positions.delete(mint);
-      this.emit("positionClosed", { position, reason });
-      this.logger.info(`Closed position for ${position.symbol}: ${reason}`);
-      return true;
-    } catch (error) {
-      this.logger.error("Failed to close position:", error);
-      return false;
-    }
+  getPosition(mint) {
+    return this.positions.get(mint);
   }
 
-  updatePositions() {
+  getAllPositions() {
+    return Array.from(this.positions.values());
+  }
+
+  async updatePosition(token) {
+    const position = this.positions.get(token.mint);
+    if (!position) return;
+
+    const currentPrice = token.getCurrentPrice();
+    position.updatePrice(currentPrice);
+  }
+
+  async updatePositions() {
     for (const [mint, position] of this.positions) {
-      // Get the token from the position itself since we store it there
-      const token = position;
-      if (!token) continue;
-
-      const priceChange =
-        ((token.currentPrice - position.entryPrice) / position.entryPrice) *
-        100;
-
-      // Check stop loss
-      if (priceChange <= -this.config.STOP_LOSS_PERCENT) {
-        this.closePosition(mint, "Stop loss triggered");
-        continue;
-      }
-
-      // Check take profit
-      if (priceChange >= this.config.TAKE_PROFIT_PERCENT) {
-        this.closePosition(mint, "Take profit triggered");
-        continue;
-      }
-
-      // Update trailing stop if enabled
-      if (this.config.TRAILING_STOP_PERCENT && priceChange > 0) {
-        const trailingStopPrice =
-          token.currentPrice * (1 - this.config.TRAILING_STOP_PERCENT / 100);
-        if (token.currentPrice <= trailingStopPrice) {
-          this.closePosition(mint, "Trailing stop triggered");
-        }
+      try {
+        await this.updatePosition(position.token);
+      } catch (error) {
+        this.logger.error('Failed to update position', {
+          mint,
+          error: error.message
+        });
       }
     }
   }
 
   async emergencyCloseAll() {
-    this.tradingEnabled = false;
-    const closedPositions = [];
-
-    for (const [mint] of this.positions) {
-      if (this.closePosition(mint, "Emergency close")) {
-        closedPositions.push(mint);
-      }
+    const promises = [];
+    for (const [mint, position] of this.positions.entries()) {
+      promises.push(position.close(position.currentPrice, 'emergency'));
     }
-
-    this.emit("emergencyClose", { closedPositions });
-    return closedPositions;
-  }
-
-  getActivePositions() {
-    return Array.from(this.positions.values());
-  }
-
-  getPosition(tokenMint) {
-    return this.positions.get(tokenMint);
+    await Promise.all(promises);
+    this.positions.clear();
+    this.emit('emergencyStop');
   }
 }
 

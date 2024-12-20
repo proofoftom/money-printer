@@ -1,4 +1,6 @@
 const EventEmitter = require('events');
+const ExitStrategies = require('./ExitStrategies');
+const winston = require('winston');
 
 const STATES = {
   PENDING: 'PENDING',
@@ -15,12 +17,37 @@ class Position extends EventEmitter {
     this.config = {
       takeProfitLevel: 50,
       stopLossLevel: 10,
+      trailingStopLevel: 20,
+      volumeDropEnabled: true,
+      volumeDropThreshold: 50,
+      priceVelocityEnabled: true,
+      priceVelocityThreshold: -0.1,
+      scoreBasedEnabled: true,
+      minimumScoreThreshold: 30,
       TRANSACTION_FEES: {
         BUY: 0,
         SELL: 0
       },
       ...config
     };
+
+    // Initialize logger
+    this.logger = winston.createLogger({
+      level: 'info',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+      ),
+      defaultMeta: { service: 'position-service' },
+      transports: [
+        new winston.transports.Console({
+          format: winston.format.simple()
+        })
+      ]
+    });
+
+    // Initialize exit strategies
+    this.exitStrategies = new ExitStrategies(this.logger);
 
     // Core position data
     this.mint = token.mint;
@@ -32,34 +59,43 @@ class Position extends EventEmitter {
     this.openedAt = null;
     this.closedAt = null;
 
-    // Pump metrics
-    this.tokenCreatedAt = token.createdAt;
-    this.timeToEntry = null;
-    this.initialPumpPeak = null;
-    this.timeToPumpPeak = null;
-    this.priceVelocity = 0;
-    this.volumeSinceCreation = 0;
-    this.tradeCountSinceCreation = 0;
+    // Price tracking
+    this.entryPrice = null;
+    this.currentPrice = token.getCurrentPrice();
+    this.highestPrice = null;
+    this.lowestPrice = null;
     this.lastPriceUpdate = Date.now();
-    this.executionSlippage = 0;
 
-    // P&L tracking
+    // Performance metrics
     this.unrealizedPnLSol = 0;
     this.unrealizedPnLUsd = 0;
     this.realizedPnLSol = 0;
     this.realizedPnLUsd = 0;
     this.realizedPnLWithFeesSol = 0;
     this.realizedPnLWithFeesUsd = 0;
-    this.transactionFees = 0;
     this.highestUnrealizedPnLSol = 0;
     this.roiPercentage = 0;
     this.roiPercentageWithFees = 0;
+    this.priceVelocity = 0;
+    this.volumeSinceCreation = 0;
+    this.tradeCountSinceCreation = 0;
+    this.score = {
+      overall: 0,
+      priceComponent: 0,
+      volumeComponent: 0,
+      timeComponent: 0
+    };
 
-    // Price tracking
-    this.entryPrice = null;
-    this.currentPrice = token.getCurrentPrice();
-    this.highestPrice = null;
-    this.lowestPrice = null;
+    // Pump metrics
+    this.tokenCreatedAt = token.createdAt;
+    this.timeToEntry = null;
+    this.initialPumpPeak = null;
+    this.timeToPumpPeak = null;
+    this.executionSlippage = 0;
+
+    // OHLCV metrics
+    this.entryCandle = null;
+    this.currentCandle = null;
   }
 
   async open(price, size) {
@@ -82,12 +118,35 @@ class Position extends EventEmitter {
     this.size = size;
     this.openedAt = Date.now();
     
+    // Add entry trade
+    this.trades.push({
+      type: 'ENTRY',
+      price,
+      size,
+      timestamp: this.openedAt
+    });
+    
+    // Store entry candle data
+    const currentCandle = this.token.ohlcvData.secondly[this.token.ohlcvData.secondly.length - 1];
+    if (currentCandle) {
+      this.entryCandle = { ...currentCandle };
+      this.currentCandle = { ...currentCandle };
+    }
+    
     // Calculate pump metrics
     this.timeToEntry = this.openedAt - this.tokenCreatedAt;
     this.initialPumpPeak = Math.max(price, this.token.getHighestPrice());
     this.timeToPumpPeak = this.token.getHighestPriceTime() - this.tokenCreatedAt;
     this.volumeSinceCreation = this.token.getVolumeSinceCreation();
     this.tradeCountSinceCreation = this.token.getTradeCount();
+    
+    // Copy initial score
+    this.score = { ...this.token.score };
+
+    // Initialize price tracking
+    this.highestPrice = price;
+    this.lowestPrice = price;
+    this.currentPrice = price;
 
     this.updatePriceMetrics(price);
     this.emit('opened', this.getState());
@@ -107,6 +166,15 @@ class Position extends EventEmitter {
     this.state = STATES.CLOSED;
     this.closedAt = Date.now();
     
+    // Add exit trade
+    this.trades.push({
+      type: 'EXIT',
+      price,
+      size: this.size,
+      timestamp: this.closedAt,
+      reason
+    });
+    
     // Calculate execution slippage
     const expectedPrice = this.currentPrice;
     this.executionSlippage = ((expectedPrice - price) / expectedPrice) * 100;
@@ -124,8 +192,25 @@ class Position extends EventEmitter {
     const timeDelta = now - this.lastPriceUpdate;
     const priceDelta = newPrice - this.currentPrice;
     
-    // Update price velocity (price change per second)
-    this.priceVelocity = timeDelta > 0 ? priceDelta / (timeDelta / 1000) : 0;
+    // Update price velocity (price change percentage per second)
+    this.priceVelocity = timeDelta > 0 ? (priceDelta / this.currentPrice) / (timeDelta / 1000) : 0;
+    
+    // Update price extremes
+    if (this.highestPrice === null || newPrice > this.highestPrice) {
+      this.highestPrice = newPrice;
+    }
+    if (this.lowestPrice === null || newPrice < this.lowestPrice) {
+      this.lowestPrice = newPrice;
+    }
+    
+    // Update OHLCV data
+    const currentCandle = this.token.ohlcvData.secondly[this.token.ohlcvData.secondly.length - 1];
+    if (currentCandle) {
+      this.currentCandle = { ...currentCandle };
+    }
+    
+    // Update score
+    this.score = { ...this.token.score };
     
     // Update volume and trade metrics
     this.volumeSinceCreation = this.token.getVolumeSinceCreation();
@@ -134,27 +219,48 @@ class Position extends EventEmitter {
     this.updatePriceMetrics(newPrice);
     this.lastPriceUpdate = now;
     
+    // Emit update event with current state
     this.emit('updated', this.getState());
+    
+    // Check exit signals
+    const exitSignal = this.checkExitSignals();
+    if (exitSignal) {
+      this.logger.info('Exit signal triggered', {
+        symbol: this.symbol,
+        reason: exitSignal.reason,
+        portion: exitSignal.portion,
+        currentPrice: newPrice,
+        entryPrice: this.entryPrice,
+        pnl: this.unrealizedPnLSol
+      });
+      
+      // Emit exit signal before closing
+      this.emit('exitSignal', exitSignal);
+      
+      // Close the position
+      this.close(newPrice, exitSignal.reason);
+    }
   }
 
   updatePriceMetrics(price) {
-    if (this.state !== STATES.OPEN) return;
-
     this.currentPrice = price;
-    this.highestPrice = Math.max(this.highestPrice, price);
-    this.lowestPrice = Math.min(this.lowestPrice, price);
-
-    // Calculate unrealized P&L
-    this.unrealizedPnLSol = (price - this.entryPrice) * this.size;
-    this.unrealizedPnLUsd = this.priceManager.solToUSD(this.unrealizedPnLSol);
-
-    // Update highest unrealized P&L
-    if (this.unrealizedPnLSol > this.highestUnrealizedPnLSol) {
-      this.highestUnrealizedPnLSol = this.unrealizedPnLSol;
+    
+    if (this.state === STATES.OPEN) {
+      const priceDiff = price - this.entryPrice;
+      const totalValue = price * this.size;
+      const entryValue = this.entryPrice * this.size;
+      
+      this.unrealizedPnLSol = totalValue - entryValue;
+      this.unrealizedPnLUsd = this.priceManager.solToUSD(this.unrealizedPnLSol);
+      this.roiPercentage = (priceDiff / this.entryPrice) * 100;
+      
+      if (this.unrealizedPnLSol > this.highestUnrealizedPnLSol) {
+        this.highestUnrealizedPnLSol = this.unrealizedPnLSol;
+      }
     }
-
-    // Calculate ROI percentage
-    this.roiPercentage = ((price - this.entryPrice) / this.entryPrice) * 100;
+    
+    // Emit the update event with current state
+    this.emit('updated', this.getState());
   }
 
   calculateFinalPnL(price) {
@@ -179,6 +285,22 @@ class Position extends EventEmitter {
     this.unrealizedPnLUsd = 0;
   }
 
+  checkExitSignals() {
+    if (this.state !== STATES.OPEN) {
+      return null;
+    }
+
+    try {
+      return this.exitStrategies.checkExitSignals(this);
+    } catch (error) {
+      this.logger.error('Error checking exit signals', {
+        error: error.message,
+        symbol: this.symbol
+      });
+      return null;
+    }
+  }
+
   // Position metrics
   getTimeInPosition() {
     if (!this.openedAt) return 0;
@@ -187,12 +309,10 @@ class Position extends EventEmitter {
   }
 
   getAverageEntryPrice() {
-    const entryTrades = this.trades.filter(trade => trade.type === 'ENTRY');
-    if (entryTrades.length === 0) return 0;
-
-    const totalValue = entryTrades.reduce((sum, trade) => sum + (trade.price * trade.size), 0);
-    const totalSize = entryTrades.reduce((sum, trade) => sum + trade.size, 0);
-    return totalValue / totalSize;
+    if (this.state === STATES.OPEN) {
+      return this.entryPrice;
+    }
+    return 0;
   }
 
   getState() {
@@ -229,7 +349,35 @@ class Position extends EventEmitter {
       volumeSinceCreation: this.volumeSinceCreation,
       tradeCountSinceCreation: this.tradeCountSinceCreation,
       lastPriceUpdate: this.lastPriceUpdate,
-      executionSlippage: this.executionSlippage
+      executionSlippage: this.executionSlippage,
+      entryCandle: this.entryCandle,
+      currentCandle: this.currentCandle,
+      score: this.score
+    };
+  }
+
+  toJSON() {
+    return {
+      mint: this.mint,
+      symbol: this.symbol,
+      state: this.state,
+      size: this.size,
+      trades: this.trades,
+      createdAt: this.createdAt,
+      openedAt: this.openedAt,
+      closedAt: this.closedAt,
+      entryPrice: this.entryPrice,
+      currentPrice: this.currentPrice,
+      highestPrice: this.highestPrice,
+      lowestPrice: this.lowestPrice,
+      unrealizedPnLSol: this.unrealizedPnLSol,
+      unrealizedPnLUsd: this.unrealizedPnLUsd,
+      realizedPnLSol: this.realizedPnLSol,
+      realizedPnLUsd: this.realizedPnLUsd,
+      roiPercentage: this.roiPercentage,
+      priceVelocity: this.priceVelocity,
+      score: this.score,
+      config: this.config
     };
   }
 }

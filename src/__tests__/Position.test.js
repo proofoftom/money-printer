@@ -1,22 +1,78 @@
 const Position = require('../Position');
+const ExitStrategies = require('../ExitStrategies');
+
+jest.mock('../ExitStrategies');
 
 describe('Position', () => {
   let position;
   let mockToken;
   let mockPriceManager;
+  let mockWallet;
+  let mockExitStrategies;
 
   beforeEach(() => {
+    // Mock ExitStrategies
+    mockExitStrategies = {
+      checkExitSignals: jest.fn()
+    };
+    ExitStrategies.mockImplementation(() => mockExitStrategies);
+
+    // Mock dependencies
     mockToken = {
       mint: 'test-mint',
       symbol: 'TEST',
-      getCurrentPrice: jest.fn(() => 100)
+      getCurrentPrice: jest.fn().mockReturnValue(100),
+      createdAt: Date.now() - 3600000,
+      indicators: {
+        volumeProfile: new Map([
+          ['relativeVolume', 100],
+          ['volumeMA', 1000]
+        ]),
+        priceVelocity: 0,
+        volatility: 0.2,
+        safetyScore: 80
+      },
+      ohlcvData: {
+        secondly: [{
+          timestamp: Date.now(),
+          open: 100,
+          high: 100,
+          low: 100,
+          close: 100,
+          volume: 1000,
+          trades: 10
+        }]
+      },
+      getHighestPrice: jest.fn().mockReturnValue(100),
+      getHighestPriceTime: jest.fn().mockReturnValue(Date.now() - 1800000),
+      getVolumeSinceCreation: jest.fn().mockReturnValue(10000),
+      getTradeCount: jest.fn().mockReturnValue(100),
+      getVolumeProfile: jest.fn().mockReturnValue({
+        relativeVolume: 1.5,
+        volumeMA: 1000
+      }),
+      getPriceVelocity: jest.fn().mockReturnValue(0.01),
+      getVolatility: jest.fn().mockReturnValue(0.2),
+      getSafetyScore: jest.fn().mockReturnValue(80),
+      getInitialPumpPeak: jest.fn().mockReturnValue({
+        price: 120,
+        timestamp: Date.now() - 1800000
+      })
     };
 
     mockPriceManager = {
-      solToUSD: jest.fn(sol => sol * 100) // 1 SOL = $100
+      getCurrentPrice: jest.fn().mockReturnValue(100),
+      solToUSD: jest.fn().mockImplementation(sol => sol * 100) // 1 SOL = $100
     };
 
-    position = new Position(mockToken, mockPriceManager);
+    mockWallet = {
+      getBalance: jest.fn().mockReturnValue(1000),
+      canAffordTrade: jest.fn().mockReturnValue(true),
+      processTrade: jest.fn().mockResolvedValue(true)
+    };
+
+    // Create position instance
+    position = new Position(mockToken, mockPriceManager, mockWallet, {});
   });
 
   describe('State Management', () => {
@@ -24,11 +80,11 @@ describe('Position', () => {
       expect(position.state).toBe(Position.STATES.PENDING);
     });
 
-    test('transitions from PENDING to OPEN', () => {
+    test('transitions from PENDING to OPEN', async () => {
       const openSpy = jest.fn();
       position.on('opened', openSpy);
 
-      position.open(100, 1);
+      await position.open(100, 1);
       
       expect(position.state).toBe(Position.STATES.OPEN);
       expect(position.entryPrice).toBe(100);
@@ -38,12 +94,12 @@ describe('Position', () => {
       expect(position.trades[0].type).toBe('ENTRY');
     });
 
-    test('transitions from OPEN to CLOSED', () => {
+    test('transitions from OPEN to CLOSED', async () => {
       const closeSpy = jest.fn();
       position.on('closed', closeSpy);
 
-      position.open(100, 1);
-      position.close(150, 'TAKE_PROFIT');
+      await position.open(100, 1);
+      await position.close(150, 'TAKE_PROFIT');
       
       expect(position.state).toBe(Position.STATES.CLOSED);
       expect(closeSpy).toHaveBeenCalled();
@@ -52,42 +108,46 @@ describe('Position', () => {
       expect(position.trades[1].reason).toBe('TAKE_PROFIT');
     });
 
-    test('throws on invalid state transitions', () => {
-      expect(() => position.close(100)).toThrow();
+    test('throws on invalid state transitions', async () => {
+      // Should throw when trying to close a PENDING position
+      await expect(position.close(100)).rejects.toThrow();
       
-      position.open(100, 1);
-      expect(() => position.open(100, 1)).toThrow();
+      // Open the position
+      await position.open(100, 1);
       
-      position.close(150, 'TAKE_PROFIT');
-      expect(() => position.close(200)).toThrow();
+      // Should throw when trying to open an already OPEN position
+      await expect(position.open(100, 1)).rejects.toThrow();
+      
+      // Close the position
+      await position.close(150, 'TAKE_PROFIT');
+      
+      // Should throw when trying to close an already CLOSED position
+      await expect(position.close(200)).rejects.toThrow();
     });
   });
 
   describe('Price Updates and P&L Calculations', () => {
-    beforeEach(() => {
-      position.open(100, 1); // Open position at $100 with 1 SOL
+    beforeEach(async () => {
+      await position.open(100, 1); // Open position at $100 with 1 SOL
     });
 
-    test('should correctly update price and track highest price', () => {
-      const position = new Position(mockToken, mockPriceManager);
-      position.open(100, 1);
-
-      position.updatePrice(120);
+    test('should correctly update price and track highest price', async () => {
+      await position.updatePrice(120);
       expect(position.currentPrice).toBe(120);
       expect(position.highestPrice).toBe(120);
 
-      position.updatePrice(110);
+      await position.updatePrice(110);
       expect(position.currentPrice).toBe(110);
       expect(position.highestPrice).toBe(120); // Should maintain highest price
 
-      position.updatePrice(130);
+      await position.updatePrice(130);
       expect(position.currentPrice).toBe(130);
       expect(position.highestPrice).toBe(130);
     });
 
     test('updates price and metrics', () => {
       const updateSpy = jest.fn();
-      position.on('priceUpdated', updateSpy);
+      position.on('updated', updateSpy);
 
       position.updatePrice(120);
       
@@ -114,9 +174,9 @@ describe('Position', () => {
       expect(position.highestUnrealizedPnLSol).toBe(20);
     });
 
-    test('calculates realized P&L on close', () => {
+    test('calculates realized P&L on close', async () => {
       position.updatePrice(150);
-      position.close(150, 'TAKE_PROFIT');
+      await position.close(150, 'TAKE_PROFIT');
 
       expect(position.realizedPnLSol).toBe(50); // 50 SOL profit
       expect(position.realizedPnLUsd).toBe(5000); // $5000 profit
@@ -126,8 +186,8 @@ describe('Position', () => {
   });
 
   describe('Metrics Calculation', () => {
-    beforeEach(() => {
-      position.open(100, 1); // Open position at 100 SOL with 1 SOL size
+    beforeEach(async () => {
+      await position.open(100, 1); // Open position at 100 SOL with 1 SOL size
     });
 
     test('updates price extremes correctly', () => {
@@ -183,9 +243,9 @@ describe('Position', () => {
   });
 
   describe('Position Metrics', () => {
-    test('calculates time in position', () => {
+    test('calculates time in position', async () => {
       const startTime = Date.now();
-      position.open(100, 1);
+      await position.open(100, 1);
       
       // Fast forward time
       jest.advanceTimersByTime(3600000); // 1 hour
@@ -193,10 +253,12 @@ describe('Position', () => {
       expect(position.getTimeInPosition()).toBeGreaterThan(0);
     });
 
-    test('calculates average entry price', () => {
-      expect(position.getAverageEntryPrice()).toBe(0); // No entries yet
+    test('calculates average entry price', async () => {
+      // A new position should have no entry price
+      expect(position.getAverageEntryPrice()).toBe(0);
       
-      position.open(100, 1);
+      // After opening, should return the entry price
+      await position.open(100, 1);
       expect(position.getAverageEntryPrice()).toBe(100);
     });
   });
@@ -208,15 +270,15 @@ describe('Position', () => {
         stopLossLevel: 5
       };
 
-      const positionWithConfig = new Position(mockToken, mockPriceManager, customConfig);
+      const positionWithConfig = new Position(mockToken, mockPriceManager, mockWallet, customConfig);
       expect(positionWithConfig.config.takeProfitLevel).toBe(30);
       expect(positionWithConfig.config.stopLossLevel).toBe(5);
     });
   });
 
   describe('Serialization', () => {
-    test('serializes to JSON with all required fields', () => {
-      position.open(100, 1);
+    test('serializes to JSON with all required fields', async () => {
+      await position.open(100, 1);
       position.updatePrice(120);
 
       const json = position.toJSON();
@@ -230,6 +292,143 @@ describe('Position', () => {
       expect(json).toHaveProperty('unrealizedPnLSol', 20);
       expect(json).toHaveProperty('trades');
       expect(json).toHaveProperty('config');
+    });
+  });
+
+  describe('Exit Strategy Integration', () => {
+    beforeEach(async () => {
+      // Open position
+      await position.open(100, 1);
+    });
+
+    it('should initialize ExitStrategies with logger', () => {
+      expect(position.exitStrategies).toBeDefined();
+      expect(position.logger).toBeDefined();
+    });
+
+    it('should check exit signals on price update', () => {
+      // Setup mock exit signal
+      const mockExitSignal = {
+        reason: 'STOP_LOSS',
+        portion: 1.0
+      };
+      mockExitStrategies.checkExitSignals.mockReturnValue(mockExitSignal);
+
+      // Update price
+      position.updatePrice(90);
+
+      // Verify exit signal check
+      expect(mockExitStrategies.checkExitSignals).toHaveBeenCalledWith(position);
+    });
+
+    it('should emit exitSignal event when signal is triggered', async () => {
+      // Setup mock exit signal
+      const mockExitSignal = {
+        reason: 'TRAILING_STOP',
+        portion: 0.5
+      };
+      mockExitStrategies.checkExitSignals.mockReturnValue(mockExitSignal);
+
+      // Setup event listener
+      const exitSignalHandler = jest.fn();
+      position.on('exitSignal', exitSignalHandler);
+
+      // Update price
+      position.updatePrice(90);
+
+      // Verify event emission
+      expect(exitSignalHandler).toHaveBeenCalledWith(mockExitSignal);
+    });
+
+    it('should not emit exitSignal event when no signal is triggered', async () => {
+      // Setup mock to return no exit signal
+      mockExitStrategies.checkExitSignals.mockReturnValue(null);
+
+      // Setup event listener
+      const exitSignalHandler = jest.fn();
+      position.on('exitSignal', exitSignalHandler);
+
+      // Update price
+      position.updatePrice(110);
+
+      // Verify no event emission
+      expect(exitSignalHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle error in exit signal check gracefully', async () => {
+      // Setup mock to throw error
+      mockExitStrategies.checkExitSignals.mockImplementation(() => {
+        throw new Error('Test error');
+      });
+
+      // Setup event listener
+      const exitSignalHandler = jest.fn();
+      position.on('exitSignal', exitSignalHandler);
+
+      // Update price (should not throw)
+      expect(() => position.updatePrice(110)).not.toThrow();
+
+      // Verify no event emission
+      expect(exitSignalHandler).not.toHaveBeenCalled();
+    });
+
+    it('should update highest price for trailing stop calculation', async () => {
+      // Update price to new high
+      position.updatePrice(120);
+      expect(position.highestPrice).toBe(120);
+
+      // Update price to lower value
+      position.updatePrice(110);
+      expect(position.highestPrice).toBe(120); // Should maintain highest price
+    });
+
+    it('should not check exit signals when position is not open', async () => {
+      // Close position
+      await position.close(100);
+
+      // Setup event listener
+      const exitSignalHandler = jest.fn();
+      position.on('exitSignal', exitSignalHandler);
+
+      // Update price
+      position.updatePrice(90);
+
+      // Verify no exit signal check
+      expect(mockExitStrategies.checkExitSignals).not.toHaveBeenCalled();
+      expect(exitSignalHandler).not.toHaveBeenCalled();
+    });
+
+    it('should maintain proper price tracking for exit conditions', async () => {
+      // Initial state
+      expect(position.entryPrice).toBe(100);
+      expect(position.currentPrice).toBe(100);
+      expect(position.highestPrice).toBe(100);
+
+      // Update to higher price
+      position.updatePrice(120);
+      expect(position.currentPrice).toBe(120);
+      expect(position.highestPrice).toBe(120);
+
+      // Update to lower price
+      position.updatePrice(110);
+      expect(position.currentPrice).toBe(110);
+      expect(position.highestPrice).toBe(120); // Should maintain highest
+    });
+
+    it('should calculate price velocity correctly', async () => {
+      // Mock time for consistent testing
+      jest.useFakeTimers();
+      const now = Date.now();
+
+      // Update price after 1 second
+      jest.advanceTimersByTime(1000);
+      position.updatePrice(110); // 10% increase in 1 second
+
+      // Verify price velocity calculation
+      expect(position.priceVelocity).toBeCloseTo(0.1); // 10% per second
+
+      // Cleanup
+      jest.useRealTimers();
     });
   });
 });

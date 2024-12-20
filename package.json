@@ -28,13 +28,13 @@
     "json2csv": "^5.0.7",
     "keypress": "^0.2.1",
     "node-notifier": "^10.0.1",
-    "winston": "^3.11.0",
+    "winston": "^3.17.0",
     "winston-daily-rotate-file": "^4.7.1",
     "ws": "^8.16.0"
   },
   "devDependencies": {
     "@babel/core": "^7.23.6",
-    "@babel/preset-env": "^7.23.6",
+    "@babel/preset-env": "^7.26.0",
     "@jest/globals": "^29.7.0",
     "@types/jest": "^29.5.11",
     "babel-jest": "^29.7.0",
@@ -46,10 +46,19 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/__tests__/**/*.test.js"],
-    "collectCoverageFrom": ["src/**/*.js"],
-    "coveragePathIgnorePatterns": ["/node_modules/", "/coverage/"],
-    "setupFilesAfterEnv": ["<rootDir>/jest.setup.js"],
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.js"
+    ],
+    "coveragePathIgnorePatterns": [
+      "/node_modules/",
+      "/coverage/"
+    ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.js"
+    ],
     "transform": {
       "^.+\\.jsx?$": "babel-jest"
     },

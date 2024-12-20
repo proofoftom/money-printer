@@ -142,3 +142,123 @@ if (result.shouldExit) {
    - Cache frequently used calculations
    - Minimize redundant checks
    - Efficient volume history management
+
+## Advanced Exit Strategies
+
+### Pattern Recognition
+- **Bearish Engulfing**: Strong reversal signal with larger bearish candle
+- **Evening Star**: Three-candle reversal pattern at market tops
+- **Shooting Star**: Single-candle reversal with long upper shadow
+
+### Dynamic Take-Profit
+- Adjusts based on pump strength and market conditions
+- Considers token age and volume profile
+- Partial exits with size based on market conditions
+
+### OHLCV Metrics
+- Volume drop detection with configurable thresholds
+- Price velocity monitoring for rapid changes
+- Score-based exits using multiple indicators
+
+## Performance Monitoring
+
+### Strategy Evaluation
+```javascript
+{
+  executionTime: 123,        // Time taken to evaluate strategies
+  triggeredStrategy: {
+    reason: 'VOLUME_DROP',
+    portion: 1.0
+  },
+  metrics: {
+    currentPrice: 100,
+    entryPrice: 90,
+    pnl: 11.11,              // Percent gain/loss
+    timeInPosition: 3600000  // Duration in position
+  }
+}
+```
+
+### Logging Levels
+
+1. **Debug Level**
+   - Strategy evaluation start/end
+   - Configuration details
+   - Performance metrics
+   - Execution times
+
+2. **Info Level**
+   - Exit signals triggered
+   - Position details
+   - PnL information
+   - Strategy decisions
+
+3. **Error Level**
+   - Strategy evaluation errors
+   - Missing data handling
+   - Configuration issues
+   - Market condition anomalies
+
+### Market Condition Handling
+
+1. **High Volatility**
+   - More conservative exit portions
+   - Tighter trailing stops
+   - Faster reaction to reversals
+
+2. **Low Liquidity**
+   - Volume-based exit triggers
+   - Reduced position sizes
+   - Conservative take-profit levels
+
+3. **Price Manipulation**
+   - Detection of unusual price movements
+   - Protection against false signals
+   - Emergency exit procedures
+
+## Position Sizing Integration
+
+### Risk-Based Sizing
+```javascript
+{
+  riskFactors: {
+    volatility: 0.5,        // Market volatility score
+    liquidity: 0.8,         // Liquidity score
+    momentum: 0.7,          // Trend strength
+    safety: 0.9            // Safety score
+  },
+  sizingDecision: {
+    baseSize: 1.0,         // Standard position size
+    adjustedSize: 0.7,     // Size after risk adjustment
+    reason: 'HIGH_VOLATILITY'
+  }
+}
+```
+
+### Dynamic Adjustments
+- Reduces position size in high-risk conditions
+- Increases size in favorable conditions
+- Considers multiple risk factors
+- Adapts to changing market conditions
+
+## Testing Coverage
+
+1. **Basic Conditions**
+   - Stop loss triggers
+   - Take profit levels
+   - Trailing stop behavior
+
+2. **Market Conditions**
+   - High volatility handling
+   - Low liquidity scenarios
+   - Manipulation attempts
+
+3. **Strategy Interaction**
+   - Priority handling
+   - Signal combination
+   - Conflict resolution
+
+4. **Edge Cases**
+   - Missing data handling
+   - Invalid input protection
+   - Error recovery
