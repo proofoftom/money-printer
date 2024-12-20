@@ -84,7 +84,8 @@ class MoneyPrinter {
         safetyChecker: this.safetyChecker,
         positionManager: this.positionManager,
         priceManager: this.priceManager,
-        webSocketManager: this.webSocketManager
+        webSocketManager: this.webSocketManager,
+        logger: this.logger
       });
       this.logger.debug('Token tracker initialized');
 

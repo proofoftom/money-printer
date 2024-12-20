@@ -8,12 +8,14 @@ class TokenTracker extends EventEmitter {
     positionManager,
     priceManager,
     webSocketManager,
+    logger,
   }) {
     super();
     this.safetyChecker = safetyChecker;
     this.positionManager = positionManager;
     this.priceManager = priceManager;
     this.webSocketManager = webSocketManager;
+    this.logger = logger;
     this.tokens = new Map();
     this.config = webSocketManager.config; // Get config from WebSocketManager
 
@@ -67,6 +69,8 @@ class TokenTracker extends EventEmitter {
     const token = new Token(tokenData, {
       priceManager: this.priceManager,
       safetyChecker: this.safetyChecker,
+      logger: this.logger,
+      config: this.config
     });
 
     // Listen for state changes

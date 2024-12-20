@@ -75,6 +75,12 @@ module.exports = {
     },
   },
 
+  // Safety check configuration
+  SAFETY_CHECK_INTERVAL: 2000, // Check every 2 seconds
+  MAX_TIME_WITHOUT_TRADES: 300000, // 5 minutes
+  MAX_PRICE_DROP_PERCENT: 0.5, // 50% drop from initial price
+  MAX_HOLDER_CONCENTRATION: 30, // Maximum percentage of supply held by top 10 holders
+
   // Keyboard shortcuts
   KEYBOARD_SHORTCUTS: {
     TRADING: {

@@ -339,7 +339,7 @@ class Token extends EventEmitter {
 
     // Check holder concentration
     const topHoldersConcentration = this.getTopHoldersConcentration();
-    if (topHoldersConcentration > 30) {
+    if (topHoldersConcentration > this.config.MAX_HOLDER_CONCENTRATION) {
       this.logger.warn(`Token marked unsafe: Top holders concentration too high (${topHoldersConcentration.toFixed(2)}%)`);
       this.setState(STATES.UNSAFE);
       return false;
