@@ -1,4 +1,4 @@
-const EventEmitter = require('events');
+const EventEmitter = require("events");
 
 class PositionManager extends EventEmitter {
   constructor({ wallet, priceManager, logger, config }) {
@@ -13,7 +13,7 @@ class PositionManager extends EventEmitter {
 
   openPosition(token) {
     if (!this.tradingEnabled) {
-      this.logger.info('Trading is disabled, cannot open position');
+      this.logger.info("Trading is disabled, cannot open position");
       return null;
     }
 
@@ -29,7 +29,7 @@ class PositionManager extends EventEmitter {
       const positionSize = Math.min(maxRiskAmount, maxMcapAmount);
 
       if (!this.wallet.canAffordTrade(positionSize)) {
-        this.logger.warn('Insufficient funds for position');
+        this.logger.warn("Insufficient funds for position");
         return null;
       }
 
@@ -39,30 +39,30 @@ class PositionManager extends EventEmitter {
         size: positionSize,
         entryPrice: token.currentPrice,
         currentPrice: token.currentPrice,
-        openTime: Date.now()
+        openTime: Date.now(),
       };
 
       this.positions.set(token.mint, position);
-      this.emit('positionOpened', { position, token });
+      this.emit("positionOpened", { position, token });
 
       return position;
     } catch (error) {
-      this.logger.error('Failed to open position:', error);
+      this.logger.error("Failed to open position:", error);
       return null;
     }
   }
 
-  closePosition(mint, reason = '') {
+  closePosition(mint, reason = "") {
     const position = this.positions.get(mint);
     if (!position) return false;
 
     try {
       this.positions.delete(mint);
-      this.emit('positionClosed', { position, reason });
+      this.emit("positionClosed", { position, reason });
       this.logger.info(`Closed position for ${position.symbol}: ${reason}`);
       return true;
     } catch (error) {
-      this.logger.error('Failed to close position:', error);
+      this.logger.error("Failed to close position:", error);
       return false;
     }
   }
@@ -73,25 +73,28 @@ class PositionManager extends EventEmitter {
       const token = position;
       if (!token) continue;
 
-      const priceChange = (token.currentPrice - position.entryPrice) / position.entryPrice * 100;
+      const priceChange =
+        ((token.currentPrice - position.entryPrice) / position.entryPrice) *
+        100;
 
       // Check stop loss
       if (priceChange <= -this.config.STOP_LOSS_PERCENT) {
-        this.closePosition(mint, 'Stop loss triggered');
+        this.closePosition(mint, "Stop loss triggered");
         continue;
       }
 
       // Check take profit
       if (priceChange >= this.config.TAKE_PROFIT_PERCENT) {
-        this.closePosition(mint, 'Take profit triggered');
+        this.closePosition(mint, "Take profit triggered");
         continue;
       }
 
       // Update trailing stop if enabled
       if (this.config.TRAILING_STOP_PERCENT && priceChange > 0) {
-        const trailingStopPrice = token.currentPrice * (1 - this.config.TRAILING_STOP_PERCENT / 100);
+        const trailingStopPrice =
+          token.currentPrice * (1 - this.config.TRAILING_STOP_PERCENT / 100);
         if (token.currentPrice <= trailingStopPrice) {
-          this.closePosition(mint, 'Trailing stop triggered');
+          this.closePosition(mint, "Trailing stop triggered");
         }
       }
     }
@@ -102,12 +105,12 @@ class PositionManager extends EventEmitter {
     const closedPositions = [];
 
     for (const [mint] of this.positions) {
-      if (this.closePosition(mint, 'Emergency close')) {
+      if (this.closePosition(mint, "Emergency close")) {
         closedPositions.push(mint);
       }
     }
 
-    this.emit('emergencyClose', { closedPositions });
+    this.emit("emergencyClose", { closedPositions });
     return closedPositions;
   }
 

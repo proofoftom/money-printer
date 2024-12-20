@@ -1,6 +1,6 @@
 module.exports = {
   // Core settings
-  MIN_TOKEN_AGE_SECONDS: 5, // 5 minutes minimum age
+  MIN_TOKEN_AGE_SECONDS: 5, // 5 seconds minimum age
   MAX_ENTRY_MCAP_USD: 100000, // $100k maximum market cap
   MIN_MCAP_POSITION: 0.001, // 0.1% minimum position size
   MAX_MCAP_POSITION: 0.01, // 1% maximum position size
@@ -12,7 +12,7 @@ module.exports = {
   TRAILING_STOP_PERCENT: 20, // 20% trailing stop
 
   // WebSocket settings
-  WS_URL: "wss://pumpportal.fun/api/data",
+  WS_ENDPOINT: "wss://pumpportal.fun/api/data", // Update WebSocket endpoint to match documentation
   RECONNECT_INTERVAL: 5000, // 5 seconds between reconnect attempts
 
   // Logging settings
@@ -76,83 +76,83 @@ module.exports = {
   },
 
   // Safety check configuration
-  SAFETY_CHECK_INTERVAL: 2000, // Check every 2 seconds
+  SAFETY_CHECK_INTERVAL: 2000, // Check token safety every 2 seconds
   MAX_TIME_WITHOUT_TRADES: 300000, // 5 minutes
   MAX_PRICE_DROP_PERCENT: 0.5, // 50% drop from initial price
   MAX_HOLDER_CONCENTRATION: 30, // Maximum percentage of supply held by top 10 holders
 
   // Transaction fees in SOL
   TRANSACTION_FEES: {
-    BUY: 0.02,  // Higher fee for buying due to token account creation
-    SELL: 0.01  // Standard transaction fee for selling
+    BUY: 0.02, // Higher fee for buying due to token account creation
+    SELL: 0.01, // Standard transaction fee for selling
   },
 
   // Dashboard configuration
   DASHBOARD: {
     CHART: {
-      CANDLE_INTERVAL: 5000,    // 5-second candles
-      MAX_CANDLES: 100,         // Number of candles to display
-      VOLUME_HEIGHT: 0.2,       // 20% of chart height for volume
-      PRICE_DECIMALS: 9,        // Number of decimals for price display
-      VOLUME_DECIMALS: 2        // Number of decimals for volume display
+      CANDLE_INTERVAL: 5000, // 5-second candles
+      MAX_CANDLES: 100, // Number of candles to display
+      VOLUME_HEIGHT: 0.2, // 20% of chart height for volume
+      PRICE_DECIMALS: 9, // Number of decimals for price display
+      VOLUME_DECIMALS: 2, // Number of decimals for volume display
     },
     COLORS: {
-      PRICE_UP: '#00ff00',
-      PRICE_DOWN: '#ff0000',
-      WARNING: '#ffff00',
-      ALERT: '#ff0000',
-      INFO: '#ffffff',
-      CHART_BG: '#1a1a1a',
-      GRID: '#2a2a2a'
+      PRICE_UP: "#00ff00",
+      PRICE_DOWN: "#ff0000",
+      WARNING: "#ffff00",
+      ALERT: "#ff0000",
+      INFO: "#ffffff",
+      CHART_BG: "#1a1a1a",
+      GRID: "#2a2a2a",
     },
-    REFRESH_RATE: 1000,         // UI refresh rate in ms
-    LOG_BUFFER: 1000,           // Number of log lines to keep
+    REFRESH_RATE: 1000, // UI refresh rate in ms
+    LOG_BUFFER: 1000, // Number of log lines to keep
     PANELS: {
-      CHART_HEIGHT: 0.4,        // 40% of screen height
-      CHART_WIDTH: 0.5,         // 50% of screen width
-      RIGHT_PANEL_WIDTH: 0.5,   // 50% of screen width
-      BOTTOM_HEIGHT: 0.3        // 30% of screen height
-    }
+      CHART_HEIGHT: 0.4, // 40% of screen height
+      CHART_WIDTH: 0.5, // 50% of screen width
+      RIGHT_PANEL_WIDTH: 0.5, // 50% of screen width
+      BOTTOM_HEIGHT: 0.3, // 30% of screen height
+    },
   },
 
   // Keyboard shortcuts
   SHORTCUTS: {
-    OPEN_POSITION: 'o',
-    CLOSE_POSITION: 'c',
-    TOKEN_DETAILS: 't',
-    WALLET_DETAILS: 'w',
-    HELP: '?',
-    QUIT: 'q',
-    FOCUS_CHART: '1',
-    FOCUS_POSITIONS: '2',
-    FOCUS_LOGS: '3',
-    CLEAR_LOGS: 'l'
+    OPEN_POSITION: "o",
+    CLOSE_POSITION: "c",
+    TOKEN_DETAILS: "t",
+    WALLET_DETAILS: "w",
+    HELP: "?",
+    QUIT: "q",
+    FOCUS_CHART: "1",
+    FOCUS_POSITIONS: "2",
+    FOCUS_LOGS: "3",
+    CLEAR_LOGS: "l",
   },
 
   // Alert configuration
   ALERTS: {
     PRICE_CHANGE: {
       enabled: true,
-      threshold: 5,           // 5% change
-      interval: 5000,         // Check every 5 seconds
-      sound: true
+      threshold: 5, // 5% change
+      interval: 5000, // Check every 5 seconds
+      sound: true,
     },
     WALLET_BALANCE: {
       enabled: true,
-      threshold: 10,          // Alert when balance drops by 10%
-      sound: true
+      threshold: 10, // Alert when balance drops by 10%
+      sound: true,
     },
     SAFETY_CONDITIONS: {
       enabled: true,
       sound: true,
-      flash: true            // Flash the UI on critical alerts
+      flash: true, // Flash the UI on critical alerts
     },
     SOUNDS: {
       TRADE_ENTRY: true,
       TRADE_EXIT: true,
       WARNING: true,
-      ERROR: true
-    }
+      ERROR: true,
+    },
   },
 
   // Keyboard shortcuts

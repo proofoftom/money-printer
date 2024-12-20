@@ -2,3 +2,4 @@ node_modules
 logs
 coverage
 test.bak
+config.json

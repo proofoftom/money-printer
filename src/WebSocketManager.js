@@ -1,6 +1,5 @@
 const WebSocket = require("ws");
 const EventEmitter = require("events");
-const config = require("./config");
 
 class WebSocketManager extends EventEmitter {
   constructor(config, logger) {
@@ -8,12 +7,10 @@ class WebSocketManager extends EventEmitter {
     this.config = config;
     this.logger = logger;
     this.isConnected = false;
-    this.reconnectAttempts = 0;
     this.subscribedTokens = new Set();
-    this.subscribedToNewTokens = false;
-    this.maxReconnectAttempts = 5;
-    this.reconnectTimer = null;
     this.ws = null;
+    this.connectAttempts = 0;
+    this.maxAttempts = 3;
 
     // Handle graceful shutdown
     process.on("SIGINT", () => {
@@ -22,202 +19,153 @@ class WebSocketManager extends EventEmitter {
     });
   }
 
-  sanitizeString(str) {
-    if (typeof str !== "string") return str;
-    // Remove null bytes and trim whitespace
-    return str.replace(/\0/g, "").trim();
-  }
-
-  sanitizeTokenData(data) {
-    return {
-      ...data,
-      name: this.sanitizeString(data.name),
-      symbol: this.sanitizeString(data.symbol),
-      mint: this.sanitizeString(data.mint),
-      traderPublicKey: this.sanitizeString(data.traderPublicKey),
-      bondingCurveKey: this.sanitizeString(data.bondingCurveKey),
-    };
-  }
-
   async connect() {
     try {
-      this.ws = new WebSocket(this.config.WS_URL);
-      this.setupEventHandlers();
+      this.connectAttempts++;
+      this.logger.debug("Connecting to WebSocket:", { 
+        url: this.config.WS_ENDPOINT,
+        attempt: this.connectAttempts 
+      });
+
+      this.ws = new WebSocket(this.config.WS_ENDPOINT, {
+        handshakeTimeout: 10000, // 10 second handshake timeout
+        headers: {
+          'User-Agent': 'MoneyPrinter/1.0',
+          'Origin': 'https://pumpportal.fun'
+        }
+      });
+
+      // Handle connection errors
+      this.ws.on("unexpected-response", (request, response) => {
+        this.logger.error("Unexpected WebSocket response:", {
+          status: response.statusCode,
+          headers: response.headers
+        });
+        this.emit("error", new Error(`Unexpected response: ${response.statusCode}`));
+      });
+
+      this.ws.on("upgrade", (response) => {
+        this.logger.debug("WebSocket upgrade successful:", {
+          headers: response.headers
+        });
+      });
+
+      this.ws.on("open", () => {
+        this.connectAttempts = 0;
+        this.isConnected = true;
+        this.logger.info("WebSocket connected");
+        this.emit("connected");
+
+        // Subscribe to new tokens immediately
+        const payload = {
+          method: "subscribeNewToken"
+        };
+        this.ws.send(JSON.stringify(payload));
+
+        // Resubscribe to existing tokens if any
+        if (this.subscribedTokens.size > 0) {
+          const tradePayload = {
+            method: "subscribeTokenTrade",
+            keys: Array.from(this.subscribedTokens)
+          };
+          this.ws.send(JSON.stringify(tradePayload));
+        }
+      });
+
+      this.ws.on("message", (data) => {
+        try {
+          const message = JSON.parse(data);
+          
+          // Handle subscription acknowledgments
+          if (message.type === "subscribed" || message.type === "unsubscribed") {
+            this.logger.debug(`WebSocket subscription update: ${message.type}`);
+            return;
+          }
+          
+          if (message.txType === "create") {
+            const marketCapStr = message.marketCapSol.toFixed(2);
+            const initialBuyM = (message.initialBuy / 1_000_000).toFixed(2);
+            const bondingCurveStr = message.vSolInBondingCurve.toFixed(2);
+            
+            this.logger.info(
+              `New Token Created: ${message.name} (${message.symbol}) | ` +
+              `MCap: ${marketCapStr} SOL | Init: ${initialBuyM}M tokens | ` +
+              `Bond: ${bondingCurveStr} SOL | ${message.mint}`
+            );
+            this.emit("newToken", message);
+          } else if (message.txType === "buy" || message.txType === "sell") {
+            this.logger.debug("Token Trade:", message);
+            this.emit("tokenTrade", message);
+          }
+        } catch (error) {
+          this.logger.error("Failed to parse WebSocket message:", { error, data: data.toString() });
+        }
+      });
+
+      this.ws.on("error", (error) => {
+        this.logger.error("WebSocket error:", { error: error.message });
+        this.emit("error", error);
+      });
+
+      this.ws.on("close", () => {
+        this.isConnected = false;
+        this.logger.info("WebSocket disconnected");
+        this.emit("disconnected");
+        
+        // Attempt to reconnect after a delay if we haven't exceeded max attempts
+        if (this.connectAttempts < this.maxAttempts) {
+          setTimeout(() => {
+            if (!this.isConnected) {
+              this.connect();
+            }
+          }, this.config.RECONNECT_INTERVAL || 1000);
+        } else {
+          this.logger.error("Max reconnection attempts reached");
+          this.emit("error", new Error("Max reconnection attempts reached"));
+        }
+      });
     } catch (error) {
-      this.logger.error("Failed to connect to WebSocket:", { error });
+      this.logger.error("Failed to connect to WebSocket:", { error: error.message });
       throw error;
     }
   }
 
-  setupEventHandlers() {
-    this.ws.on("open", () => {
-      this.isConnected = true;
-      this.reconnectAttempts = 0;
-      this.emit("connected");
-
-      // Subscribe to new tokens
-      this.subscribeToNewTokens();
-
-      // Resubscribe to all active subscriptions
-      this.resubscribeAll();
-    });
-
-    this.ws.on("message", (data) => {
-      try {
-        const message = JSON.parse(data);
-
-        // Silently ignore subscription confirmation messages
-        if (
-          message.method === "subscribeNewToken" ||
-          message.method === "subscribeTokenTrade" ||
-          message.method === "unsubscribeTokenTrade"
-        ) {
-          return;
-        }
-
-        if (message.txType === "create") {
-          if (!message.mint || !message.symbol) {
-            this.logger.error("Invalid token creation message", { data });
-            return;
-          }
-
-          this.emit("newToken", message);
-        } else if (message.txType === "buy" || message.txType === "sell") {
-          this.emit("tokenTrade", message);
-        }
-      } catch (error) {
-        // Silently log invalid JSON messages
-        if (error instanceof SyntaxError) {
-          this.logger.error("Failed to parse WebSocket message", {
-            data: data.toString().substring(0, 100), // Log only first 100 chars to avoid huge logs
-            error: error.message,
-          });
-          return;
-        }
-        // Re-throw other types of errors
-        throw error;
-      }
-    });
-
-    this.ws.on("close", () => {
-      this.isConnected = false;
-      this.handleReconnect();
-    });
-
-    this.ws.on("error", (error) => {
-      this.logger.error("WebSocket error:", { error });
-      this.emit("error", error);
-    });
-  }
-
-  subscribeToNewTokens() {
-    if (!this.isConnected || this.subscribedToNewTokens) return;
-
-    this.ws.send(
-      JSON.stringify({
-        method: "subscribeNewToken",
-      })
-    );
-
-    this.subscribedToNewTokens = true;
-  }
-
-  unsubscribeFromNewTokens() {
-    if (!this.isConnected || !this.subscribedToNewTokens) return;
-
-    this.ws.send(
-      JSON.stringify({
-        method: "unsubscribeNewToken",
-      })
-    );
-
-    this.subscribedToNewTokens = false;
-  }
-
   subscribeToToken(mint) {
-    if (!this.isConnected || this.subscribedTokens.has(mint)) return;
-
-    this.ws.send(
-      JSON.stringify({
-        method: "subscribeTokenTrade",
-        keys: [mint],
-      })
-    );
-
-    this.subscribedTokens.add(mint);
-  }
-
-  unsubscribeFromToken(mint) {
-    if (!this.isConnected || !this.subscribedTokens.has(mint)) return;
-
-    this.ws.send(
-      JSON.stringify({
-        method: "unsubscribeTokenTrade",
-        keys: [mint],
-      })
-    );
-
-    this.subscribedTokens.delete(mint);
-  }
-
-  resubscribeAll() {
-    // Resubscribe to new tokens if previously subscribed
-    if (this.subscribedToNewTokens) {
-      this.ws.send(
-        JSON.stringify({
-          method: "subscribeNewToken",
-        })
-      );
-    }
-
-    // Resubscribe to all tracked tokens
-    if (this.subscribedTokens.size > 0) {
-      this.ws.send(
-        JSON.stringify({
-          method: "subscribeTokenTrade",
-          keys: Array.from(this.subscribedTokens),
-        })
-      );
-    }
-  }
-
-  async handleReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.logger.error("Max reconnection attempts reached");
+    if (!mint) {
+      this.logger.error("Cannot subscribe: mint address is required");
       return;
     }
 
-    this.reconnectAttempts++;
+    this.subscribedTokens.add(mint);
 
-    // Clear any existing reconnect timer
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
+    if (this.isConnected) {
+      const payload = {
+        method: "subscribeTokenTrade",
+        keys: [mint]
+      };
+      this.ws.send(JSON.stringify(payload));
+    }
+  }
+
+  unsubscribeFromToken(mint) {
+    if (!mint) {
+      this.logger.error("Cannot unsubscribe: mint address is required");
+      return;
     }
 
-    // Use setTimeout for reconnect delay
-    this.reconnectTimer = setTimeout(() => {
-      this.connect().catch((error) => {
-        this.logger.error("Reconnection attempt failed:", { error });
-        this.emit("error", error);
-      });
-    }, this.config.RECONNECT_INTERVAL);
+    this.subscribedTokens.delete(mint);
+
+    if (this.isConnected) {
+      const payload = {
+        method: "unsubscribeTokenTrade",
+        keys: [mint]
+      };
+      this.ws.send(JSON.stringify(payload));
+    }
   }
 
   close() {
-    // Clear any pending reconnect timer
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    // Unsubscribe from all subscriptions
-    if (this.isConnected) {
-      this.unsubscribeFromNewTokens();
-      this.subscribedTokens.forEach((mint) => this.unsubscribeFromToken(mint));
-    }
-
     if (this.ws) {
-      this.ws.removeAllListeners();
       this.ws.close();
       this.ws = null;
       this.isConnected = false;

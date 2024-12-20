@@ -66,16 +66,20 @@ class MoneyPrinter {
       await this.priceManager.initialize();
       
       this.safetyChecker = new SafetyChecker(this.wallet, this.priceManager, this.logger);
-      this.positionManager = new PositionManager(this.wallet, this.priceManager, this.config);
+      this.positionManager = new PositionManager({
+        wallet: this.wallet,
+        priceManager: this.priceManager,
+        logger: this.logger,
+        config: this.config
+      });
       
       // Initialize token tracker with dependencies
-      this.tokenTracker = new TokenTracker({
-        safetyChecker: this.safetyChecker,
-        positionManager: this.positionManager,
-        priceManager: this.priceManager,
-        webSocketManager: this.wsManager,
-        logger: this.logger
-      });
+      this.tokenTracker = new TokenTracker(
+        this.config,
+        this.logger,
+        this.wsManager,
+        this.positionManager
+      );
 
       // Initialize dashboard
       this.dashboard = new Dashboard(this.config, this.logger, this.safetyChecker, this.tokenTracker);
