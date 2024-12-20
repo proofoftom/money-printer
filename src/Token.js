@@ -55,6 +55,7 @@ class Token extends EventEmitter {
     this.marketCapSol = tokenData.marketCapSol;
     this.totalSupplyOutsideCurve = 0;
     this.holders = new Map();
+    this.totalSupply = this.calculateTotalSupply();
 
     // Price tracking
     this.currentPrice = this.calculateTokenPrice();
@@ -99,6 +100,14 @@ class Token extends EventEmitter {
     return this.vSolInBondingCurve / this.vTokensInBondingCurve;
   }
 
+  calculateTotalSupply() {
+    const totalHolderSupply = Array.from(this.holders.values()).reduce(
+      (a, b) => a + b,
+      0
+    );
+    return this.vTokensInBondingCurve + totalHolderSupply;
+  }
+
   update(tradeData) {
     try {
       // Validate required trade data
@@ -109,9 +118,13 @@ class Token extends EventEmitter {
         "vSolInBondingCurve",
         "marketCapSol",
         "newTokenBalance",
+        "traderPublicKey",
       ];
 
       for (const field of requiredFields) {
+        if (field === "newTokenBalance" && tradeData[field] === 0) {
+          continue; // Allow zero balance
+        }
         if (!tradeData[field]) {
           throw new Error(`Missing required trade data field: ${field}`);
         }
@@ -143,6 +156,7 @@ class Token extends EventEmitter {
       this.vTokensInBondingCurve = tradeData.vTokensInBondingCurve;
       this.vSolInBondingCurve = tradeData.vSolInBondingCurve;
       this.marketCapSol = tradeData.marketCapSol;
+      this.totalSupply = this.calculateTotalSupply();
 
       // Update price metrics
       this.currentPrice = this.calculateTokenPrice();
@@ -160,6 +174,12 @@ class Token extends EventEmitter {
         marketCapSol: this.marketCapSol,
         timestamp: Date.now(),
       });
+
+      // Update holder balance
+      this.updateHolderBalance(
+        tradeData.traderPublicKey,
+        tradeData.newTokenBalance
+      );
 
       // Emit trade event with WebSocket-compatible structure
       // THIS IS THE EXACT STRUCTURE, DO NOT CHANGE UNLESS YOU KNOW WHAT YOU ARE DOING
@@ -192,6 +212,34 @@ class Token extends EventEmitter {
       });
       throw error;
     }
+  }
+
+  updateHolderBalance(traderPublicKey, newBalance) {
+    if (newBalance === 0) {
+      this.holders.delete(traderPublicKey);
+    } else {
+      this.holders.set(traderPublicKey, newBalance);
+    }
+    this.totalSupply = this.calculateTotalSupply();
+  }
+
+  getHolderBalance(traderPublicKey) {
+    return this.holders.get(traderPublicKey) || 0;
+  }
+
+  getHolderCount() {
+    return this.holders.size;
+  }
+
+  getTopHolderConcentration(topNHolders = 10) {
+    if (this.totalSupply === 0) return 0;
+
+    const topNHoldings = Array.from(this.holders.values())
+      .sort((a, b) => b - a)
+      .slice(0, topNHolders)
+      .reduce((a, b) => a + b, 0);
+
+    return (topNHoldings / this.totalSupply) * 100;
   }
 
   checkSafetyConditions() {

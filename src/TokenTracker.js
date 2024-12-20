@@ -92,9 +92,6 @@ class TokenTracker extends EventEmitter {
 
       // Subscribe to token trades
       this.webSocketManager.subscribeToToken(tokenData.mint);
-
-      // Start safety checks
-      token.startSafetyChecks();
     } catch (error) {
       this.logger.error("Error handling new token:", error);
     }
