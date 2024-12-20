@@ -13,11 +13,16 @@ class ConfigWizard {
     console.log(chalk.blue.bold('\n🔧 Welcome to the Money Printer Configuration Wizard 🖨️\n'));
     
     await this.promptSection('Risk Parameters', this.riskQuestions);
+    await this.promptSection('Dashboard Layout', this.dashboardLayoutQuestions);
+    await this.promptSection('Chart Settings', this.chartQuestions);
+    await this.promptSection('Alert Configuration', this.alertQuestions);
+    await this.promptSection('Keyboard Shortcuts', this.shortcutQuestions);
     await this.promptSection('Notification Preferences', this.notificationQuestions);
     await this.promptSection('Export Settings', this.exportQuestions);
-    await this.promptSection('Keyboard Shortcuts', this.shortcutQuestions);
     await this.promptSection('Logging Preferences', this.loggingQuestions);
     
+    await this.showDashboardPreview();
+    await this.confirmSave();
     await this.saveChanges();
   }
 
@@ -134,24 +139,32 @@ class ConfigWizard {
   get shortcutQuestions() {
     return [
       {
-        type: 'confirm',
-        name: 'customizeShortcuts',
-        message: 'Would you like to customize keyboard shortcuts?',
-        default: false
+        type: 'input',
+        name: 'SHORTCUTS.OPEN_POSITION',
+        message: 'Key for opening a position:',
+        default: this.config.SHORTCUTS?.OPEN_POSITION || 'o',
+        validate: value => value.length === 1 ? true : 'Please enter a single character'
       },
       {
         type: 'input',
-        name: 'KEYBOARD_SHORTCUTS.TRADING.PAUSE_RESUME.key',
-        message: 'Key for Pause/Resume trading:',
-        when: answers => answers.customizeShortcuts,
-        default: this.config.KEYBOARD_SHORTCUTS.TRADING.PAUSE_RESUME.key
+        name: 'SHORTCUTS.CLOSE_POSITION',
+        message: 'Key for closing a position:',
+        default: this.config.SHORTCUTS?.CLOSE_POSITION || 'c',
+        validate: value => value.length === 1 ? true : 'Please enter a single character'
       },
       {
         type: 'input',
-        name: 'KEYBOARD_SHORTCUTS.TRADING.EMERGENCY_STOP.key',
-        message: 'Key for Emergency Stop:',
-        when: answers => answers.customizeShortcuts,
-        default: this.config.KEYBOARD_SHORTCUTS.TRADING.EMERGENCY_STOP.key
+        name: 'SHORTCUTS.TOKEN_DETAILS',
+        message: 'Key for viewing token details:',
+        default: this.config.SHORTCUTS?.TOKEN_DETAILS || 't',
+        validate: value => value.length === 1 ? true : 'Please enter a single character'
+      },
+      {
+        type: 'input',
+        name: 'SHORTCUTS.HELP',
+        message: 'Key for help menu:',
+        default: this.config.SHORTCUTS?.HELP || '?',
+        validate: value => value.length === 1 ? true : 'Please enter a single character'
       }
     ];
   }
@@ -218,6 +231,147 @@ class ConfigWizard {
         message: 'Log retention period (e.g., "14d", "1m"):',
         default: this.config.LOGGING_SETTINGS?.MAX_FILES || '14d',
         when: answers => answers.LOGGING_ENABLED
+      }
+    ];
+  }
+
+  async showDashboardPreview() {
+    console.log(chalk.blue.bold('\n📊 Dashboard Preview'));
+    
+    // Create a simple ASCII preview of the dashboard layout
+    const preview = [
+      '┌─────────────────────┬────────────────────┐',
+      '│                     │    Wallet Info     │',
+      '│      Price Chart    │──────────────────  │',
+      '│                     │  Active Positions   │',
+      '│                     │──────────────────  │',
+      '│                     │   Token Metrics    │',
+      '├─────────────────────┼────────────────────┤',
+      '│      Log/Events     │      Alerts        │',
+      '└─────────────────────┴────────────────────┘',
+      '        Status Bar: Connected | P&L: +0.5 SOL        '
+    ].join('\n');
+
+    console.log(preview);
+    
+    return inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'layoutConfirm',
+        message: 'Does this layout look good?',
+        default: true
+      }
+    ]);
+  }
+
+  async confirmSave() {
+    return inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'saveConfirm',
+        message: 'Save changes?',
+        default: true
+      }
+    ]);
+  }
+
+  get dashboardLayoutQuestions() {
+    return [
+      {
+        type: 'list',
+        name: 'DASHBOARD.COLORS.THEME',
+        message: 'Choose a color theme:',
+        choices: [
+          { name: 'Dark (Default)', value: 'dark' },
+          { name: 'Light', value: 'light' },
+          { name: 'High Contrast', value: 'contrast' }
+        ],
+        default: 'dark'
+      },
+      {
+        type: 'number',
+        name: 'DASHBOARD.REFRESH_RATE',
+        message: 'UI refresh rate (milliseconds):',
+        default: this.config.DASHBOARD?.REFRESH_RATE || 1000,
+        validate: value => value >= 100 && value <= 5000 ? true : 'Please enter a value between 100 and 5000'
+      },
+      {
+        type: 'number',
+        name: 'DASHBOARD.LOG_BUFFER',
+        message: 'Number of log lines to keep in memory:',
+        default: this.config.DASHBOARD?.LOG_BUFFER || 1000,
+        validate: value => value >= 100 && value <= 10000 ? true : 'Please enter a value between 100 and 10000'
+      }
+    ];
+  }
+
+  get chartQuestions() {
+    return [
+      {
+        type: 'number',
+        name: 'DASHBOARD.CHART.CANDLE_INTERVAL',
+        message: 'Candle interval (milliseconds):',
+        default: this.config.DASHBOARD?.CHART?.CANDLE_INTERVAL || 5000,
+        validate: value => value >= 1000 && value <= 60000 ? true : 'Please enter a value between 1000 and 60000'
+      },
+      {
+        type: 'number',
+        name: 'DASHBOARD.CHART.MAX_CANDLES',
+        message: 'Maximum number of candles to display:',
+        default: this.config.DASHBOARD?.CHART?.MAX_CANDLES || 100,
+        validate: value => value >= 20 && value <= 500 ? true : 'Please enter a value between 20 and 500'
+      },
+      {
+        type: 'number',
+        name: 'DASHBOARD.CHART.PRICE_DECIMALS',
+        message: 'Number of decimal places for price display:',
+        default: this.config.DASHBOARD?.CHART?.PRICE_DECIMALS || 9,
+        validate: value => value >= 0 && value <= 12 ? true : 'Please enter a value between 0 and 12'
+      }
+    ];
+  }
+
+  get alertQuestions() {
+    return [
+      {
+        type: 'confirm',
+        name: 'ALERTS.PRICE_CHANGE.enabled',
+        message: 'Enable price change alerts?',
+        default: this.config.ALERTS?.PRICE_CHANGE?.enabled ?? true
+      },
+      {
+        type: 'number',
+        name: 'ALERTS.PRICE_CHANGE.threshold',
+        message: 'Price change alert threshold (%):',
+        default: this.config.ALERTS?.PRICE_CHANGE?.threshold || 5,
+        when: answers => answers['ALERTS.PRICE_CHANGE.enabled'],
+        validate: value => value > 0 && value <= 100 ? true : 'Please enter a value between 0 and 100'
+      },
+      {
+        type: 'confirm',
+        name: 'ALERTS.WALLET_BALANCE.enabled',
+        message: 'Enable wallet balance alerts?',
+        default: this.config.ALERTS?.WALLET_BALANCE?.enabled ?? true
+      },
+      {
+        type: 'number',
+        name: 'ALERTS.WALLET_BALANCE.threshold',
+        message: 'Wallet balance alert threshold (%):',
+        default: this.config.ALERTS?.WALLET_BALANCE?.threshold || 10,
+        when: answers => answers['ALERTS.WALLET_BALANCE.enabled'],
+        validate: value => value > 0 && value <= 100 ? true : 'Please enter a value between 0 and 100'
+      },
+      {
+        type: 'confirm',
+        name: 'ALERTS.SOUNDS.TRADE_ENTRY',
+        message: 'Play sound on trade entry?',
+        default: this.config.ALERTS?.SOUNDS?.TRADE_ENTRY ?? true
+      },
+      {
+        type: 'confirm',
+        name: 'ALERTS.SOUNDS.TRADE_EXIT',
+        message: 'Play sound on trade exit?',
+        default: this.config.ALERTS?.SOUNDS?.TRADE_EXIT ?? true
       }
     ];
   }

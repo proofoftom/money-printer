@@ -1,12 +1,16 @@
+const EventEmitter = require('events');
 const config = require("./config");
 
-class SafetyChecker {
-  constructor(wallet, priceManager) {
+class SafetyChecker extends EventEmitter {
+  constructor(wallet, priceManager, logger) {
+    super();
     if (!wallet) throw new Error('Wallet is required for SafetyChecker');
     if (!priceManager) throw new Error('PriceManager is required for SafetyChecker');
+    if (!logger) throw new Error('Logger is required for SafetyChecker');
     
     this.wallet = wallet;
     this.priceManager = priceManager;
+    this.logger = logger;
   }
 
   isTokenSafe(token) {
@@ -22,34 +26,111 @@ class SafetyChecker {
       result.reasons.push(`Token too new (${Math.round(tokenAge)}s < ${config.MIN_TOKEN_AGE_SECONDS}s)`);
     }
 
-    // Check market cap (max $100k)
-    const marketCapUSD = this.priceManager.solToUSD(token.marketCapSol);
-    if (marketCapUSD > config.MAX_ENTRY_MCAP_USD) {
+    // Check minimum liquidity
+    if (token.liquiditySol < config.MIN_LIQUIDITY_SOL) {
       result.safe = false;
-      result.reasons.push(`Market cap too high ($${Math.round(marketCapUSD)} > $${config.MAX_ENTRY_MCAP_USD})`);
+      result.reasons.push(`Insufficient liquidity (${token.liquiditySol.toFixed(2)} < ${config.MIN_LIQUIDITY_SOL} SOL)`);
     }
 
-    // Check if we can afford minimum position (0.1% of market cap)
-    const minPositionSize = token.marketCapSol * config.MIN_MCAP_POSITION;
-    if (minPositionSize > this.wallet.getBalance()) {
+    // Check holder count
+    if (token.holderCount < config.MIN_HOLDER_COUNT) {
       result.safe = false;
-      result.reasons.push(`Insufficient balance for min position (${minPositionSize.toFixed(3)} SOL needed)`);
+      result.reasons.push(`Too few holders (${token.holderCount} < ${config.MIN_HOLDER_COUNT})`);
     }
 
-    // Check if price is non-zero
-    const currentPrice = token.getCurrentPrice();
-    if (currentPrice <= 0) {
+    // Check transaction count
+    if (token.transactionCount < config.MIN_TRANSACTIONS) {
       result.safe = false;
-      result.reasons.push('Zero or negative price');
+      result.reasons.push(`Too few transactions (${token.transactionCount} < ${config.MIN_TRANSACTIONS})`);
     }
 
-    // Check if bonding curve has liquidity
-    if (token.vTokensInBondingCurve <= 0 || token.vSolInBondingCurve <= 0) {
+    // Check if wallet has enough balance for minimum position
+    const minPositionSol = token.marketCapSol * config.MIN_MCAP_POSITION;
+    if (this.wallet.balance < minPositionSol) {
       result.safe = false;
-      result.reasons.push('Insufficient bonding curve liquidity');
+      result.reasons.push(`Insufficient balance for minimum position (${this.wallet.balance.toFixed(2)} < ${minPositionSol.toFixed(2)} SOL)`);
+    }
+
+    if (!result.safe) {
+      this.emit('safetyCheck', {
+        token,
+        result,
+        type: 'tokenSafety'
+      });
+      this.logger.logSafetyCheck(token, result, 'tokenSafety');
     }
 
     return result;
+  }
+
+  canOpenPosition(token, size) {
+    // First check if token is safe
+    const safetyCheck = this.isTokenSafe(token);
+    if (!safetyCheck.safe) {
+      const result = {
+        allowed: false,
+        reasons: safetyCheck.reasons
+      };
+      this.emit('safetyCheck', {
+        token,
+        result,
+        type: 'openPosition'
+      });
+      this.logger.logSafetyCheck(token, result, 'openPosition');
+      return result;
+    }
+
+    // Check if size is within allowed range
+    const minSize = token.marketCapSol * config.MIN_MCAP_POSITION;
+    const maxSize = token.marketCapSol * config.MAX_MCAP_POSITION;
+
+    if (size < minSize) {
+      const result = {
+        allowed: false,
+        reasons: [`Position size too small (${size.toFixed(4)} < ${minSize.toFixed(4)} SOL)`]
+      };
+      this.emit('safetyCheck', {
+        token,
+        result,
+        type: 'positionSize'
+      });
+      this.logger.logSafetyCheck(token, result, 'positionSize');
+      return result;
+    }
+
+    if (size > maxSize) {
+      const result = {
+        allowed: false,
+        reasons: [`Position size too large (${size.toFixed(4)} > ${maxSize.toFixed(4)} SOL)`]
+      };
+      this.emit('safetyCheck', {
+        token,
+        result,
+        type: 'positionSize'
+      });
+      this.logger.logSafetyCheck(token, result, 'positionSize');
+      return result;
+    }
+
+    // Check if wallet has enough balance
+    if (this.wallet.balance < size) {
+      const result = {
+        allowed: false,
+        reasons: [`Insufficient balance (${this.wallet.balance.toFixed(4)} < ${size.toFixed(4)} SOL)`]
+      };
+      this.emit('safetyCheck', {
+        token,
+        result,
+        type: 'balance'
+      });
+      this.logger.logSafetyCheck(token, result, 'balance');
+      return result;
+    }
+
+    return {
+      allowed: true,
+      reasons: []
+    };
   }
 }
 

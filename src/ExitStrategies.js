@@ -1,5 +1,5 @@
 class ExitStrategies {
-  constructor() {
+  constructor(logger) {
     // Default values that can be overridden by position config
     this.defaultConfig = {
       stopLossPortion: 1.0,    // Full exit on stop loss by default
@@ -7,6 +7,7 @@ class ExitStrategies {
       trailingStopLevel: 20,   // 20% drop from highest price
       trailingStopPortion: 1.0 // Full exit on trailing stop by default
     };
+    this.logger = logger;
   }
 
   checkExitSignals(position) {
@@ -26,7 +27,7 @@ class ExitStrategies {
 
     // 1. Stop Loss (e.g., -10%)
     if (priceChangePercent <= -config.stopLossLevel) {
-      console.log(`Stop loss triggered for ${position.mint} at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`);
+      this.logger.info(`Stop loss triggered for ${position.mint} at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`);
       return { 
         reason: 'STOP_LOSS', 
         portion: config.stopLossPortion 
@@ -35,7 +36,7 @@ class ExitStrategies {
 
     // 2. Take Profit (e.g., +50%)
     if (priceChangePercent >= config.takeProfitLevel) {
-      console.log(`Take profit triggered for ${position.mint} at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`);
+      this.logger.info(`Take profit triggered for ${position.mint} at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`);
       return { 
         reason: 'TAKE_PROFIT', 
         portion: config.takeProfitPortion 
@@ -47,7 +48,7 @@ class ExitStrategies {
     const dropFromHighPercent = ((currentPrice - highestPrice) / highestPrice) * 100;
     
     if (dropFromHighPercent <= -config.trailingStopLevel) {
-      console.log(`Trailing stop (${config.trailingStopLevel}%) triggered for ${position.mint} at ${currentPrice} (${dropFromHighPercent.toFixed(2)}% from high of ${highestPrice})`);
+      this.logger.info(`Trailing stop (${config.trailingStopLevel}%) triggered for ${position.mint} at ${currentPrice} (${dropFromHighPercent.toFixed(2)}% from high of ${highestPrice})`);
       return { 
         reason: 'TRAILING_STOP', 
         portion: config.trailingStopPortion 

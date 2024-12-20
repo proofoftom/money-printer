@@ -7,19 +7,49 @@ const LOG_LEVELS = {
   ERROR: 'error',
   WARN: 'warn',
   INFO: 'info',
-  DEBUG: 'debug'
+  DEBUG: 'debug',
+  SAFETY: 'safety'
 };
+
+class DashboardTransport extends winston.Transport {
+  constructor(dashboard) {
+    super();
+    this.dashboard = dashboard;
+  }
+
+  log(info, callback) {
+    setImmediate(() => {
+      if (this.dashboard) {
+        const { level, message, ...metadata } = info;
+        const metadataStr = Object.keys(metadata).length > 0 ? 
+          `\n${JSON.stringify(metadata, null, 2)}` : '';
+        
+        switch(level) {
+          case 'error':
+            this.dashboard.emit('alert', `ERROR: ${message}${metadataStr}`);
+            break;
+          case 'warn':
+            this.dashboard.emit('alert', `WARN: ${message}${metadataStr}`);
+            break;
+          case 'safety':
+            break;
+          default:
+            this.dashboard.emit('log', `${level.toUpperCase()}: ${message}${metadataStr}`);
+        }
+      }
+    });
+
+    callback();
+  }
+}
 
 class Logger {
   constructor(config) {
     this.config = config;
+    this.dashboard = null;
     
-    // Ensure logs directory exists relative to app directory
     const appDir = process.cwd();
     this.logDir = path.join(appDir, 'logs');
-    
-    // Debug log directory creation
-    console.log('Creating logs directory:', this.logDir);
     
     if (!fs.existsSync(this.logDir)) {
       fs.mkdirSync(this.logDir, { recursive: true });
@@ -27,17 +57,8 @@ class Logger {
 
     this.enabled = config.LOGGING_ENABLED !== false;
 
-    const { combine, timestamp, json, colorize, printf } = winston.format;
+    const { combine, timestamp, json } = winston.format;
 
-    // Custom format for console output
-    const consoleFormat = printf(({ level, message, timestamp, ...metadata }) => {
-      const metadataStr = Object.keys(metadata).length
-        ? `\n${JSON.stringify(metadata, null, 2)}`
-        : '';
-      return `${timestamp} ${level}: ${message}${metadataStr}`;
-    });
-
-    // Create logger instance
     this.logger = winston.createLogger({
       level: config.LOG_LEVEL || 'info',
       format: combine(
@@ -45,80 +66,92 @@ class Logger {
         json()
       ),
       transports: [
-        // Console transport with colors
-        new winston.transports.Console({
-          format: combine(
-            colorize(),
-            timestamp(),
-            consoleFormat
-          )
+        new DashboardTransport(null),
+        new winston.transports.DailyRotateFile({
+          filename: path.join(this.logDir, 'money-printer-%DATE%.log'),
+          datePattern: 'YYYY-MM-DD',
+          maxSize: '20m',
+          maxFiles: '14d'
+        }),
+        new winston.transports.DailyRotateFile({
+          filename: path.join(this.logDir, 'error-%DATE%.log'),
+          datePattern: 'YYYY-MM-DD',
+          maxSize: '20m',
+          maxFiles: '14d',
+          level: 'error'
+        }),
+        new winston.transports.DailyRotateFile({
+          filename: path.join(this.logDir, 'safety-checks-%DATE%.log'),
+          datePattern: 'YYYY-MM-DD',
+          maxSize: '20m',
+          maxFiles: '30d',
+          level: 'safety'
         })
       ]
     });
 
-    // Only add file transport if logging is enabled
-    if (this.enabled) {
-      const fileTransport = new winston.transports.DailyRotateFile({
-        dirname: this.logDir,
-        filename: 'money-printer-%DATE%.log',
-        datePattern: 'YYYY-MM-DD',
-        maxSize: config.LOGGING_SETTINGS?.MAX_SIZE || '20m',
-        maxFiles: config.LOGGING_SETTINGS?.MAX_FILES || '14d',
-        format: combine(
-          timestamp(),
-          json()
-        )
-      });
+    this.logger.levels = {
+      error: 0,
+      warn: 1,
+      info: 2,
+      debug: 3,
+      safety: 4
+    };
 
-      // Add error handler for file transport
-      fileTransport.on('error', (error) => {
-        console.error('Error writing to log file:', error);
-      });
-
-      this.logger.add(fileTransport);
-    }
-
-    // Log startup information
-    this.info('Logger initialized', { 
+    this.debug('Logger initialized', {
       logDir: this.logDir,
-      enabled: this.enabled,
-      level: config.LOG_LEVEL || 'info'
+      enabled: this.enabled
     });
   }
 
-  _log(level, message, metadata = {}) {
+  setDashboard(dashboard) {
+    this.dashboard = dashboard;
+    this.logger.transports.forEach((transport) => {
+      if (transport instanceof DashboardTransport) {
+        transport.dashboard = dashboard;
+      }
+    });
+  }
+
+  logSafetyCheck(token, result, type) {
     if (!this.enabled) return;
 
-    try {
-      this.logger.log({
-        level,
-        message,
-        ...metadata,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('Error writing log:', error);
-      console.log(level, message, metadata);
-    }
+    this.logger.log('safety', 'Safety check result', {
+      token: {
+        symbol: token.symbol,
+        mint: token.mint,
+        marketCapSol: token.marketCapSol,
+        liquiditySol: token.liquiditySol,
+        holderCount: token.holderCount,
+        transactionCount: token.transactionCount,
+        age: (Date.now() - token.minted) / 1000
+      },
+      result,
+      type,
+      timestamp: Date.now()
+    });
   }
 
   error(message, metadata = {}) {
-    this._log(LOG_LEVELS.ERROR, message, metadata);
+    if (!this.enabled) return;
+    this.logger.error(message, metadata);
   }
 
   warn(message, metadata = {}) {
-    this._log(LOG_LEVELS.WARN, message, metadata);
+    if (!this.enabled) return;
+    this.logger.warn(message, metadata);
   }
 
   info(message, metadata = {}) {
-    this._log(LOG_LEVELS.INFO, message, metadata);
+    if (!this.enabled) return;
+    this.logger.info(message, metadata);
   }
 
   debug(message, metadata = {}) {
-    this._log(LOG_LEVELS.DEBUG, message, metadata);
+    if (!this.enabled) return;
+    this.logger.debug(message, metadata);
   }
 
-  // Helper method to log errors with stack traces
   logError(error, metadata = {}) {
     this.error(error.message, {
       ...metadata,

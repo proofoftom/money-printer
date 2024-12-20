@@ -30,7 +30,7 @@ class TokenTracker extends EventEmitter {
 
         // Log trade data if enabled
         if (this.config.LOGGING.TRADES) {
-          console.debug(`Trade received for ${token.symbol}:`, {
+          this.logger.debug(`Trade received for ${token.symbol}:`, {
             type: tradeData.txType,
             amount: tradeData.tokenAmount,
             marketCap: tradeData.marketCapSol,
@@ -76,7 +76,7 @@ class TokenTracker extends EventEmitter {
     // Listen for state changes
     token.on("stateChanged", ({ token, from, to }) => {
       if (this.config.LOGGING.POSITIONS) {
-        console.debug(`Token ${token.symbol} state changed from ${from} to ${to}`);
+        this.logger.debug(`Token ${token.symbol} state changed from ${from} to ${to}`);
       }
       this.emit("tokenStateChanged", { token, from, to });
       this.emit("tokenUpdated", token);
@@ -84,7 +84,7 @@ class TokenTracker extends EventEmitter {
       // Unsubscribe and remove dead tokens
       if (to === STATES.DEAD) {
         if (this.config.LOGGING.POSITIONS) {
-          console.debug(`Token ${token.symbol} is dead, removing from tracking`);
+          this.logger.debug(`Token ${token.symbol} is dead, removing from tracking`);
         }
         this.removeToken(token.mint);
       }
@@ -93,20 +93,20 @@ class TokenTracker extends EventEmitter {
     // Listen for ready for position events
     token.on("readyForPosition", (token) => {
       if (this.config.LOGGING.POSITIONS) {
-        console.debug(`Token ${token.symbol} is ready for position`);
+        this.logger.debug(`Token ${token.symbol} is ready for position`);
       }
 
       // Attempt to open position
       try {
         const position = this.positionManager.openPosition(token);
         if (position && this.config.LOGGING.POSITIONS) {
-          console.debug(`Opened position for ${token.symbol}:`, {
+          this.logger.debug(`Opened position for ${token.symbol}:`, {
             size: position.size,
             entryPrice: position.entryPrice,
           });
         }
       } catch (error) {
-        console.error(`Failed to open position for ${token.symbol}:`, error);
+        this.logger.error(`Failed to open position for ${token.symbol}:`, error);
       }
     });
 
@@ -115,7 +115,7 @@ class TokenTracker extends EventEmitter {
     this.emit("tokenAdded", token);
 
     // Subscribe to token trades
-    this.webSocketManager.subscribeToToken([token.mint]);
+    this.webSocketManager.subscribeToToken(token.mint);
 
     // Check initial state
     token.checkState();
@@ -134,7 +134,7 @@ class TokenTracker extends EventEmitter {
       token.cleanup();
 
       // Unsubscribe from trades
-      this.webSocketManager.unsubscribeTokenTrade([mint]);
+      this.webSocketManager.unsubscribeFromToken(mint);
 
       // Remove from tracking
       this.tokens.delete(mint);

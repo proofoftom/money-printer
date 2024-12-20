@@ -5,6 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "dashboard": "node src/index.js --dashboard",
+    "config": "node src/index.js --config",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -16,6 +18,8 @@
   "dependencies": {
     "asciichart": "^1.5.25",
     "axios": "^1.6.2",
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
     "chalk": "^4.1.2",
     "cli-table3": "^0.6.3",
     "inquirer": "^8.2.6",

@@ -9,7 +9,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const config = require('./config');
 const ConfigWizard = require('./ConfigWizard');
-const CLIManager = require('./CLIManager');
+const Dashboard = require('./dashboard/Dashboard');
 const chalk = require('chalk');
 
 class MoneyPrinter {
@@ -32,17 +32,14 @@ class MoneyPrinter {
 
       // Initialize components
       await this.initializeComponents();
+      this.logger.info('✨ Money Printer initialized successfully!');
       
-      this.logger.info('Money Printer initialized successfully');
-      console.log(chalk.green.bold('\n✨ Money Printer initialized successfully!\n'));
-      
-      // Start the CLI interface
-      await this.startCLI();
+      // Start the dashboard interface
+      await this.startDashboard();
       
     } catch (error) {
-      this.logger.error('Failed to initialize Money Printer', { error: error.message, stack: error.stack });
-      console.error(chalk.red.bold('Error initializing Money Printer:', error.message));
-      process.exit(1);
+      this.logger.error('Error initializing Money Printer:', { error: error.message });
+      throw error;
     }
   }
 
@@ -59,42 +56,33 @@ class MoneyPrinter {
     try {
       this.logger.info('Initializing components');
 
-      // Initialize core components in correct order
-      this.wallet = new Wallet(this.config);
-      this.logger.debug('Wallet initialized');
+      // Initialize WebSocket connection
+      this.wsManager = new WebSocketManager(this.config, this.logger);
+      await this.wsManager.connect();
 
-      this.priceManager = new PriceManager(this.config);
+      // Initialize components in correct order
+      this.wallet = new Wallet(this.config, this.logger);
+      this.priceManager = new PriceManager(this.config, this.logger);
       await this.priceManager.initialize();
-      this.logger.debug('Price manager initialized');
-
-      this.webSocketManager = new WebSocketManager(this.config, this.logger);
-      await this.webSocketManager.connect();
-      this.logger.debug('WebSocket manager connected');
-
-      // SafetyChecker needs wallet and priceManager
-      this.safetyChecker = new SafetyChecker(this.wallet, this.priceManager);
-      this.logger.debug('Safety checker initialized');
-
-      // PositionManager needs wallet, priceManager and config
+      
+      this.safetyChecker = new SafetyChecker(this.wallet, this.priceManager, this.logger);
       this.positionManager = new PositionManager(this.wallet, this.priceManager, this.config);
-      this.logger.debug('Position manager initialized');
-
-      // Initialize token tracker last since it depends on other components
+      
+      // Initialize token tracker with dependencies
       this.tokenTracker = new TokenTracker({
         safetyChecker: this.safetyChecker,
         positionManager: this.positionManager,
         priceManager: this.priceManager,
-        webSocketManager: this.webSocketManager,
+        webSocketManager: this.wsManager,
         logger: this.logger
       });
-      this.logger.debug('Token tracker initialized');
 
-      // Initialize CLI manager
-      this.cli = new CLIManager(this.config, this.tokenTracker, this.wallet);
-      this.logger.debug('CLI manager initialized');
+      // Initialize dashboard
+      this.dashboard = new Dashboard(this.config, this.logger, this.safetyChecker, this.tokenTracker);
+      this.logger.setDashboard(this.dashboard);
 
-      // Set up event listeners
-      this.setupEventListeners();
+      // Setup event handlers
+      this.setupEventHandlers();
       this.logger.info('All components initialized successfully');
 
       return true;
@@ -107,79 +95,82 @@ class MoneyPrinter {
     }
   }
 
-  setupEventListeners() {
-    // Token events
-    this.tokenTracker.on("tokenAdded", (token) => {
-      this.logger.info('New token detected', { symbol: token.symbol, mint: token.mint });
-      this.cli.updateToken(token);
-      this.cli.notify(`New token detected: ${token.symbol}`, { sound: false });
+  setupEventHandlers() {
+    // WebSocket connection status
+    this.wsManager.on('connected', () => {
+      this.dashboard.emit('statusUpdate', { connected: true });
     });
 
-    this.tokenTracker.on("tokenUpdated", (token) => {
-      this.logger.debug('Token updated', { symbol: token.symbol, mint: token.mint });
-      this.cli.updateToken(token);
+    this.wsManager.on('disconnected', () => {
+      this.dashboard.emit('statusUpdate', { connected: false });
     });
 
-    this.tokenTracker.on("tokenRemoved", (token) => {
-      this.logger.info('Token removed', { symbol: token.symbol, mint: token.mint });
-      this.cli.removeToken(token);
+    // Token updates
+    this.tokenTracker.on('newToken', (token) => {
+      this.dashboard.emit('statusUpdate', { currentToken: token.symbol });
+      this.dashboard.emit('log', `New token detected: ${token.symbol}`);
     });
 
-    // Position events
-    this.tokenTracker.on("positionOpened", ({ token, position }) => {
-      this.logger.info('Position opened', {
-        symbol: token.symbol,
-        size: position.size,
-        entryPrice: position.entryPrice
+    // Price updates
+    this.priceManager.on('priceUpdate', (data) => {
+      this.dashboard.emit('priceUpdate', {
+        prices: data.priceHistory,
+        volumes: data.volumeHistory
       });
     });
 
-    this.tokenTracker.on("positionClosed", ({ token, position, pnl }) => {
-      this.logger.info('Position closed', {
-        symbol: token.symbol,
-        pnl,
-        exitPrice: position.exitPrice
+    // Position updates
+    this.positionManager.on('positionUpdate', (positions) => {
+      this.dashboard.emit('positionUpdate', positions);
+      this.updateTotalPnL();
+    });
+
+    // Wallet updates
+    this.wallet.on('balanceUpdate', (data) => {
+      this.dashboard.emit('walletUpdate', {
+        balance: data.newBalance,
+        previousBalance: data.oldBalance
       });
     });
 
-    // Error events
-    this.tokenTracker.on("error", (error) => {
-      this.logger.error('Token tracker error', { error: error.message });
+    // Safety alerts
+    this.safetyChecker.on('warning', (msg) => {
+      this.dashboard.emit('alert', msg);
     });
 
-    // WebSocket events
-    this.webSocketManager.on("error", (error) => {
-      this.logger.error('WebSocket error', { error: error.message });
-    });
-
-    this.webSocketManager.on("disconnected", () => {
-      this.logger.warn('WebSocket disconnected');
-    });
-
-    this.webSocketManager.on("reconnecting", (attempt) => {
-      this.logger.info('WebSocket reconnecting', { attempt });
+    // Dashboard commands
+    this.dashboard.on('command', async (cmd) => {
+      switch (cmd.type) {
+        case 'openPosition':
+          await this.tokenTracker.openPosition();
+          break;
+        case 'closePosition':
+          await this.tokenTracker.closePosition();
+          break;
+        case 'quit':
+          await this.shutdown();
+          break;
+      }
     });
   }
 
-  async startCLI() {
-    // Clear the screen
-    console.clear();
-    
-    // Start rendering
-    this.cli.render();
-    this.logger.debug('CLI rendering started');
+  updateTotalPnL() {
+    const totalPnL = this.positionManager.positions.reduce(
+      (sum, pos) => sum + pos.realizedPnLWithFeesSol,
+      0
+    );
+    this.dashboard.emit('statusUpdate', { totalPnL });
+  }
+
+  async startDashboard() {
+    this.dashboard.initialize();
+    this.logger.info('Dashboard started');
   }
 
   async shutdown() {
-    this.logger.info('Shutting down Money Printer');
-    try {
-      await this.saveState();
-      this.webSocketManager.close();
-      this.cli.cleanup();
-      this.logger.info('Shutdown completed successfully');
-    } catch (error) {
-      this.logger.error('Error during shutdown', { error: error.message });
-    }
+    this.logger.info('Shutting down Money Printer...');
+    await this.wsManager.disconnect();
+    process.exit(0);
   }
 
   async saveState() {
@@ -191,30 +182,27 @@ class MoneyPrinter {
 process.on("uncaughtException", (error) => {
   const logger = global.moneyPrinter?.logger;
   if (logger) {
-    logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+    logger.error('Uncaught Exception:', { error });
   }
-  console.error("Uncaught Exception:", error);
   process.exit(1);
 });
 
 process.on("unhandledRejection", (error) => {
   const logger = global.moneyPrinter?.logger;
   if (logger) {
-    logger.error('Unhandled Rejection', { error: error.message, stack: error.stack });
+    logger.error('Unhandled Rejection:', { error });
   }
-  console.error("Unhandled Rejection:", error);
   process.exit(1);
 });
 
 // Start the application
 if (require.main === module) {
-  const printer = new MoneyPrinter();
-  global.moneyPrinter = printer;
-  printer.initialize().catch(error => {
-    if (printer.logger) {
-      printer.logger.error('Initialization failed', { error: error.message, stack: error.stack });
+  const moneyPrinter = new MoneyPrinter();
+  global.moneyPrinter = moneyPrinter;
+  moneyPrinter.initialize().catch((error) => {
+    if (moneyPrinter.logger) {
+      moneyPrinter.logger.error('Failed to initialize:', { error });
     }
-    console.error('Failed to initialize:', error);
     process.exit(1);
   });
 }

@@ -106,7 +106,10 @@ class PositionManager extends EventEmitter {
 
     this.emit("positionOpened", { token, position });
     
-    console.log(`Successfully opened position for ${token.symbol}`);
+    this.logger.info(`Successfully opened position for ${token.symbol}`, {
+      size: size,
+      entryPrice: currentPrice
+    });
     return true;
   }
 

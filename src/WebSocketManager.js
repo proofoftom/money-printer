@@ -44,8 +44,8 @@ class WebSocketManager extends EventEmitter {
       this.ws = new WebSocket(this.config.WS_URL);
       this.setupEventHandlers();
     } catch (error) {
-      console.error("Failed to connect to WebSocket:", error);
-      await this.handleReconnect();
+      this.logger.error("Failed to connect to WebSocket:", { error });
+      throw error;
     }
   }
 
@@ -143,8 +143,8 @@ class WebSocketManager extends EventEmitter {
     });
 
     this.ws.on("error", (error) => {
-      console.error("WebSocket error:", error);
-      this.isConnected = false;
+      this.logger.error("WebSocket error:", { error });
+      this.emit("error", error);
     });
   }
 
@@ -221,7 +221,7 @@ class WebSocketManager extends EventEmitter {
 
   async handleReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error("Max reconnection attempts reached");
+      this.logger.error("Max reconnection attempts reached");
       return;
     }
 
@@ -235,7 +235,8 @@ class WebSocketManager extends EventEmitter {
     // Use setTimeout for reconnect delay
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch((error) => {
-        console.error("Reconnection attempt failed:", error);
+        this.logger.error("Reconnection attempt failed:", { error });
+        this.emit("error", error);
       });
     }, this.config.RECONNECT_INTERVAL);
   }

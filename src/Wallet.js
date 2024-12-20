@@ -23,20 +23,14 @@ class Wallet extends EventEmitter {
     };
     this.transactionFees = 0;
 
-    console.log(
-      `Wallet initialized with balance: ${this.balance.toFixed(4)} SOL`
-    );
+    this.logger.info(`Wallet initialized with balance: ${this.balance.toFixed(4)} SOL`);
     this.emit("balanceUpdate", this.balance);
   }
 
   updateBalance(amount) {
     const delta = parseFloat(amount.toFixed(4));
     this.balance = parseFloat((this.balance + delta).toFixed(4));
-    console.log(
-      `Balance updated by ${delta.toFixed(
-        4
-      )} SOL, new balance: ${this.balance.toFixed(4)} SOL`
-    );
+    this.logger.info(`Balance updated by ${delta.toFixed(4)} SOL, new balance: ${this.balance.toFixed(4)} SOL`);
     this.emit("balanceUpdate", this.balance);
   }
 
@@ -152,7 +146,7 @@ class Wallet extends EventEmitter {
       stats: this.getStatistics(),
     });
 
-    console.log(`Trade recorded for ${token.symbol}:
+    this.logger.info(`Trade recorded for ${token.symbol}:
       Entry: ${entryPrice.toFixed(6)} SOL
       Exit: ${exitPrice.toFixed(6)} SOL
       Size: ${size.toFixed(4)} SOL

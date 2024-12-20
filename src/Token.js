@@ -245,8 +245,11 @@ class Token extends EventEmitter {
         // Stop regular safety checks once ready
         this.cleanup();
       } else {
-        // Log safety check failure reasons
-        console.debug(`Safety check failed for ${this.symbol}:`, safetyCheck.reasons);
+        // Emit safety check failure event
+        this.emit('safetyCheckFailed', {
+          token: this,
+          reasons: safetyCheck.reasons
+        });
       }
     } else if (currentState === STATES.READY) {
       if (!safetyCheck.safe) {
