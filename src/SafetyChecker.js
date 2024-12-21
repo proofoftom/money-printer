@@ -1,5 +1,6 @@
 const EventEmitter = require('events');
 const config = require("./config");
+const STATES = require('./constants/STATES');
 
 class SafetyChecker extends EventEmitter {
   constructor(wallet, priceManager, logger) {
@@ -11,6 +12,7 @@ class SafetyChecker extends EventEmitter {
     this.wallet = wallet;
     this.priceManager = priceManager;
     this.logger = logger;
+    this.config = config;
 
     // Trading safety thresholds
     this.safetyConfig = {
@@ -99,6 +101,13 @@ class SafetyChecker extends EventEmitter {
         this.config.MATURE_TOKEN_MULTIPLIERS : 
         { safetyThreshold: 1, minConfidence: 1, minVolume: 1 };
 
+      // Token age check
+      const tokenAge = Date.now() - token.createdAt;
+      if (tokenAge < this.config.MIN_TOKEN_AGE_SECONDS * 1000) {
+        safe = false;
+        reasons.push(`Token too new (${(tokenAge / 1000).toFixed(2)} < ${this.config.MIN_TOKEN_AGE_SECONDS} seconds)`);
+      }
+
       // Basic checks
       if (token.getDrawdownPercentage() >= 90) {
         safe = false;
@@ -106,7 +115,7 @@ class SafetyChecker extends EventEmitter {
       }
 
       // Volume checks
-      const minVolume = this.config.MIN_VOLUME * multipliers.minVolume;
+      const minVolume = this.config.MIN_VOLUME_SOL * multipliers.minVolume;
       if (token.volume < minVolume) {
         safe = false;
         reasons.push(`Volume too low: ${token.volume} < ${minVolume}`);
@@ -173,8 +182,8 @@ class SafetyChecker extends EventEmitter {
     }
 
     // Check if size is within allowed range
-    const minSize = token.marketCapSol * config.MIN_MCAP_POSITION;
-    const maxSize = token.marketCapSol * config.MAX_MCAP_POSITION;
+    const minSize = token.marketCapSol * this.config.MIN_MCAP_POSITION;
+    const maxSize = token.marketCapSol * this.config.MAX_MCAP_POSITION;
 
     if (size < minSize) {
       const result = {
@@ -204,10 +213,18 @@ class SafetyChecker extends EventEmitter {
       return result;
     }
 
-    return {
+    const result = {
       allowed: true,
       reasons: []
     };
+
+    this.emit('safetyCheck', {
+      token,
+      result,
+      type: 'openPosition'
+    });
+
+    return result;
   }
 }
 

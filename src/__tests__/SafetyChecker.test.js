@@ -1,15 +1,29 @@
 const SafetyChecker = require('../SafetyChecker');
 const Token = require('../Token').Token;
+const STATES = require('../constants/STATES');
 const EventEmitter = require('events');
 
-// Mock the config module
+// Mock the config module with actual SafetyChecker values
 jest.mock('../config', () => ({
   MIN_TOKEN_AGE_SECONDS: 30,
-  MIN_LIQUIDITY_SOL: 5,
-  MIN_HOLDER_COUNT: 10,
-  MIN_TRANSACTIONS: 5,
+  MIN_VOLUME_SOL: 10,
+  MIN_TRADES: 50,
+  MAX_AGE_MS: 3600000,
+  MIN_NEW_HOLDERS: 10,
+  MIN_BUY_SELL_RATIO: 1.5,
+  MAX_VOLATILITY: 0.5,
+  HOLDER_CHECK_WINDOW_MS: 300000,
+  MIN_CONFIDENCE_FOR_ENTRY: 0.7,
+  MAX_HOLDER_CONCENTRATION: 50,
+  MAX_TIME_SINCE_LAST_TRADE: 60000,
+  MIN_CYCLE_QUALITY_SCORE: 0.6,
   MIN_MCAP_POSITION: 0.001,
-  MAX_MCAP_POSITION: 0.01
+  MAX_MCAP_POSITION: 0.01,
+  MATURE_TOKEN_MULTIPLIERS: {
+    safetyThreshold: 1.5,
+    minConfidence: 0.8,
+    minVolume: 1.2
+  }
 }));
 
 describe('SafetyChecker', () => {
@@ -18,7 +32,6 @@ describe('SafetyChecker', () => {
   let mockPriceManager;
   let mockLogger;
   let mockToken;
-  let mockConfig;
 
   beforeEach(() => {
     mockWallet = {
@@ -39,12 +52,17 @@ describe('SafetyChecker', () => {
     };
 
     safetyChecker = new SafetyChecker(mockWallet, mockPriceManager, mockLogger);
+    safetyChecker.config = require('../config'); // Use the mocked config
+    jest.spyOn(safetyChecker, 'emit');
 
     // Create a mock token with default safe values
     mockToken = {
       mint: 'test-mint',
       symbol: 'TEST',
+      state: STATES.NEW,
       createdAt: Date.now() - 600000, // 10 minutes old
+      lastStateChange: Date.now() - 600000,
+      consecutiveFailures: 0,
       liquiditySol: 10,
       holderCount: 20,
       transactionCount: 30,
@@ -52,6 +70,8 @@ describe('SafetyChecker', () => {
       volume: 15,
       tradeCount: 60,
       currentPrice: 1.0,
+      confidence: 0.8,
+      lastTradeTime: Date.now() - 1000, // 1 second ago
       pumpState: {
         firstDipDetected: true,
         inCooldown: false,
@@ -74,131 +94,138 @@ describe('SafetyChecker', () => {
           sellCount: 2
         }))
       },
-      calculateVolatility: jest.fn().mockReturnValue(0.3)
+      calculateVolatility: jest.fn().mockReturnValue(0.3),
+      getDrawdownPercentage: jest.fn().mockReturnValue(20),
+      getTopHolderConcentration: jest.fn().mockReturnValue(30),
+      requiresSafetyCheck: jest.fn().mockReturnValue(true),
+      setState: jest.fn()
     };
   });
 
   describe('Basic Safety Checks', () => {
-    test('should pass all basic safety checks with valid token', () => {
+    it('should pass all basic safety checks with valid token', () => {
       const result = safetyChecker.isTokenSafe(mockToken);
       expect(result.safe).toBe(true);
       expect(result.reasons).toHaveLength(0);
     });
 
-    test('should fail if token is too new', () => {
+    it('should fail if token is too new', () => {
       mockToken.createdAt = Date.now() - 20000; // Less than 30 seconds
       const result = safetyChecker.isTokenSafe(mockToken);
       expect(result.safe).toBe(false);
       expect(result.reasons[0]).toMatch(/Token too new/);
     });
 
-    test('should fail if liquidity is too low', () => {
-      mockToken.liquiditySol = 2;
+    it('should fail if volume is too low', () => {
+      mockToken.volume = 5; // Less than MIN_VOLUME_SOL
       const result = safetyChecker.isTokenSafe(mockToken);
       expect(result.safe).toBe(false);
-      expect(result.reasons[0]).toMatch(/Insufficient liquidity/);
+      expect(result.reasons[0]).toMatch(/Volume too low/);
     });
 
-    test('should fail if holder count is too low', () => {
-      mockToken.holderCount = 5;
+    it('should fail if confidence is too low', () => {
+      mockToken.confidence = 0.5;
       const result = safetyChecker.isTokenSafe(mockToken);
       expect(result.safe).toBe(false);
-      expect(result.reasons[0]).toMatch(/Too few holders/);
+      expect(result.reasons[0]).toMatch(/Confidence too low/);
+    });
+
+    it('should fail if holder concentration is too high', () => {
+      mockToken.getTopHolderConcentration.mockReturnValue(60);
+      const result = safetyChecker.isTokenSafe(mockToken);
+      expect(result.safe).toBe(false);
+      expect(result.reasons[0]).toMatch(/holder concentration too high/);
+    });
+
+    it('should fail if drawdown is too high', () => {
+      mockToken.getDrawdownPercentage.mockReturnValue(95);
+      const result = safetyChecker.isTokenSafe(mockToken);
+      expect(result.safe).toBe(false);
+      expect(result.reasons[0]).toMatch(/drawdown/);
     });
   });
 
   describe('Market Activity Checks', () => {
-    test('should check market activity only in recovery phase', () => {
-      mockToken.pumpState.firstDipDetected = false;
-      const result = safetyChecker.isTokenSafe(mockToken);
-      expect(result.safe).toBe(true); // Should not perform market activity checks
+    beforeEach(() => {
+      mockToken.state = STATES.READY;
+      mockToken.cycleQualityScores = [{ score: 0.7 }];
     });
 
-    test('should fail if volume is insufficient during recovery', () => {
-      mockToken.volume = 5; // Below MIN_VOLUME_SOL
+    it('should check market activity only in READY or MATURE state', () => {
+      mockToken.state = STATES.NEW;
+      mockToken.lastTradeTime = Date.now() - 120000; // 2 minutes ago
       const result = safetyChecker.isTokenSafe(mockToken);
-      expect(result.safe).toBe(false);
-      expect(result.reasons[0]).toMatch(/Insufficient volume/);
+      expect(result.safe).toBe(true);
     });
 
-    test('should fail if trade count is too low during recovery', () => {
-      mockToken.tradeCount = 30; // Below MIN_TRADES
+    it('should fail if no recent trades in READY state', () => {
+      mockToken.lastTradeTime = Date.now() - 120000; // 2 minutes ago
       const result = safetyChecker.isTokenSafe(mockToken);
       expect(result.safe).toBe(false);
-      expect(result.reasons[0]).toMatch(/Insufficient trades/);
+      expect(result.reasons[0]).toMatch(/No recent trades/);
     });
 
-    test('should fail if token is too old during recovery', () => {
-      mockToken.createdAt = Date.now() - 7200000; // 2 hours old
+    it('should check cycle quality for mature tokens', () => {
+      mockToken.state = STATES.MATURE;
+      mockToken.cycleQualityScores = [{ score: 0.5 }];
       const result = safetyChecker.isTokenSafe(mockToken);
       expect(result.safe).toBe(false);
-      expect(result.reasons[0]).toMatch(/Token too old/);
+      expect(result.reasons[0]).toMatch(/Cycle quality/);
     });
 
-    test('should fail if holder growth is insufficient during recovery', () => {
-      mockToken.holderHistory = [
-        { timestamp: Date.now() - 300000, count: 10 },
-        { timestamp: Date.now(), count: 12 } // Only 2 new holders
-      ];
+    it('should apply multipliers for mature tokens', () => {
+      mockToken.state = STATES.MATURE;
+      mockToken.volume = 11; // Above normal MIN_VOLUME but below mature threshold
       const result = safetyChecker.isTokenSafe(mockToken);
       expect(result.safe).toBe(false);
-      expect(result.reasons[0]).toMatch(/Insufficient holder growth/);
-    });
-
-    test('should fail if volatility is too high during recovery', () => {
-      mockToken.calculateVolatility.mockReturnValue(0.6); // Above MAX_VOLATILITY
-      const result = safetyChecker.isTokenSafe(mockToken);
-      expect(result.safe).toBe(false);
-      expect(result.reasons[0]).toMatch(/Excessive volatility/);
-    });
-
-    test('should fail if buy/sell ratio is too low during recovery', () => {
-      mockToken.ohlcvData.secondly = mockToken.ohlcvData.secondly.map(candle => ({
-        ...candle,
-        buyCount: 1,
-        sellCount: 2 // More sells than buys
-      }));
-      const result = safetyChecker.isTokenSafe(mockToken);
-      expect(result.safe).toBe(false);
-      expect(result.reasons[0]).toMatch(/Insufficient buy pressure/);
+      expect(result.reasons[0]).toMatch(/Volume too low/);
     });
   });
 
   describe('Position Opening', () => {
-    test('should allow opening position when all checks pass', () => {
-      const result = safetyChecker.canOpenPosition(mockToken, 1);
+    it('should allow opening position when all checks pass', () => {
+      const size = 2; // Within allowed range
+      const result = safetyChecker.canOpenPosition(mockToken, size);
       expect(result.allowed).toBe(true);
       expect(result.reasons).toHaveLength(0);
+      expect(safetyChecker.emit).toHaveBeenCalledWith('safetyCheck', {
+        token: mockToken,
+        result: { allowed: true, reasons: [] },
+        type: 'openPosition'
+      });
     });
 
-    test('should prevent opening position when size is too small', () => {
-      const result = safetyChecker.canOpenPosition(mockToken, 0.5);
+    it('should prevent opening position when size is too small', () => {
+      const size = 0.5; // Below MIN_MCAP_POSITION
+      const result = safetyChecker.canOpenPosition(mockToken, size);
       expect(result.allowed).toBe(false);
       expect(result.reasons[0]).toMatch(/Position size too small/);
+      expect(safetyChecker.emit).toHaveBeenCalledWith('safetyCheck', {
+        token: mockToken,
+        result: expect.objectContaining({ allowed: false }),
+        type: 'positionSize'
+      });
     });
 
-    test('should prevent opening position when size is too large', () => {
-      const result = safetyChecker.canOpenPosition(mockToken, 20);
+    it('should prevent opening position when size is too large', () => {
+      const size = 15; // Above MAX_MCAP_POSITION
+      const result = safetyChecker.canOpenPosition(mockToken, size);
       expect(result.allowed).toBe(false);
       expect(result.reasons[0]).toMatch(/Position size too large/);
+      expect(safetyChecker.emit).toHaveBeenCalledWith('safetyCheck', {
+        token: mockToken,
+        result: expect.objectContaining({ allowed: false }),
+        type: 'positionSize'
+      });
     });
 
-    test('should emit safety check events', () => {
-      const eventSpy = jest.fn();
-      safetyChecker.on('safetyCheck', eventSpy);
-
-      // Make the token fail safety checks by setting volume too low
-      mockToken.volume = 5;
-      mockToken.pumpState.firstDipDetected = true;
-      mockToken.pumpState.inCooldown = false;
-
-      const result = safetyChecker.canOpenPosition(mockToken, 1);
-
-      expect(eventSpy).toHaveBeenCalled();
-      const eventCall = eventSpy.mock.calls[0][0];
-      expect(eventCall.token).toBe(mockToken);
-      expect(eventCall.result.safe).toBe(false);
-      expect(eventCall.type).toBe('tokenSafety');
+    it('should handle errors gracefully', () => {
+      mockToken.getDrawdownPercentage.mockImplementation(() => {
+        throw new Error('Test error');
+      });
+      const result = safetyChecker.isTokenSafe(mockToken);
+      expect(result.safe).toBe(false);
+      expect(result.reasons).toContain('Error checking token safety');
     });
   });
 });
