@@ -19,7 +19,7 @@ class SafetyChecker extends EventEmitter {
       reasons: []
     };
 
-    // Check minimum token age (5 minutes)
+    // Check minimum token age (1 minute)
     const tokenAge = (Date.now() - token.createdAt) / 1000;
     if (tokenAge < config.MIN_TOKEN_AGE_SECONDS) {
       result.safe = false;

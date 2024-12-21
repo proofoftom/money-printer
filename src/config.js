@@ -1,10 +1,22 @@
 module.exports = {
   // Core settings
-  MIN_TOKEN_AGE_SECONDS: 5, // 5 seconds minimum age
+  MIN_TOKEN_AGE_SECONDS: 15, // Reduced to 15 seconds to catch early moves
   MAX_ENTRY_MCAP_USD: 100000, // $100k maximum market cap
   MIN_MCAP_POSITION: 0.001, // 0.1% minimum position size
   MAX_MCAP_POSITION: 0.01, // 1% maximum position size
   RISK_PER_TRADE: 0.1, // 10% of wallet per trade
+
+  // Pump detection settings
+  PUMP_SETTINGS: {
+    MIN_PRICE_INCREASE: 20,     // 20% minimum price increase for initial pump
+    MIN_VOLUME_SPIKE: 200,      // 200% volume spike compared to average
+    MAX_INITIAL_WINDOW: 30,     // 30 seconds to detect initial pump
+    MIN_DIP_PERCENT: 15,        // 15% minimum dip from peak
+    MAX_DIP_WINDOW: 120,        // 2 minutes to start recovering
+    MIN_RECOVERY_PERCENT: 10,   // 10% minimum recovery from dip
+    MAX_RECOVERY_WINDOW: 300,   // 5 minutes to complete recovery
+    MIN_BUYER_SELLER_RATIO: 1.5 // Minimum ratio of buyers to sellers during dip
+  },
 
   // Exit strategy settings
   STOP_LOSS_PERCENT: 10, // 10% stop loss
