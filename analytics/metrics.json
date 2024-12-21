@@ -1,0 +1,27 @@
+{
+  "trades": {
+    "total": 0,
+    "profitable": 0,
+    "unprofitable": 0,
+    "totalProfitSol": 0,
+    "totalProfitUsd": 0,
+    "largestProfitSol": 0,
+    "largestLossSol": 0,
+    "avgTimeInPosition": 0,
+    "totalTimeInPosition": 0
+  },
+  "performance": {
+    "pumpDetectionLatency": [],
+    "tradeExecutionLatency": [],
+    "websocketLatency": []
+  },
+  "errors": {
+    "websocket": 0,
+    "trading": 0,
+    "system": 0
+  },
+  "safety": {
+    "checksTriggered": 0,
+    "tradesBlocked": 0
+  }
+}

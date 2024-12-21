@@ -2,10 +2,11 @@ const WebSocket = require("ws");
 const EventEmitter = require("events");
 
 class WebSocketManager extends EventEmitter {
-  constructor(config, logger) {
+  constructor(config, logger, analytics) {
     super();
     this.config = config;
     this.logger = logger;
+    this.analytics = analytics;
     this.isConnected = false;
     this.subscribedTokens = new Set();
     this.ws = null;
@@ -23,8 +24,7 @@ class WebSocketManager extends EventEmitter {
     try {
       this.connectAttempts++;
       this.logger.debug("Connecting to WebSocket:", { 
-        url: this.config.WS_ENDPOINT,
-        attempt: this.connectAttempts 
+        endpoint: this.config.WS_ENDPOINT 
       });
 
       this.ws = new WebSocket(this.config.WS_ENDPOINT, {
@@ -45,6 +45,17 @@ class WebSocketManager extends EventEmitter {
       });
 
       this.ws.on("upgrade", (response) => {
+        if (response.statusCode !== 101) {
+          this.logger.error("Unexpected WebSocket response:", {
+            statusCode: response.statusCode,
+            statusMessage: response.statusMessage
+          });
+          if (this.analytics) {
+            this.analytics.trackError('websocket');
+          }
+          return;
+        }
+
         this.logger.debug("WebSocket upgrade successful:", {
           headers: response.headers
         });
@@ -75,7 +86,15 @@ class WebSocketManager extends EventEmitter {
       this.ws.on("message", (data) => {
         try {
           const message = JSON.parse(data);
-          
+          const now = Date.now();
+
+          if (message.timestamp) {
+            const latency = now - message.timestamp;
+            if (this.analytics) {
+              this.analytics.trackLatency('websocket', latency);
+            }
+          }
+
           // Handle subscription acknowledgments
           if (message.type === "subscribed" || message.type === "unsubscribed") {
             this.logger.debug(`WebSocket subscription update: ${message.type}`);
@@ -99,11 +118,17 @@ class WebSocketManager extends EventEmitter {
           }
         } catch (error) {
           this.logger.error("Failed to parse WebSocket message:", { error, data: data.toString() });
+          if (this.analytics) {
+            this.analytics.trackError('websocket');
+          }
         }
       });
 
       this.ws.on("error", (error) => {
         this.logger.error("WebSocket error:", { error: error.message });
+        if (this.analytics) {
+          this.analytics.trackError('websocket');
+        }
         this.emit("error", error);
       });
 

@@ -5,37 +5,40 @@ const PositionManager = require("./PositionManager");
 const PriceManager = require("./PriceManager");
 const Wallet = require("./Wallet");
 const { Logger } = require("./Logger");
+const Analytics = require('./Analytics');
 const fs = require('fs').promises;
 const path = require('path');
 const config = require('./config');
 const ConfigWizard = require('./ConfigWizard');
-const Dashboard = require('./dashboard/Dashboard');
+const Dashboard = require('./Dashboard');
 const chalk = require('chalk');
 
 class MoneyPrinter {
   constructor() {
     this.config = config;
-    this.logger = new Logger(this.config);
   }
 
-  async initialize() {
+  async init() {
     try {
-      // Check if this is first run or config requested
-      const configPath = path.join(process.cwd(), 'config.json');
-      const isFirstRun = !(await this.fileExists(configPath));
-      
-      if (isFirstRun || process.argv.includes('--config')) {
-        const wizard = new ConfigWizard(this.config);
-        await wizard.start();
-        this.config = wizard.config;
+      this.logger = new Logger(this.config);
+      this.analytics = new Analytics(this.config, this.logger);
+
+      // Initialize components first
+      await this.initializeComponents();
+
+      // Initialize dashboard after components if not in test mode
+      if (process.env.NODE_ENV !== 'test') {
+        this.dashboard = new Dashboard(this);
+        this.logger.setDashboard(this.dashboard);
+        
+        // Setup event handlers after dashboard is initialized
+        this.setupEventHandlers();
+        
+        // Start the dashboard
+        this.dashboard.start();
       }
 
-      // Initialize components
-      await this.initializeComponents();
       this.logger.info('✨ Money Printer initialized successfully!');
-      
-      // Start the dashboard interface
-      await this.startDashboard();
       
     } catch (error) {
       this.logger.error('Error initializing Money Printer:', { error: error.message });
@@ -56,21 +59,20 @@ class MoneyPrinter {
     try {
       this.logger.info('Initializing components');
 
-      // Initialize WebSocket connection
+      // Initialize WebSocket manager
       this.wsManager = new WebSocketManager(this.config, this.logger);
-      await this.wsManager.connect();
 
-      // Initialize components in correct order
+      // Initialize wallet and price manager
       this.wallet = new Wallet(this.config, this.logger);
       this.priceManager = new PriceManager(this.config, this.logger);
-      await this.priceManager.initialize();
-      
-      this.safetyChecker = new SafetyChecker(this.wallet, this.priceManager, this.logger);
+
+      // Initialize position manager with dependencies
       this.positionManager = new PositionManager({
         wallet: this.wallet,
         priceManager: this.priceManager,
         logger: this.logger,
-        config: this.config
+        config: this.config,
+        analytics: this.analytics
       });
       
       // Initialize token tracker with dependencies
@@ -81,14 +83,16 @@ class MoneyPrinter {
         this.positionManager
       );
 
-      // Initialize dashboard
-      this.dashboard = new Dashboard(this.config, this.logger, this.safetyChecker, this.tokenTracker);
-      this.logger.setDashboard(this.dashboard);
+      // Initialize safety checker with dependencies
+      this.safetyChecker = new SafetyChecker(this.wallet, this.priceManager, this.logger);
 
-      // Setup event handlers
-      this.setupEventHandlers();
+      // Connect to WebSocket
+      await this.wsManager.connect();
+
+      // Initialize price manager
+      await this.priceManager.initialize();
+
       this.logger.info('All components initialized successfully');
-
       return true;
     } catch (error) {
       this.logger.error('Failed to initialize components', { 
@@ -100,6 +104,8 @@ class MoneyPrinter {
   }
 
   setupEventHandlers() {
+    if (!this.dashboard) return;
+
     // WebSocket connection status
     this.wsManager.on('connected', () => {
       this.dashboard.emit('statusUpdate', { connected: true });
@@ -115,18 +121,25 @@ class MoneyPrinter {
       this.dashboard.emit('log', `New token detected: ${token.symbol}`);
     });
 
-    // Price updates
-    this.priceManager.on('priceUpdate', (data) => {
-      this.dashboard.emit('priceUpdate', {
-        prices: data.priceHistory,
-        volumes: data.volumeHistory
+    // Position updates
+    this.positionManager.on('positionOpened', (position) => {
+      this.dashboard.emit('statusUpdate', { 
+        position: position.symbol,
+        entryPrice: position.entryPrice
       });
+      this.dashboard.emit('log', `Position opened: ${position.symbol} @ ${position.entryPrice}`);
     });
 
-    // Position updates
-    this.positionManager.on('positionUpdate', (positions) => {
-      this.dashboard.emit('positionUpdate', positions);
+    this.positionManager.on('positionClosed', (data) => {
+      const { position, reason } = data;
+      this.dashboard.emit('statusUpdate', { position: null });
+      this.dashboard.emit('log', `Position closed: ${position.symbol} (${reason})`);
       this.updateTotalPnL();
+    });
+
+    // Analytics updates
+    this.analytics.on('tradeAnalytics', (metrics) => {
+      this.dashboard.emit('metricsUpdate', metrics);
     });
 
     // Wallet updates
@@ -166,11 +179,6 @@ class MoneyPrinter {
     this.dashboard.emit('statusUpdate', { totalPnL });
   }
 
-  async startDashboard() {
-    this.dashboard.initialize();
-    this.logger.info('Dashboard started');
-  }
-
   async shutdown() {
     this.logger.info('Shutting down Money Printer...');
     await this.wsManager.disconnect();
@@ -203,7 +211,7 @@ process.on("unhandledRejection", (error) => {
 if (require.main === module) {
   const moneyPrinter = new MoneyPrinter();
   global.moneyPrinter = moneyPrinter;
-  moneyPrinter.initialize().catch((error) => {
+  moneyPrinter.init().catch((error) => {
     if (moneyPrinter.logger) {
       moneyPrinter.logger.error('Failed to initialize:', { error });
     }

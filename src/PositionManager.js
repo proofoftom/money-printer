@@ -2,12 +2,13 @@ const EventEmitter = require("events");
 const Position = require("./Position");
 
 class PositionManager extends EventEmitter {
-  constructor({ wallet, priceManager, logger, config }) {
+  constructor({ wallet, priceManager, logger, config, analytics }) {
     super();
     this.wallet = wallet;
     this.priceManager = priceManager;
     this.logger = logger;
     this.config = config;
+    this.analytics = analytics;
     this.position = null;
     this._tradingEnabled = true;
   }
@@ -64,6 +65,9 @@ class PositionManager extends EventEmitter {
       return position;
     } catch (error) {
       this.logger?.error("Failed to open position:", error);
+      if (this.analytics) {
+        this.analytics.trackError('trading');
+      }
       return null;
     }
   }
@@ -77,10 +81,16 @@ class PositionManager extends EventEmitter {
       const success = this.position.close(reason);
       if (success) {
         this.emit("positionClosed", { position: this.position, reason });
+        if (this.analytics) {
+          this.analytics.trackTrade(this.position);
+        }
       }
       return success;
     } catch (error) {
       this.logger?.error("Failed to close position:", error);
+      if (this.analytics) {
+        this.analytics.trackError('trading');
+      }
       return false;
     }
   }

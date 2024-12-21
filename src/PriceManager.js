@@ -8,19 +8,44 @@ class PriceManager extends EventEmitter {
     this.logger = logger;
     this.solPriceUSD = config.SOL_USD_PRICE; // Use fallback price from config
     this.priceHistory = new Map(); // mint -> array of prices
+    this.updateInterval = null;
   }
 
   async initialize() {
     try {
-      const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
-      this.solPriceUSD = response.data.solana.usd;
-      this.logger.info(`Initialized SOL price: $${this.solPriceUSD}`);
+      // Get initial SOL price
+      await this.fetchSolPrice();
+      
+      // Update SOL price every minute
+      this.updateInterval = setInterval(async () => {
+        await this.fetchSolPrice();
+      }, 60000); // 60 seconds
+
       return this.solPriceUSD;
     } catch (error) {
-      this.logger.error('Failed to fetch SOL price:', error.message);
+      this.logger.error('Failed to initialize price manager:', error.message);
       // Use fallback price from config
       this.logger.info(`Using fallback SOL price: $${this.solPriceUSD}`);
       return this.solPriceUSD;
+    }
+  }
+
+  async fetchSolPrice() {
+    try {
+      const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+      const newPrice = response.data.solana.usd;
+      
+      // Only log if price has changed
+      if (newPrice !== this.solPriceUSD) {
+        this.solPriceUSD = newPrice;
+        this.logger.info(`Updated SOL price: $${this.solPriceUSD}`);
+        this.emit('solPriceUpdate', this.solPriceUSD);
+      }
+      
+      return this.solPriceUSD;
+    } catch (error) {
+      this.logger.error('Failed to fetch SOL price:', error.message);
+      return this.solPriceUSD; // Keep using current price
     }
   }
 
@@ -68,6 +93,13 @@ class PriceManager extends EventEmitter {
   // For simulation purposes
   updateSolPrice(newPrice) {
     this.solPriceUSD = newPrice;
+  }
+
+  stop() {
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+      this.updateInterval = null;
+    }
   }
 }
 

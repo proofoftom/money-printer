@@ -7,10 +7,24 @@ class ConfigWizard {
   constructor(config) {
     this.config = config;
     this.changes = {};
+    
+    // Configure inquirer to prevent double keystrokes
+    inquirer.prompt.prompts.input.prototype.onKeypress = function(e) {
+      if (!this.firstRender) {
+        return;
+      }
+      this.firstRender = false;
+      this.render();
+    };
   }
 
   async start() {
     console.log(chalk.blue.bold('\n🔧 Welcome to the Money Printer Configuration Wizard 🖨️\n'));
+    
+    // Disable raw mode to prevent double keystrokes
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
     
     await this.promptSection('Risk Parameters', this.riskQuestions);
     await this.promptSection('Dashboard Layout', this.dashboardLayoutQuestions);
@@ -24,6 +38,11 @@ class ConfigWizard {
     await this.showDashboardPreview();
     await this.confirmSave();
     await this.saveChanges();
+    
+    // Restore raw mode
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
   }
 
   async promptSection(title, questions) {
@@ -278,29 +297,32 @@ class ConfigWizard {
   get dashboardLayoutQuestions() {
     return [
       {
-        type: 'list',
-        name: 'DASHBOARD.COLORS.THEME',
-        message: 'Choose a color theme:',
+        type: 'checkbox',
+        name: 'DASHBOARD.WIDGETS',
+        message: 'Select widgets to display:',
+        default: this.config.DASHBOARD?.WIDGETS || ['status', 'metrics', 'alerts', 'tokens', 'chart', 'trades'],
         choices: [
-          { name: 'Dark (Default)', value: 'dark' },
-          { name: 'Light', value: 'light' },
-          { name: 'High Contrast', value: 'contrast' }
-        ],
-        default: 'dark'
+          { name: 'Status Box', value: 'status' },
+          { name: 'Performance Metrics', value: 'metrics' },
+          { name: 'Alerts', value: 'alerts' },
+          { name: 'Token List', value: 'tokens' },
+          { name: 'Price Chart', value: 'chart' },
+          { name: 'Trade History', value: 'trades' }
+        ]
+      },
+      {
+        type: 'list',
+        name: 'DASHBOARD.CHART_TYPE',
+        message: 'Select default chart type:',
+        default: this.config.DASHBOARD?.CHART_TYPE || 'candlestick',
+        choices: ['line', 'candlestick', 'area']
       },
       {
         type: 'number',
-        name: 'DASHBOARD.REFRESH_RATE',
-        message: 'UI refresh rate (milliseconds):',
-        default: this.config.DASHBOARD?.REFRESH_RATE || 1000,
-        validate: value => value >= 100 && value <= 5000 ? true : 'Please enter a value between 100 and 5000'
-      },
-      {
-        type: 'number',
-        name: 'DASHBOARD.LOG_BUFFER',
-        message: 'Number of log lines to keep in memory:',
-        default: this.config.DASHBOARD?.LOG_BUFFER || 1000,
-        validate: value => value >= 100 && value <= 10000 ? true : 'Please enter a value between 100 and 10000'
+        name: 'DASHBOARD.UPDATE_INTERVAL',
+        message: 'Dashboard update interval (ms):',
+        default: this.config.DASHBOARD?.UPDATE_INTERVAL || 1000,
+        validate: value => value >= 100 ? true : 'Minimum interval is 100ms'
       }
     ];
   }
@@ -309,24 +331,22 @@ class ConfigWizard {
     return [
       {
         type: 'number',
-        name: 'DASHBOARD.CHART.CANDLE_INTERVAL',
-        message: 'Candle interval (milliseconds):',
-        default: this.config.DASHBOARD?.CHART?.CANDLE_INTERVAL || 5000,
-        validate: value => value >= 1000 && value <= 60000 ? true : 'Please enter a value between 1000 and 60000'
+        name: 'DASHBOARD.CHART_HISTORY',
+        message: 'Number of data points to show in charts:',
+        default: this.config.DASHBOARD?.CHART_HISTORY || 100,
+        validate: value => value > 0 ? true : 'Must be greater than 0'
       },
       {
-        type: 'number',
-        name: 'DASHBOARD.CHART.MAX_CANDLES',
-        message: 'Maximum number of candles to display:',
-        default: this.config.DASHBOARD?.CHART?.MAX_CANDLES || 100,
-        validate: value => value >= 20 && value <= 500 ? true : 'Please enter a value between 20 and 500'
+        type: 'confirm',
+        name: 'DASHBOARD.SHOW_VOLUME',
+        message: 'Show volume in charts?',
+        default: this.config.DASHBOARD?.SHOW_VOLUME ?? true
       },
       {
-        type: 'number',
-        name: 'DASHBOARD.CHART.PRICE_DECIMALS',
-        message: 'Number of decimal places for price display:',
-        default: this.config.DASHBOARD?.CHART?.PRICE_DECIMALS || 9,
-        validate: value => value >= 0 && value <= 12 ? true : 'Please enter a value between 0 and 12'
+        type: 'confirm',
+        name: 'DASHBOARD.SHOW_INDICATORS',
+        message: 'Show technical indicators?',
+        default: this.config.DASHBOARD?.SHOW_INDICATORS ?? true
       }
     ];
   }
@@ -334,44 +354,22 @@ class ConfigWizard {
   get alertQuestions() {
     return [
       {
-        type: 'confirm',
-        name: 'ALERTS.PRICE_CHANGE.enabled',
-        message: 'Enable price change alerts?',
-        default: this.config.ALERTS?.PRICE_CHANGE?.enabled ?? true
-      },
-      {
-        type: 'number',
-        name: 'ALERTS.PRICE_CHANGE.threshold',
-        message: 'Price change alert threshold (%):',
-        default: this.config.ALERTS?.PRICE_CHANGE?.threshold || 5,
-        when: answers => answers['ALERTS.PRICE_CHANGE.enabled'],
-        validate: value => value > 0 && value <= 100 ? true : 'Please enter a value between 0 and 100'
-      },
-      {
-        type: 'confirm',
-        name: 'ALERTS.WALLET_BALANCE.enabled',
-        message: 'Enable wallet balance alerts?',
-        default: this.config.ALERTS?.WALLET_BALANCE?.enabled ?? true
-      },
-      {
-        type: 'number',
-        name: 'ALERTS.WALLET_BALANCE.threshold',
-        message: 'Wallet balance alert threshold (%):',
-        default: this.config.ALERTS?.WALLET_BALANCE?.threshold || 10,
-        when: answers => answers['ALERTS.WALLET_BALANCE.enabled'],
-        validate: value => value > 0 && value <= 100 ? true : 'Please enter a value between 0 and 100'
+        type: 'checkbox',
+        name: 'DASHBOARD.ALERTS',
+        message: 'Select events to show alerts for:',
+        default: this.config.DASHBOARD?.ALERTS || ['newToken', 'position', 'profit', 'error'],
+        choices: [
+          { name: 'New Token Detection', value: 'newToken' },
+          { name: 'Position Changes', value: 'position' },
+          { name: 'Profit/Loss Updates', value: 'profit' },
+          { name: 'Error Messages', value: 'error' }
+        ]
       },
       {
         type: 'confirm',
-        name: 'ALERTS.SOUNDS.TRADE_ENTRY',
-        message: 'Play sound on trade entry?',
-        default: this.config.ALERTS?.SOUNDS?.TRADE_ENTRY ?? true
-      },
-      {
-        type: 'confirm',
-        name: 'ALERTS.SOUNDS.TRADE_EXIT',
-        message: 'Play sound on trade exit?',
-        default: this.config.ALERTS?.SOUNDS?.TRADE_EXIT ?? true
+        name: 'DASHBOARD.SOUND_ALERTS',
+        message: 'Enable sound alerts?',
+        default: this.config.DASHBOARD?.SOUND_ALERTS ?? true
       }
     ];
   }
