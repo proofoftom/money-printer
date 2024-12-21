@@ -1,5 +1,6 @@
 const EventEmitter = require('events');
-const { Token, STATES } = require('../Token');
+const Token = require('../Token');
+const STATES = require('../constants/STATES');
 
 describe('Token', () => {
   let token;

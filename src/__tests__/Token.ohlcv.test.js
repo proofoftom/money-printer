@@ -1,4 +1,5 @@
-const { Token, STATES } = require("../Token");
+const Token = require("../Token");
+const STATES = require("../constants/STATES");
 
 describe("Token OHLCV Metrics", () => {
   jest.setTimeout(30000);
@@ -15,20 +16,26 @@ describe("Token OHLCV Metrics", () => {
       info: jest.fn(),
       debug: jest.fn(),
       error: jest.fn(),
+      warn: jest.fn(),
+      logSafetyCheck: jest.fn()
     };
 
     const mockConfig = {
       SAFETY_CHECK_INTERVAL: 1000,
+      OHLCV_INTERVAL: 1000,
+      MATURE_TOKEN_MULTIPLIERS: {
+        safetyThreshold: 1.5,
+        minConfidence: 0.8,
+        minVolume: 1.2
+      }
     };
 
-    const mockPriceManager = {};
-    const mockSafetyChecker = {};
+    const mockPriceManager = {
+      getPrice: jest.fn().mockReturnValue(1.0)
+    };
 
-    events = {
-      firstDipDetected: [],
-      potentialEntryPoint: [],
-      trade: [],
-      updated: [],
+    const mockSafetyChecker = {
+      isTokenSafe: jest.fn().mockReturnValue({ safe: true, reasons: [] })
     };
 
     const tokenData = {
@@ -49,6 +56,81 @@ describe("Token OHLCV Metrics", () => {
       logger: mockLogger,
       config: mockConfig,
     });
+
+    // Initialize OHLCV data structure
+    token.ohlcvData = {
+      secondly: [],
+      fiveSeconds: [],
+      thirtySeconds: [],
+      minutely: [],
+      fiveMinutes: [],
+      thirtyMinutes: [],
+      hourly: [],
+      fourHourly: [],
+      daily: []
+    };
+
+    // Initialize indicators
+    token.indicators = {
+      volumeProfile: new Map([
+        ['relativeVolume', 1.0],
+        ['volumeMA', 1.0]
+      ]),
+      priceMA: new Map([
+        ['shortTerm', 1.0],
+        ['mediumTerm', 1.0],
+        ['longTerm', 1.0]
+      ]),
+      volatility: new Map([
+        ['shortTerm', 0.1],
+        ['mediumTerm', 0.1],
+        ['longTerm', 0.1]
+      ]),
+      sma: new Map([
+        [5, 1.0],
+        [10, 1.0],
+        [20, 1.0],
+        [50, 1.0],
+        [100, 1.0]
+      ]),
+      ema: new Map([
+        [5, 1.0],
+        [10, 1.0],
+        [20, 1.0],
+        [50, 1.0],
+        [100, 1.0]
+      ])
+    };
+
+    // Initialize score components
+    token.score = {
+      overall: 0,
+      priceComponent: 0,
+      volumeComponent: 0,
+      lastUpdate: 0
+    };
+
+    // Initialize pump state
+    token.pumpState = {
+      inCooldown: false,
+      cooldownEnd: 0,
+      lastPumpTime: 0,
+      lastDipTime: 0,
+      currentPhase: 'none',
+      pumpStartPrice: 0,
+      dipStartPrice: 0,
+      recoveryStartPrice: 0,
+      pumpPercentage: 0,
+      dipPercentage: 0,
+      recoveryPercentage: 0
+    };
+
+    events = {
+      firstDipDetected: [],
+      potentialEntryPoint: [],
+      trade: [],
+      updated: [],
+    };
 
     // Listen for all relevant events
     token.on("firstDipDetected", (data) => {
