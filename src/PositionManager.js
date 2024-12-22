@@ -35,6 +35,8 @@ class PositionManager extends EventEmitter {
   }
 
   openPosition(token) {
+    this.logger?.info(`Attempting to open position for ${token.symbol}`);
+
     if (!this.isTradingEnabled()) {
       this.logger?.info("Trading is disabled, cannot open position");
       return null;
@@ -48,12 +50,12 @@ class PositionManager extends EventEmitter {
     try {
       const position = new Position(token, this.priceManager, this.wallet, {
         takeProfitLevel: this.config.TAKE_PROFIT_PERCENT,
-        stopLossLevel: this.config.STOP_LOSS_PERCENT
+        stopLossLevel: this.config.STOP_LOSS_PERCENT,
       });
 
       const size = this.calculatePositionSize(token);
       position.size = size;
-      
+
       // Open the position
       const success = position.open();
       if (!success) {
@@ -66,7 +68,7 @@ class PositionManager extends EventEmitter {
     } catch (error) {
       this.logger?.error("Failed to open position:", error);
       if (this.analytics) {
-        this.analytics.trackError('trading');
+        this.analytics.trackError("trading");
       }
       return null;
     }
@@ -89,7 +91,7 @@ class PositionManager extends EventEmitter {
     } catch (error) {
       this.logger?.error("Failed to close position:", error);
       if (this.analytics) {
-        this.analytics.trackError('trading');
+        this.analytics.trackError("trading");
       }
       return false;
     }

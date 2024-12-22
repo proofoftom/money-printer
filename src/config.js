@@ -2,20 +2,17 @@ module.exports = {
   // Core settings
   MIN_TOKEN_AGE_SECONDS: 15, // Reduced to 15 seconds to catch early moves
   MAX_ENTRY_MCAP_USD: 100000, // $100k maximum market cap
-  MIN_MCAP_POSITION: 0.001, // 0.1% minimum position size
-  MAX_MCAP_POSITION: 0.01, // 1% maximum position size
-  RISK_PER_TRADE: 0.1, // 10% of wallet per trade
 
   // Pump detection settings
   PUMP_SETTINGS: {
-    MIN_PRICE_INCREASE: 20,     // 20% minimum price increase for initial pump
-    MIN_VOLUME_SPIKE: 200,      // 200% volume spike compared to average
-    MAX_INITIAL_WINDOW: 30,     // 30 seconds to detect initial pump
-    MIN_DIP_PERCENT: 15,        // 15% minimum dip from peak
-    MAX_DIP_WINDOW: 120,        // 2 minutes to start recovering
-    MIN_RECOVERY_PERCENT: 10,   // 10% minimum recovery from dip
-    MAX_RECOVERY_WINDOW: 300,   // 5 minutes to complete recovery
-    MIN_BUYER_SELLER_RATIO: 1.5 // Minimum ratio of buyers to sellers during dip
+    MIN_PRICE_INCREASE: 20, // 20% minimum price increase for initial pump
+    MIN_VOLUME_SPIKE: 200, // 200% volume spike compared to average
+    MAX_INITIAL_WINDOW: 30, // 30 seconds to detect initial pump
+    MIN_DIP_PERCENT: 15, // 15% minimum dip from peak
+    MAX_DIP_WINDOW: 120, // 2 minutes to start recovering
+    MIN_RECOVERY_PERCENT: 10, // 10% minimum recovery from dip
+    MAX_RECOVERY_WINDOW: 300, // 5 minutes to complete recovery
+    MIN_BUYER_SELLER_RATIO: 1.5, // Minimum ratio of buyers to sellers during dip
   },
 
   // Exit strategy settings
@@ -29,10 +26,10 @@ module.exports = {
 
   // Logging settings
   LOGGING: {
-    NEW_TOKENS: false, // Log new token discoveries
-    TRADES: true, // Log token trades
+    NEW_TOKENS: true, // Log new token discoveries
+    TRADES: false, // Log token trades
     POSITIONS: true, // Log position changes
-    SAFETY_CHECKS: false, // Log safety check results
+    SAFETY_CHECKS: true, // Log safety check results
   },
 
   // Price settings
@@ -165,6 +162,14 @@ module.exports = {
       WARNING: true,
       ERROR: true,
     },
+  },
+
+  TRADING: {
+    ENABLED: true,
+    BASE_POSITION_SIZE: 0.1, // Base position size in SOL
+    MIN_POSITION_SIZE: 0.05, // Minimum position size
+    MAX_POSITION_SIZE: 0.5, // Maximum position size
+    MIN_VOLUME: 10, // Minimum 30s volume in SOL
   },
 
   // Keyboard shortcuts

@@ -331,36 +331,132 @@ describe('Token', () => {
   });
 
   describe('Safety Checks', () => {
-    test('transitions to READY when safe and old enough', () => {
+    test('stays in current state when safe', () => {
       mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: true, reasons: [] });
       token.state = STATES.NEW;
-      // Set age to 20 seconds (greater than MIN_TOKEN_AGE_SECONDS of 15)
-      token.createdAt = Date.now() - (20 * 1000);
-      token.checkSafetyConditions();
-      expect(token.state).toBe(STATES.READY);
-    });
-
-    test('stays in NEW state when safe but too young', () => {
-      mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: true, reasons: [] });
-      token.state = STATES.NEW;
-      token.createdAt = Date.now() - 4000; // 4 seconds old
       token.checkSafetyConditions();
       expect(token.state).toBe(STATES.NEW);
     });
 
-    test('transitions to UNSAFE when not safe', () => {
+    test('transitions to UNSAFE only in READY state when not safe', () => {
       mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: false, reasons: ['Test reason'] });
-      token.state = STATES.NEW;
+      
+      // Should transition to UNSAFE in READY state
+      token.state = STATES.READY;
       token.checkSafetyConditions();
       expect(token.state).toBe(STATES.UNSAFE);
+
+      // Should not transition to UNSAFE in other states
+      token.state = STATES.NEW;
+      token.checkSafetyConditions();
+      expect(token.state).toBe(STATES.NEW);
     });
 
-    test('transitions to DEAD when drawdown exceeds 90%', () => {
-      mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: true, reasons: [] });
-      token.state = STATES.NEW;
-      jest.spyOn(token, 'getDrawdownPercentage').mockReturnValue(95);
+    test('transitions to DEAD when drawdown exceeds 90% after pump', () => {
+      token.pumpMetrics.firstPumpDetected = true;
+      token.highestMarketCap = 1000;
+      token.marketCapSol = 50; // 95% drawdown
+      
       token.checkSafetyConditions();
       expect(token.state).toBe(STATES.DEAD);
+    });
+
+    test('does not transition to DEAD when drawdown exceeds 90% without pump', () => {
+      token.pumpMetrics.firstPumpDetected = false;
+      token.highestMarketCap = 1000;
+      token.marketCapSol = 50; // 95% drawdown
+      
+      token.checkSafetyConditions();
+      expect(token.state).not.toBe(STATES.DEAD);
+    });
+  });
+
+  describe('State Transitions', () => {
+    beforeEach(() => {
+      // Mock Date.now() for consistent testing
+      jest.spyOn(Date, 'now').mockImplementation(() => 1000);
+      token.createdAt = 0; // Set creation time to 0 for easier testing
+      
+      // Mock volume spike and recovery metrics
+      jest.spyOn(token, 'getRecentVolumeSpike').mockReturnValue(300); // 300% spike
+      jest.spyOn(token, 'getDipVolumeQuality').mockReturnValue(0.8);
+      jest.spyOn(token, 'getRecoveryStrength').mockReturnValue(0.9);
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    test('transitions from UNSAFE back to appropriate state on volume spike', () => {
+      // Test transition back to PUMPING on initial pump
+      token.state = STATES.UNSAFE;
+      token.initialPrice = 1;
+      token.currentPrice = 1.5; // 50% increase
+      token.volume = 2; // Above minimum threshold
+      
+      token.checkForInitialPump();
+      expect(token.state).toBe(STATES.PUMPING);
+
+      // Test transition during dip phase
+      token.state = STATES.UNSAFE;
+      token.pumpMetrics.firstPumpDetected = true;
+      token.pumpMetrics.dipDetected = true;
+      token.pumpMetrics.dipPrice = 1;
+      token.currentPrice = 1.2; // 20% recovery
+      
+      token.checkForRecovery();
+      expect(token.state).toBe(STATES.RECOVERING);
+    });
+
+    test('requires volume threshold for initial pump', () => {
+      // Set up pump conditions without volume
+      token.initialPrice = 1;
+      token.currentPrice = 1.5; // 50% increase
+      token.volume = 0.5; // Below minimum threshold
+      
+      token.checkForInitialPump();
+      expect(token.state).toBe(STATES.NEW);
+
+      // Add sufficient volume
+      token.volume = 2; // Above minimum threshold
+      token.checkForInitialPump();
+      expect(token.state).toBe(STATES.PUMPING);
+    });
+
+    test('transitions to UNSAFE on timeout conditions', () => {
+      // Test initial pump window timeout
+      Date.now.mockReturnValue(31000); // Just over INITIAL_PUMP_WINDOW
+      token.state = STATES.NEW;
+      token.checkStateTransitions();
+      expect(token.state).toBe(STATES.UNSAFE);
+
+      // Test dip window timeout
+      token = new Token(defaultTokenData, {
+        priceManager: mockPriceManager,
+        safetyChecker: mockSafetyChecker,
+        logger: mockLogger,
+        config: mockConfig
+      });
+      token.state = STATES.DIPPING;
+      token.pumpMetrics.firstPumpDetected = true;
+      token.pumpMetrics.dipTime = 0;
+      Date.now.mockReturnValue(121000); // Just over MAX_DIP_WINDOW
+      token.checkStateTransitions();
+      expect(token.state).toBe(STATES.UNSAFE);
+
+      // Test recovery window timeout
+      token = new Token(defaultTokenData, {
+        priceManager: mockPriceManager,
+        safetyChecker: mockSafetyChecker,
+        logger: mockLogger,
+        config: mockConfig
+      });
+      token.state = STATES.RECOVERING;
+      token.pumpMetrics.firstPumpDetected = true;
+      token.pumpMetrics.recoveryStartTime = 0;
+      Date.now.mockReturnValue(301000); // Just over MAX_RECOVERY_WINDOW
+      token.checkStateTransitions();
+      expect(token.state).toBe(STATES.UNSAFE);
     });
   });
 
@@ -439,6 +535,116 @@ describe('Token', () => {
       expect(token.priceHistory[0].marketCapSol).toBe(120);
       expect(token.priceHistory[1].marketCapSol).toBe(150);
       expect(token.priceHistory[2].marketCapSol).toBe(130);
+    });
+  });
+
+  describe('State Transitions', () => {
+    beforeEach(() => {
+      // Mock Date.now() for consistent testing
+      jest.spyOn(Date, 'now').mockImplementation(() => 1000);
+      token.createdAt = 0; // Set creation time to 0 for easier testing
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    test('only transitions to UNSAFE when failing safety checks in READY state', () => {
+      // Set up initial conditions
+      token.state = STATES.READY;
+      mockSafetyChecker.isTokenSafe.mockReturnValue({ safe: false, reasons: ['Test reason'] });
+      
+      // Run safety check
+      token.checkSafetyConditions();
+      expect(token.state).toBe(STATES.UNSAFE);
+
+      // Reset state and run safety check in different state
+      token.state = STATES.PUMPING;
+      token.checkSafetyConditions();
+      expect(token.state).toBe(STATES.PUMPING); // Should not transition to UNSAFE
+    });
+
+    test('transitions to DEAD only after pump and significant drawdown', () => {
+      // Set up conditions for DEAD state
+      token.pumpMetrics.firstPumpDetected = true;
+      token.highestMarketCap = 1000;
+      token.marketCapSol = 50; // 95% drawdown
+      
+      token.checkSafetyConditions();
+      expect(token.state).toBe(STATES.DEAD);
+
+      // Reset and test without pump
+      token = new Token(defaultTokenData, {
+        priceManager: mockPriceManager,
+        safetyChecker: mockSafetyChecker,
+        logger: mockLogger,
+        config: mockConfig
+      });
+      token.highestMarketCap = 1000;
+      token.marketCapSol = 50;
+      token.pumpMetrics.firstPumpDetected = false;
+      
+      token.checkSafetyConditions();
+      expect(token.state).not.toBe(STATES.DEAD);
+    });
+
+    test('transitions from UNSAFE back to appropriate state on volume spike', () => {
+      // Mock volume spike detection
+      jest.spyOn(token, 'getRecentVolumeSpike').mockReturnValue(300); // 300% spike
+      
+      // Test transition back to PUMPING on initial pump
+      token.state = STATES.UNSAFE;
+      token.initialPrice = 1;
+      token.currentPrice = 1.5; // 50% increase
+      token.checkStateTransitions();
+      expect(token.state).toBe(STATES.PUMPING);
+
+      // Test transition during dip phase
+      token.state = STATES.UNSAFE;
+      token.pumpMetrics.firstPumpDetected = true;
+      token.pumpMetrics.dipDetected = true;
+      token.pumpMetrics.dipPrice = 1;
+      token.currentPrice = 1.2; // 20% recovery
+      token.checkStateTransitions();
+      expect(token.state).toBe(STATES.RECOVERING);
+    });
+
+    test('requires volume threshold for initial pump', () => {
+      // Set up pump conditions without volume
+      token.initialPrice = 1;
+      token.currentPrice = 1.5; // 50% increase
+      jest.spyOn(token, 'getRecentVolumeSpike').mockReturnValue(300);
+      token.volume = 0.5; // Below minimum threshold
+      
+      token.checkForInitialPump();
+      expect(token.state).toBe(STATES.NEW);
+
+      // Add sufficient volume
+      token.volume = 2; // Above minimum threshold
+      token.checkForInitialPump();
+      expect(token.state).toBe(STATES.PUMPING);
+    });
+
+    test('transitions to UNSAFE instead of DEAD on timeout conditions', () => {
+      // Test initial pump window timeout
+      Date.now.mockReturnValue(31000); // Just over INITIAL_PUMP_WINDOW
+      token.state = STATES.NEW;
+      token.checkStateTransitions();
+      expect(token.state).toBe(STATES.UNSAFE);
+
+      // Test dip window timeout
+      token.state = STATES.DIPPING;
+      token.pumpMetrics.firstPumpDetected = true;
+      token.pumpMetrics.dipTime = 0;
+      token.checkStateTransitions();
+      expect(token.state).toBe(STATES.UNSAFE);
+
+      // Test recovery window timeout
+      token.state = STATES.RECOVERING;
+      token.pumpMetrics.firstPumpDetected = true;
+      token.pumpMetrics.recoveryStartTime = 0;
+      token.checkStateTransitions();
+      expect(token.state).toBe(STATES.UNSAFE);
     });
   });
 });

@@ -1,13 +1,14 @@
-const EventEmitter = require('events');
+const EventEmitter = require("events");
 const config = require("./config");
 
 class SafetyChecker extends EventEmitter {
   constructor(wallet, priceManager, logger) {
     super();
-    if (!wallet) throw new Error('Wallet is required for SafetyChecker');
-    if (!priceManager) throw new Error('PriceManager is required for SafetyChecker');
-    if (!logger) throw new Error('Logger is required for SafetyChecker');
-    
+    if (!wallet) throw new Error("Wallet is required for SafetyChecker");
+    if (!priceManager)
+      throw new Error("PriceManager is required for SafetyChecker");
+    if (!logger) throw new Error("Logger is required for SafetyChecker");
+
     this.wallet = wallet;
     this.priceManager = priceManager;
     this.logger = logger;
@@ -16,48 +17,64 @@ class SafetyChecker extends EventEmitter {
   isTokenSafe(token) {
     const result = {
       safe: true,
-      reasons: []
+      reasons: [],
     };
 
     // Check minimum token age (1 minute)
     const tokenAge = (Date.now() - token.createdAt) / 1000;
     if (tokenAge < config.MIN_TOKEN_AGE_SECONDS) {
       result.safe = false;
-      result.reasons.push(`Token too new (${Math.round(tokenAge)}s < ${config.MIN_TOKEN_AGE_SECONDS}s)`);
+      result.reasons.push(
+        `Token too new (${Math.round(tokenAge)}s < ${
+          config.MIN_TOKEN_AGE_SECONDS
+        }s)`
+      );
     }
 
     // Check minimum liquidity
     if (token.liquiditySol < config.MIN_LIQUIDITY_SOL) {
       result.safe = false;
-      result.reasons.push(`Insufficient liquidity (${token.liquiditySol.toFixed(2)} < ${config.MIN_LIQUIDITY_SOL} SOL)`);
+      result.reasons.push(
+        `Insufficient liquidity (${token.liquiditySol.toFixed(2)} < ${
+          config.MIN_LIQUIDITY_SOL
+        } SOL)`
+      );
     }
 
     // Check holder count
     if (token.holderCount < config.MIN_HOLDER_COUNT) {
       result.safe = false;
-      result.reasons.push(`Too few holders (${token.holderCount} < ${config.MIN_HOLDER_COUNT})`);
+      result.reasons.push(
+        `Too few holders (${token.holderCount} < ${config.MIN_HOLDER_COUNT})`
+      );
     }
 
     // Check transaction count
     if (token.transactionCount < config.MIN_TRANSACTIONS) {
       result.safe = false;
-      result.reasons.push(`Too few transactions (${token.transactionCount} < ${config.MIN_TRANSACTIONS})`);
+      result.reasons.push(
+        `Too few transactions (${token.transactionCount} < ${config.MIN_TRANSACTIONS})`
+      );
     }
 
     // Check if wallet has enough balance for minimum position
     const minPositionSol = token.marketCapSol * config.MIN_MCAP_POSITION;
     if (this.wallet.balance < minPositionSol) {
       result.safe = false;
-      result.reasons.push(`Insufficient balance for minimum position (${this.wallet.balance.toFixed(2)} < ${minPositionSol.toFixed(2)} SOL)`);
+      result.reasons.push(
+        `Insufficient balance for minimum position (${this.wallet.balance.toFixed(
+          2
+        )} < ${minPositionSol.toFixed(2)} SOL)`
+      );
     }
 
     if (!result.safe) {
-      this.emit('safetyCheck', {
+      this.emit("safetyCheck", {
         token,
         result,
-        type: 'tokenSafety'
+        type: "tokenSafety",
       });
-      this.logger.logSafetyCheck(token, result, 'tokenSafety');
+      this.logger.logSafetyCheck(token, result, "tokenSafety");
     }
 
     return result;
@@ -69,14 +86,14 @@ class SafetyChecker extends EventEmitter {
     if (!safetyCheck.safe) {
       const result = {
         allowed: false,
-        reasons: safetyCheck.reasons
+        reasons: safetyCheck.reasons,
       };
-      this.emit('safetyCheck', {
+      this.emit("safetyCheck", {
         token,
         result,
-        type: 'openPosition'
+        type: "openPosition",
       });
-      this.logger.logSafetyCheck(token, result, 'openPosition');
+      this.logger.logSafetyCheck(token, result, "openPosition");
       return result;
     }
 
@@ -87,28 +104,36 @@ class SafetyChecker extends EventEmitter {
     if (size < minSize) {
       const result = {
         allowed: false,
-        reasons: [`Position size too small (${size.toFixed(4)} < ${minSize.toFixed(4)} SOL)`]
+        reasons: [
+          `Position size too small (${size.toFixed(4)} < ${minSize.toFixed(
+            4
+          )} SOL)`,
+        ],
       };
-      this.emit('safetyCheck', {
+      this.emit("safetyCheck", {
         token,
         result,
-        type: 'positionSize'
+        type: "positionSize",
       });
-      this.logger.logSafetyCheck(token, result, 'positionSize');
+      this.logger.logSafetyCheck(token, result, "positionSize");
       return result;
     }
 
     if (size > maxSize) {
       const result = {
         allowed: false,
-        reasons: [`Position size too large (${size.toFixed(4)} > ${maxSize.toFixed(4)} SOL)`]
+        reasons: [
+          `Position size too large (${size.toFixed(4)} > ${maxSize.toFixed(
+            4
+          )} SOL)`,
+        ],
       };
-      this.emit('safetyCheck', {
+      this.emit("safetyCheck", {
         token,
         result,
-        type: 'positionSize'
+        type: "positionSize",
       });
-      this.logger.logSafetyCheck(token, result, 'positionSize');
+      this.logger.logSafetyCheck(token, result, "positionSize");
       return result;
     }
 
@@ -116,20 +141,24 @@ class SafetyChecker extends EventEmitter {
     if (this.wallet.balance < size) {
       const result = {
         allowed: false,
-        reasons: [`Insufficient balance (${this.wallet.balance.toFixed(4)} < ${size.toFixed(4)} SOL)`]
+        reasons: [
+          `Insufficient balance (${this.wallet.balance.toFixed(
+            4
+          )} < ${size.toFixed(4)} SOL)`,
+        ],
       };
-      this.emit('safetyCheck', {
+      this.emit("safetyCheck", {
         token,
         result,
-        type: 'balance'
+        type: "balance",
       });
-      this.logger.logSafetyCheck(token, result, 'balance');
+      this.logger.logSafetyCheck(token, result, "balance");
       return result;
     }
 
     return {
       allowed: true,
-      reasons: []
+      reasons: [],
     };
   }
 }

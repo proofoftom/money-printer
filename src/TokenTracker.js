@@ -48,20 +48,27 @@ class TokenTracker extends EventEmitter {
       const token = new Token(tokenData, {
         logger: this.logger,
         config: this.config,
-        safetyChecker: this.safetyChecker,
+        // safetyChecker: this.safetyChecker,
         priceManager: this.positionManager.priceManager,
       });
 
       // Set up token event listeners
-      token.on("readyForPosition", async () => {
+      token.on("readyForPosition", ({ token, metrics, suggestedSize }) => {
         if (this.config.TRADING.ENABLED) {
           try {
-            await this.positionManager.openPosition(token);
+            this.positionManager.openPosition(token, suggestedSize);
           } catch (error) {
-            this.logger.error("Failed to open position", error);
+            this.logger.error("Failed to open position", {
+              mint: token.mint,
+              error: error.message,
+              metrics,
+            });
           }
         } else {
-          this.logger.info("Trading is disabled, skipping position opening");
+          this.logger.info("Trading is disabled, skipping position", {
+            mint: token.mint,
+            metrics,
+          });
         }
       });
 
