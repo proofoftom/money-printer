@@ -602,67 +602,17 @@ class Token extends EventEmitter {
     );
   }
 
-  updateScore() {
-    const now = Date.now();
-    const timeSinceCreation = now - this.createdAt;
-
-    // Price component
-    const priceChange =
-      (this.currentPrice - this.initialPrice) / this.initialPrice;
-    const recentPriceVolatility = this.calculateVolatility(
-      this.ohlcvData.secondly.slice(-30)
-    );
-
-    // Volume component
-    const relativeVolume =
-      this.indicators.volumeProfile.get("relativeVolume") || 1;
-
-    // Time component - weight recent activity more heavily
-    const timeWeight = Math.max(
-      0,
-      1 - timeSinceCreation / AGGREGATION_THRESHOLDS.ONE_HOUR
-    );
-
-    // Calculate components
-    this.score.priceComponent =
-      (priceChange * 0.3 + recentPriceVolatility * 0.7) * 100;
-    this.score.volumeComponent = (relativeVolume - 1) * 100;
-    this.score.timeComponent = timeWeight * 100;
-
-    // Overall score - weighted sum
-    this.score.overall =
-      this.score.priceComponent * 0.4 +
-      this.score.volumeComponent * 0.4 +
-      this.score.timeComponent * 0.2;
-
-    this.score.lastUpdate = now;
-  }
-
-  calculateVolatility(candles) {
-    if (candles.length < 2) return 0;
-    const returns = [];
-    for (let i = 1; i < candles.length; i++) {
-      returns.push(
-        (candles[i].close - candles[i - 1].close) / candles[i - 1].close
-      );
-    }
-    const mean = returns.reduce((a, b) => a + b) / returns.length;
-    const variance =
-      returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
-    return Math.sqrt(variance);
-  }
-
   detectPump() {
     // Only run in NEW or RECOVERING states
     if (![STATES.NEW, STATES.RECOVERING].includes(this.state)) return;
 
     const { acceleration, buyPressure, relativeVolume } =
       this.getVolumeProfile();
-    const priceChange =
-      ((this.currentPrice - this.initialPrice) / this.initialPrice) * 100;
 
     // First pump detection
     if (this.state === STATES.NEW) {
+      const priceChange =
+        ((this.currentPrice - this.initialPrice) / this.initialPrice) * 100;
       if (priceChange >= PRICE_THRESHOLDS.INITIAL_PUMP && relativeVolume >= 2) {
         this.pumpMetrics.firstPump = {
           detected: true,
@@ -679,39 +629,36 @@ class Token extends EventEmitter {
       }
     }
 
-    // Second pump detection
+    // Second pump detection moved to detectSecondPump()
     if (this.state === STATES.RECOVERING) {
-      const priceChangeFromRecovery =
-        ((this.currentPrice - this.dipMetrics.recovery.startPrice) /
-          this.dipMetrics.recovery.startPrice) *
-        100;
+      return this.detectSecondPump(relativeVolume); // Return the promise
+    }
+  }
 
-      if (
-        priceChangeFromRecovery >= PRICE_THRESHOLDS.TARGET_PUMP &&
-        relativeVolume >= 2
-      ) {
-        this.pumpMetrics.secondPump = {
-          detected: true,
-          startMarketCap: this.marketCapSol,
-          time: Date.now(),
-        };
-        this.emit("pumpDetected", {
-          type: "second",
-          startMarketCap: this.marketCapSol,
-          volume: relativeVolume,
-        });
-        if (this.shouldRetrySafetyChecks()) {
-          if (this.getTopHolderConcentration(10) > 30) {
-            this.addSafetyReason("Top holder concentration too high");
-            return;
-          }
-          // Perform final API safety checks
-          // this.checkSafetyConditions();
-          this.transitionTo(STATES.READY, "Second pump detected");
-        }
-        // TODO: If enough time has passed and pump hasn't grown too much
-        // this.transitionTo(STATES.DEAD, "Token failed to recover safely");
-        return;
+  async detectSecondPump(relativeVolume) {
+    const priceChangeFromRecovery =
+      ((this.currentPrice - this.dipMetrics.recovery.startPrice) /
+        this.dipMetrics.recovery.startPrice) *
+      100;
+
+    if (
+      priceChangeFromRecovery >= PRICE_THRESHOLDS.TARGET_PUMP &&
+      relativeVolume >= 2
+    ) {
+      this.pumpMetrics.secondPump = {
+        detected: true,
+        startMarketCap: this.marketCapSol,
+        time: Date.now(),
+      };
+      this.emit("pumpDetected", {
+        type: "second",
+        startMarketCap: this.marketCapSol,
+        volume: relativeVolume,
+      });
+
+      const isSafe = await this.safetyChecker.isTokenSafe(this);
+      if (isSafe) {
+        this.transitionTo(STATES.READY, "Second pump detected");
       }
     }
   }
@@ -765,7 +712,7 @@ class Token extends EventEmitter {
     );
   }
 
-  checkStateTransitions() {
+  async checkStateTransitions() {
     try {
       const now = Date.now();
 
@@ -780,7 +727,7 @@ class Token extends EventEmitter {
 
       switch (this.state) {
         case STATES.NEW:
-          this.detectPump();
+          await this.detectPump(); // await the promise
           if (now - this.createdAt > TIME_WINDOWS.INITIAL_PUMP_WINDOW) {
             this.transitionTo(STATES.DEAD, "Initial pump timeout");
           }
@@ -841,7 +788,7 @@ class Token extends EventEmitter {
           if (currentPressure < 0) {
             this.transitionTo(STATES.DIPPING, "Buy pressure turned negative");
           } else {
-            this.detectPump();
+            await this.detectPump();
           }
 
           if (
@@ -854,107 +801,6 @@ class Token extends EventEmitter {
       }
     } catch (error) {
       this.logger.error("Error in checkStateTransitions:", error);
-    }
-  }
-
-  checkForRecovery() {
-    const recentCandles = this.ohlcvData.secondly.slice(-30);
-    if (recentCandles.length < 2) {
-      return { isRecovering: false, isStrongRecovery: false };
-    }
-
-    // Calculate price change from dip
-    const priceChangeFromDip =
-      ((this.currentPrice - this.pumpMetrics.dipPrice) /
-        this.pumpMetrics.dipPrice) *
-      100;
-
-    // Check volume sustainability
-    const averageVolume =
-      recentCandles
-        .slice(0, -1)
-        .reduce((sum, candle) => sum + candle.volume, 0) /
-      (recentCandles.length - 1);
-    const currentVolume = recentCandles[recentCandles.length - 1].volume;
-    const volumeMultiple = currentVolume / (averageVolume || 1);
-
-    // Get recovery metrics
-    const recoveryMetrics = {
-      priceChangeFromDip,
-      volumeMultiple,
-      dipQuality: this.getDipVolumeQuality(),
-      positionMetrics: {
-        entryPrice: this.currentPrice,
-        targetPrice: this.pumpMetrics.highestPrice,
-        stopLoss: this.pumpMetrics.dipPrice * 0.95, // 5% below dip
-      },
-    };
-
-    // Check if we have a strong recovery (ready for position)
-    const isStrongRecovery =
-      priceChangeFromDip >= PRICE_THRESHOLDS.STRONG_RECOVERY &&
-      volumeMultiple >= PRICE_THRESHOLDS.VOLUME_SUSTAIN;
-
-    // Check if we have a normal recovery
-    const isRecovering =
-      priceChangeFromDip >= PRICE_THRESHOLDS.RECOVERY_THRESHOLD &&
-      volumeMultiple >= PRICE_THRESHOLDS.VOLUME_SUSTAIN;
-
-    return {
-      isRecovering,
-      isStrongRecovery,
-      metrics: recoveryMetrics,
-    };
-  }
-
-  checkRecoveryProgress() {
-    const priceChangeFromDip =
-      ((this.currentPrice - this.pumpMetrics.dipPrice) /
-        this.pumpMetrics.dipPrice) *
-      100;
-
-    // Check volume sustainability
-    const recentCandles = this.ohlcvData.secondly.slice(-30);
-    const averageVolume =
-      recentCandles
-        .slice(0, -1)
-        .reduce((sum, candle) => sum + candle.volume, 0) /
-      (recentCandles.length - 1);
-    const currentVolume = recentCandles[recentCandles.length - 1].volume;
-    const volumeMultiple = currentVolume / (averageVolume || 1);
-
-    // Strong recovery conditions
-    if (
-      priceChangeFromDip >= PRICE_THRESHOLDS.STRONG_RECOVERY &&
-      volumeMultiple >= PRICE_THRESHOLDS.VOLUME_SUSTAIN
-    ) {
-      this.transitionTo(STATES.READY, "Strong recovery confirmed");
-    }
-  }
-
-  checkForSecondPump() {
-    const priceChangeFromRecovery =
-      ((this.currentPrice - this.pumpMetrics.recoveryStartPrice) /
-        this.pumpMetrics.recoveryStartPrice) *
-      100;
-
-    // Check volume
-    const recentCandles = this.ohlcvData.secondly.slice(-30);
-    const averageVolume =
-      recentCandles
-        .slice(0, -1)
-        .reduce((sum, candle) => sum + candle.volume, 0) /
-      (recentCandles.length - 1);
-    const currentVolume = recentCandles[recentCandles.length - 1].volume;
-    const volumeMultiple = currentVolume / (averageVolume || 1);
-
-    if (
-      priceChangeFromRecovery >= PRICE_THRESHOLDS.TARGET_PUMP &&
-      volumeMultiple >= PRICE_THRESHOLDS.VOLUME_SPIKE
-    ) {
-      this.pumpMetrics.secondPumpDetected = true;
-      this.pumpMetrics.secondPumpTime = Date.now();
-      this.transitionTo(STATES.PUMPING, "Second pump detected");
     }
   }
 
@@ -1124,13 +970,6 @@ class Token extends EventEmitter {
     });
   }
 
-  getDipVolumeQuality() {
-    const uniqueBuyers = this.pumpMetrics.uniqueBuyersDuringDip.size;
-    const uniqueSellers = this.pumpMetrics.uniqueSellersDuringDip.size;
-    const buyerSellerRatio = uniqueBuyers / (uniqueSellers || 1);
-    return Math.min(buyerSellerRatio, 1); // Normalized to 0-1
-  }
-
   calculateVolumeMetrics(recentCandles = this.ohlcvData.secondly.slice(-30)) {
     if (recentCandles.length < 2) {
       return { volumeMultiple: 0, volumeSpike: false };
@@ -1148,14 +987,6 @@ class Token extends EventEmitter {
       volumeMultiple,
       volumeSpike: volumeMultiple >= PRICE_THRESHOLDS.VOLUME_SPIKE,
     };
-  }
-
-  calculateDipQualityScore() {
-    const dipDepth =
-      (this.pumpMetrics.firstPumpPrice - this.pumpMetrics.dipPrice) /
-      this.pumpMetrics.firstPumpPrice;
-    const volumeQuality = this.getDipVolumeQuality();
-    return (dipDepth * 0.6 + volumeQuality * 0.4) * 100;
   }
 
   updateStateMetrics() {
