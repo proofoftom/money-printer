@@ -1,14 +1,14 @@
 module.exports = {
   // Core settings
   MIN_TOKEN_AGE_SECONDS: 15, // Reduced to 15 seconds to catch early moves
-  MAX_ENTRY_MCAP_USD: 100000, // $100k maximum market cap
+  MAX_ENTRY_MCAP_USD: 75000, // $100k maximum market cap
 
   // Pump detection settings
   PUMP_SETTINGS: {
-    MIN_PRICE_INCREASE: 20, // 20% minimum price increase for initial pump
-    MIN_VOLUME_SPIKE: 200, // 200% volume spike compared to average
-    MAX_INITIAL_WINDOW: 30, // 30 seconds to detect initial pump
-    MIN_DIP_PERCENT: 15, // 15% minimum dip from peak
+    MIN_PRICE_INCREASE: 15, // 20% minimum price increase for initial pump
+    MIN_VOLUME_SPIKE: 150, // 200% volume spike compared to average
+    MAX_INITIAL_WINDOW: 60, // 30 seconds to detect initial pump
+    MIN_DIP_PERCENT: 10, // 15% minimum dip from peak
     MAX_DIP_WINDOW: 120, // 2 minutes to start recovering
     MIN_RECOVERY_PERCENT: 10, // 10% minimum recovery from dip
     MAX_RECOVERY_WINDOW: 300, // 5 minutes to complete recovery
@@ -16,9 +16,9 @@ module.exports = {
   },
 
   // Exit strategy settings
-  STOP_LOSS_PERCENT: 10, // 10% stop loss
-  TAKE_PROFIT_PERCENT: 50, // 50% take profit
-  TRAILING_STOP_PERCENT: 20, // 20% trailing stop
+  STOP_LOSS_PERCENT: 7, // 10% stop loss
+  TAKE_PROFIT_PERCENT: 30, // 50% take profit
+  TRAILING_STOP_PERCENT: 15, // 20% trailing stop
 
   // WebSocket settings
   WS_ENDPOINT: "wss://pumpportal.fun/api/data", // Update WebSocket endpoint to match documentation
@@ -36,11 +36,11 @@ module.exports = {
   SOL_USD_PRICE: 225, // Fallback SOL/USD price if API fails
 
   // Token filtering configuration
-  MAX_TOKEN_AGE: 24 * 60 * 60 * 1000, // 24 hours in milliseconds
-  MIN_LIQUIDITY_SOL: 1, // Minimum SOL in liquidity pool
-  MIN_TOKEN_AGE: 60 * 1000, // 1 minute in milliseconds
-  MIN_HOLDER_COUNT: 10,
-  MIN_TRANSACTIONS: 5,
+  MAX_TOKEN_AGE: 1 * 60 * 60 * 1000, // 1 hours in milliseconds
+  MIN_LIQUIDITY_SOL: 1.5, // Minimum SOL in liquidity pool
+  MIN_TOKEN_AGE: 15 * 1000, // 15 seconds in milliseconds
+  MIN_HOLDER_COUNT: 15,
+  MIN_TRANSACTIONS: 20,
 
   // Notification settings
   NOTIFICATIONS: {
@@ -166,10 +166,10 @@ module.exports = {
 
   TRADING: {
     ENABLED: true,
-    BASE_POSITION_SIZE: 0.1, // Base position size in SOL
-    MIN_POSITION_SIZE: 0.05, // Minimum position size
-    MAX_POSITION_SIZE: 0.5, // Maximum position size
-    MIN_VOLUME: 10, // Minimum 30s volume in SOL
+    BASE_POSITION_SIZE: 0.075, // Base position size in SOL
+    MIN_POSITION_SIZE: 0.035, // Minimum position size
+    MAX_POSITION_SIZE: 0.3, // Maximum position size
+    MIN_VOLUME: 12, // Minimum 30s volume in SOL
   },
 
   // Keyboard shortcuts

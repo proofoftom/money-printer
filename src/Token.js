@@ -43,8 +43,17 @@ const AGGREGATION_THRESHOLDS = {
 };
 
 class Token extends EventEmitter {
-  constructor(tokenData, { priceManager, /*safetyChecker,*/ logger, config }) {
+  constructor(
+    tokenData,
+    { priceManager, positionManager, safetyChecker, logger, config }
+  ) {
     super();
+
+    // Validate required dependencies
+    if (!safetyChecker) throw new Error("SafetyChecker is required");
+    if (!priceManager) throw new Error("PriceManager is required");
+    if (!logger) throw new Error("Logger is required");
+    if (!config) throw new Error("Config is required");
 
     // Validate required token data
     const requiredFields = [
@@ -71,11 +80,6 @@ class Token extends EventEmitter {
       if (typeof tokenData[field] !== "number" || isNaN(tokenData[field])) {
         throw new Error(`Invalid numeric value for field: ${field}`);
       }
-    }
-
-    // Validate dependencies
-    if (!safetyChecker || !logger || !config) {
-      throw new Error("Missing required dependencies");
     }
 
     this.mint = tokenData.mint;
@@ -116,6 +120,7 @@ class Token extends EventEmitter {
     this.safetyChecker = safetyChecker;
     this.logger = logger;
     this.config = config;
+    this.positionManager = positionManager;
 
     // State
     this.state = STATES.NEW;
@@ -242,13 +247,6 @@ class Token extends EventEmitter {
       1000 // Check every second initially
     );
 
-    // Start safety checks
-    // TODO: This feels like it's about to become cruft
-    this.safetyCheckInterval = setInterval(
-      () => this.checkSafetyConditions(),
-      this.config.SAFETY_CHECK_INTERVAL
-    );
-
     // OHLCV data structures
     this.ohlcvData = {
       secondly: [], // Keep all data until death
@@ -333,21 +331,8 @@ class Token extends EventEmitter {
       this.volume += tradeData.tokenAmount;
       this.tradeCount++;
 
-      // Update market metrics
-      this.vTokensInBondingCurve = tradeData.vTokensInBondingCurve;
-      this.vSolInBondingCurve = tradeData.vSolInBondingCurve;
-      this.marketCapSol = tradeData.marketCapSol;
+      this.updateTokenMetrics(tradeData);
       this.totalSupply = this.calculateTotalSupply();
-
-      // Update price metrics
-      this.currentPrice = this.calculateTokenPrice();
-      if (this.currentPrice > this.highestPrice) {
-        this.highestPrice = this.currentPrice;
-        this.highestPriceTime = Date.now();
-      }
-      if (this.marketCapSol > this.highestMarketCap) {
-        this.highestMarketCap = this.marketCapSol;
-      }
 
       // Add to price history
       this.priceHistory.push({
@@ -377,9 +362,6 @@ class Token extends EventEmitter {
         marketCapSol: this.marketCapSol,
       });
 
-      // Update token metrics
-      this.updateTokenMetrics(tradeData);
-
       // Update OHLCV data
       this.updateOHLCV();
 
@@ -390,7 +372,7 @@ class Token extends EventEmitter {
         mint: this.mint,
         txType: tradeData.txType,
         price: this.currentPrice,
-        marketCapUSD: this.priceManager.soltoUsd(this.marketCapSol),
+        marketCapUSD: this.priceManager.solToUSD(this.marketCapSol),
       });
 
       // Emit update event
@@ -401,6 +383,24 @@ class Token extends EventEmitter {
         error: error.message,
       });
     }
+  }
+
+  updateTokenMetrics(tradeData) {
+    this.marketCapSol = tradeData.marketCapSol;
+    this.vTokensInBondingCurve = tradeData.vTokensInBondingCurve;
+    this.vSolInBondingCurve = tradeData.vSolInBondingCurve;
+    this.currentPrice = this.calculateTokenPrice();
+
+    // Track highest price and market cap
+    if (this.currentPrice > this.highestPrice) {
+      this.highestPrice = this.currentPrice;
+      this.highestPriceTime = Date.now();
+    }
+    if (this.marketCapSol > this.highestMarketCap) {
+      this.highestMarketCap = this.marketCapSol;
+    }
+
+    this.lastUpdate = Date.now();
   }
 
   updateHolderBalance(traderPublicKey, newBalance) {
@@ -472,35 +472,6 @@ class Token extends EventEmitter {
 
     return consecutive;
   }
-
-  // DISABLE FOR TESTING SIMPLE TOP HOLDER CONCENTRATION CHECK
-  // checkSafetyConditions() {
-  //   try {
-  //     const { safe, reasons } = this.safetyChecker.isTokenSafe(this);
-  //     const age = Date.now() - this.createdAt;
-
-  //     // Check if token is dead
-  //     const drawdown = this.getDrawdownPercentage();
-  //     if (drawdown >= 90 && this.pumpMetrics.firstPumpDetected) {
-  //       this.transitionTo(STATES.DEAD, "Drawdown exceeded 90% after pump");
-  //       return false;
-  //     }
-
-  //     // Only check safety conditions if attempting to enter a position
-  //     if (this.state === STATES.READY && !safe) {
-  //       this.transitionTo(STATES.UNSAFE, reasons.join(", "));
-  //       return false;
-  //     }
-
-  //     return true;
-  //   } catch (error) {
-  //     this.logger.error("Error in safety conditions check", {
-  //       mint: this.mint,
-  //       error: error.message,
-  //     });
-  //     return false;
-  //   }
-  // }
 
   updateOHLCV() {
     const now = Date.now();
@@ -602,7 +573,7 @@ class Token extends EventEmitter {
     );
   }
 
-  detectPump() {
+  async detectPump() {
     // Only run in NEW or RECOVERING states
     if (![STATES.NEW, STATES.RECOVERING].includes(this.state)) return;
 
@@ -618,7 +589,7 @@ class Token extends EventEmitter {
           detected: true,
           startMarketCap: this.marketCapSol,
           time: Date.now(),
-          highestPrice: this.currentPrice,
+          highestMarketCap: this.marketCapSol, // Change to highestMarketCap
         };
         this.emit("pumpDetected", {
           type: "first",
@@ -631,11 +602,18 @@ class Token extends EventEmitter {
 
     // Second pump detection moved to detectSecondPump()
     if (this.state === STATES.RECOVERING) {
-      return this.detectSecondPump(relativeVolume); // Return the promise
+      return this.detectSecondPump(relativeVolume); // Now properly returns a Promise
     }
   }
 
   async detectSecondPump(relativeVolume) {
+    if (!this.dipMetrics.recovery.startPrice) {
+      this.logger.debug(
+        "Recovery start price not set, skipping second pump detection"
+      );
+      return;
+    }
+
     const priceChangeFromRecovery =
       ((this.currentPrice - this.dipMetrics.recovery.startPrice) /
         this.dipMetrics.recovery.startPrice) *
@@ -656,9 +634,13 @@ class Token extends EventEmitter {
         volume: relativeVolume,
       });
 
-      const isSafe = await this.safetyChecker.isTokenSafe(this);
-      if (isSafe) {
-        this.transitionTo(STATES.READY, "Second pump detected");
+      try {
+        const isSafe = await this.safetyChecker.isTokenSafe(this);
+        if (isSafe) {
+          this.transitionTo(STATES.READY, "Second pump detected");
+        }
+      } catch (error) {
+        this.logger.error("Error checking token safety:", error);
       }
     }
   }
@@ -706,7 +688,7 @@ class Token extends EventEmitter {
   }
 
   isMarketCapInRange() {
-    const marketCapUSD = this.priceManager.solToUsd(this.marketCapSol);
+    const marketCapUSD = this.priceManager.solToUSD(this.marketCapSol);
     return (
       marketCapUSD >= 6500 && marketCapUSD <= this.config.MAX_ENTRY_MCAP_USD
     );
@@ -788,7 +770,7 @@ class Token extends EventEmitter {
           if (currentPressure < 0) {
             this.transitionTo(STATES.DIPPING, "Buy pressure turned negative");
           } else {
-            await this.detectPump();
+            await this.detectPump(); // This is awaited
           }
 
           if (
@@ -802,27 +784,6 @@ class Token extends EventEmitter {
     } catch (error) {
       this.logger.error("Error in checkStateTransitions:", error);
     }
-  }
-
-  shouldRetrySafetyChecks() {
-    if (!this.safetyReasons.length) return true; // No previous checks, go ahead
-
-    const lastCheck = this.safetyReasons[this.safetyReasons.length - 1].time;
-    const timeSinceLastCheck = Date.now() - lastCheck;
-
-    // Only retry if:
-    // 1. At least 5 seconds since last check
-    // 2. Price hasn't increased more than 20% since second pump started
-    if (timeSinceLastCheck < 5000) {
-      return false; // Too soon to check again
-    }
-
-    const priceIncrease =
-      ((this.marketCapSol - this.pumpMetrics.secondPump.startMarketCap) /
-        this.pumpMetrics.secondPump.startMarketCap) *
-      100;
-
-    return priceIncrease <= 20; // Only continue checking if pump hasn't grown too much
   }
 
   addSafetyReason(reason) {
@@ -1013,21 +974,40 @@ class Token extends EventEmitter {
 
   cleanup() {
     try {
-      // Log final OHLCV data
+      // Log final token metrics
       this.logger.info("Final token metrics", {
         mint: this.mint,
         symbol: this.symbol,
-        totalCandles: this.ohlcvData.secondly.length,
-        timespan: `${(Date.now() - this.createdAt) / 1000}s`,
-        finalPrice: this.currentPrice,
-        highestPrice: this.highestPrice,
-        totalVolume: this.volume,
+        lifecycle: {
+          totalCandles: this.ohlcvData.secondly.length,
+          timespan: `${(Date.now() - this.createdAt) / 1000}s`,
+          price: {
+            final: this.currentPrice,
+            highest: this.highestPrice,
+            initial: this.ohlcvData.secondly[0]?.open,
+          },
+          volume: this.volume,
+          marketCap: {
+            final: this.marketCapSol,
+            highest: this.maxMarketCap,
+            initial: this.ohlcvData.secondly[0]?.marketCap,
+          },
+          state: {
+            final: this.state,
+            pumpMetrics: this.pumpMetrics,
+            dipMetrics: this.dipMetrics,
+          },
+          trades: {
+            total: this.trades?.length || 0,
+            wins: this.trades?.filter((t) => t.pnl > 0).length || 0,
+            losses: this.trades?.filter((t) => t.pnl < 0).length || 0,
+            totalPnl: this.trades?.reduce((sum, t) => sum + t.pnl, 0) || 0,
+          },
+        },
       });
 
       // Clear intervals and listeners
       clearInterval(this.stateCheckInterval);
-      //TODO: This feels like it's about to become cruft
-      clearInterval(this.safetyCheckInterval);
       clearInterval(this.ohlcvInterval);
       this.removeAllListeners();
 
