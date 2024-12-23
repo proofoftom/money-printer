@@ -215,11 +215,15 @@ VOL    1s:${this.formatUSD(volume1s)} | 5s:${this.formatUSD(
         .filter((t) => t.state === "NEW")
         .sort((a, b) => {
           const aVolume =
-            a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (a.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           const bVolume =
-            b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (b.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           return bVolume - aVolume;
         });
 
@@ -227,11 +231,15 @@ VOL    1s:${this.formatUSD(volume1s)} | 5s:${this.formatUSD(
         .filter((t) => t.state === "PUMPING")
         .sort((a, b) => {
           const aVolume =
-            a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (a.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           const bVolume =
-            b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (b.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           return bVolume - aVolume;
         });
 
@@ -239,11 +247,15 @@ VOL    1s:${this.formatUSD(volume1s)} | 5s:${this.formatUSD(
         .filter((t) => t.state === "PUMPED")
         .sort((a, b) => {
           const aVolume =
-            a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (a.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           const bVolume =
-            b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (b.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           return bVolume - aVolume;
         });
 
@@ -251,11 +263,15 @@ VOL    1s:${this.formatUSD(volume1s)} | 5s:${this.formatUSD(
         .filter((t) => t.state === "DIPPING")
         .sort((a, b) => {
           const aVolume =
-            a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (a.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           const bVolume =
-            b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (b.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           return bVolume - aVolume;
         });
 
@@ -263,11 +279,15 @@ VOL    1s:${this.formatUSD(volume1s)} | 5s:${this.formatUSD(
         .filter((t) => t.state === "RECOVERING")
         .sort((a, b) => {
           const aVolume =
-            a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (a.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           const bVolume =
-            b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (b.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           return bVolume - aVolume;
         });
 
@@ -275,11 +295,15 @@ VOL    1s:${this.formatUSD(volume1s)} | 5s:${this.formatUSD(
         .filter((t) => t.state === "READY")
         .sort((a, b) => {
           const aVolume =
-            a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (a.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           const bVolume =
-            b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (b.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           return bVolume - aVolume;
         });
 
@@ -290,11 +314,15 @@ VOL    1s:${this.formatUSD(volume1s)} | 5s:${this.formatUSD(
         )
         .sort((a, b) => {
           const aVolume =
-            a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (a.ohlcvData?.thirtySeconds[a.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (a.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           const bVolume =
-            b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
-              ?.volume || 0;
+            (b.ohlcvData?.thirtySeconds[b.ohlcvData.thirtySeconds.length - 1]
+              ?.volume || 0) *
+            (b.currentPrice *
+              (this.moneyPrinter.priceManager?.solPriceUSD || 0));
           return bVolume - aVolume;
         });
 

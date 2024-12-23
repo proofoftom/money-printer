@@ -667,7 +667,7 @@ class Token extends EventEmitter {
           break;
 
         case STATES.DIPPING:
-          if (this.priceManager.solToUSD(this.marketCapSol) < 7000) {
+          if (this.priceManager.solToUSD(this.marketCapSol) < 6500) {
             this.transitionTo(STATES.DEAD, "Market cap dropped too low");
             return;
           }
