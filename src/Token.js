@@ -13,7 +13,7 @@ const STATES = {
 
 const PRICE_THRESHOLDS = {
   // Initial pump detection
-  INITIAL_PUMP: 20, // 20% price increase from initial price
+  INITIAL_PUMP: 50, // 20% price increase from initial price
   TARGET_PUMP: 40, // 40% total increase triggers PUMPED state
 
   // Dip detection
@@ -36,21 +36,11 @@ const TIME_WINDOWS = {
   MAX_RECOVERY_WINDOW: 5 * 60 * 1000, // 5 minutes
 };
 
-const AGGREGATION_THRESHOLDS = {
-  FIVE_MIN: 300000, // 5 minutes in ms
-  THIRTY_MIN: 1800000, // 30 minutes in ms
-  ONE_HOUR: 3600000, // 1 hour in ms
-};
-
 class Token extends EventEmitter {
-  constructor(
-    tokenData,
-    { priceManager, positionManager, safetyChecker, logger, config }
-  ) {
+  constructor(tokenData, { priceManager, logger, config }) {
     super();
 
     // Validate required dependencies
-    if (!safetyChecker) throw new Error("SafetyChecker is required");
     if (!priceManager) throw new Error("PriceManager is required");
     if (!logger) throw new Error("Logger is required");
     if (!config) throw new Error("Config is required");
@@ -96,10 +86,6 @@ class Token extends EventEmitter {
     this.holders = new Map();
     this.totalSupply = this.calculateTotalSupply();
 
-    // Safety tracking
-    this.isSafe = true;
-    this.safetyReasons = [];
-
     // Price tracking
     this.currentPrice = this.calculateTokenPrice();
     this.initialPrice = this.currentPrice;
@@ -117,10 +103,8 @@ class Token extends EventEmitter {
 
     // Dependencies
     this.priceManager = priceManager;
-    this.safetyChecker = safetyChecker;
     this.logger = logger;
     this.config = config;
-    this.positionManager = positionManager;
 
     // State
     this.state = STATES.NEW;
@@ -162,84 +146,10 @@ class Token extends EventEmitter {
       components: {
         momentum: 0, // Price momentum score
         volume: 0, // Volume profile score
-        safety: 0, // Safety checks score
-        dipQuality: 0, // Quality of the dip (depth, volume, unique traders)
-        recoveryStrength: 0, // Strength of recovery attempt
+        recovery: 0, // Strength of recovery attempt
       },
       lastUpdate: Date.now(),
     };
-
-    // Position management
-    this.position = null;
-
-    // Listen for ready for position events
-    this.on("readyForPosition", ({ token, metrics, suggestedSize }) => {
-      if (this.position) {
-        this.logger.warn("Position already exists", { mint: this.mint });
-        return;
-      }
-
-      try {
-        // Double-check safety conditions
-        const { safe, reasons } = this.safetyChecker.isTokenSafe(this);
-        if (!safe) {
-          this.logger.warn(
-            "Failed final safety check before opening position",
-            {
-              mint: this.mint,
-              reasons,
-            }
-          );
-          return;
-        }
-
-        // Create and open position
-        this.position = new Position(this, this.priceManager, {
-          takeProfitLevel: config.TAKE_PROFIT_PERCENT,
-          stopLossLevel: config.STOP_LOSS_PERCENT,
-          trailingStopLevel: config.TRAILING_STOP_PERCENT,
-        });
-
-        const success = this.position.open(this.currentPrice, suggestedSize);
-        if (success) {
-          this.logger.info("Opened position", {
-            mint: this.mint,
-            price: this.currentPrice,
-            size: suggestedSize,
-            metrics,
-          });
-
-          // Update position price on each price update
-          this.on("priceUpdate", ({ price }) => {
-            if (this.position && this.position.state === "OPEN") {
-              this.position.updatePrice(price);
-            }
-          });
-
-          // Handle position close
-          this.position.on("closed", (positionState) => {
-            this.logger.info("Position closed", {
-              mint: this.mint,
-              reason: positionState.closeReason,
-              roi: positionState.roiPercentage,
-              pnl: positionState.realizedPnLSol,
-            });
-
-            // Clean up position and transition state
-            this.position = null;
-            this.transitionTo(
-              STATES.PUMPED,
-              `Position closed: ${positionState.closeReason}`
-            );
-          });
-        }
-      } catch (error) {
-        this.logger.error("Error opening position", {
-          mint: this.mint,
-          error: error.message,
-        });
-      }
-    });
 
     // Start more frequent checks in first few minutes
     this.stateCheckInterval = setInterval(
@@ -368,7 +278,7 @@ class Token extends EventEmitter {
       // Check state transitions
       this.checkStateTransitions();
 
-      this.logger.debug("Token updated", {
+      this.logger.debug("Token updated Token.js", {
         mint: this.mint,
         txType: tradeData.txType,
         price: this.currentPrice,
@@ -634,27 +544,30 @@ class Token extends EventEmitter {
         volume: relativeVolume,
       });
 
-      try {
-        const isSafe = await this.safetyChecker.isTokenSafe(this);
-        if (isSafe) {
-          this.transitionTo(STATES.READY, "Second pump detected");
-        }
-      } catch (error) {
-        this.logger.error("Error checking token safety:", error);
-      }
+      this.transitionTo(STATES.READY, "Second pump detected");
     }
   }
 
   detectDip() {
     // Only run in PUMPING state
-    if (this.state !== STATES.PUMPING) return;
+    if (this.state !== STATES.PUMPED) return;
 
     const { acceleration, buyPressure, relativeVolume } =
       this.getVolumeProfile();
     const priceChangeFromHigh =
-      ((this.currentPrice - this.pumpMetrics.firstPump.highestMarketCap) /
+      ((this.marketCapSol - this.pumpMetrics.firstPump.highestMarketCap) /
         this.pumpMetrics.firstPump.highestMarketCap) *
       100;
+
+    this.logger.debug("Dip detection check:", {
+      mint: this.mint,
+      state: this.state,
+      priceChangeFromHigh: `${priceChangeFromHigh.toFixed(2)}%`,
+      relativeVolume,
+      dipThreshold: PRICE_THRESHOLDS.DIP_THRESHOLD,
+      currentMarketCap: this.marketCapSol,
+      highestMarketCap: this.pumpMetrics.firstPump.highestMarketCap,
+    });
 
     if (
       priceChangeFromHigh <= -PRICE_THRESHOLDS.DIP_THRESHOLD &&
@@ -701,12 +614,6 @@ class Token extends EventEmitter {
       // Update metrics for current state
       this.updateStateMetrics();
 
-      // Global checks
-      if (!this.isMarketCapInRange()) {
-        this.addSafetyReason("Market cap out of range");
-        return;
-      }
-
       switch (this.state) {
         case STATES.NEW:
           await this.detectPump(); // await the promise
@@ -724,7 +631,7 @@ class Token extends EventEmitter {
           // Check for pump target (100% gain)
           if (
             this.marketCapSol >=
-            this.pumpMetrics.firstPump.startMarketCap * 2
+            this.pumpMetrics.firstPump.startMarketCap * 1.5
           ) {
             this.transitionTo(STATES.PUMPED, "Pump target reached");
           } else if (
@@ -744,10 +651,26 @@ class Token extends EventEmitter {
             this.pumpMetrics.firstPump.highestMarketCap = this.marketCapSol;
           }
 
+          const priceDrop =
+            ((this.pumpMetrics.firstPump.highestMarketCap - this.marketCapSol) /
+              this.pumpMetrics.firstPump.highestMarketCap) *
+            100;
+
+          this.logger.debug("PUMPED state metrics:", {
+            currentMarketCap: this.marketCapSol,
+            ath: this.pumpMetrics.firstPump.highestMarketCap,
+            priceDrop: `${priceDrop.toFixed(2)}%`,
+            mint: this.mint,
+          });
+
           this.detectDip();
           break;
 
         case STATES.DIPPING:
+          if (this.priceManager.solToUSD(this.marketCapSol) < 7000) {
+            this.transitionTo(STATES.DEAD, "Market cap dropped too low");
+            return;
+          }
           const { buyPressure } = this.getVolumeProfile();
           if (buyPressure > 0) {
             const consecutivePositivePressure =
@@ -786,14 +709,6 @@ class Token extends EventEmitter {
     }
   }
 
-  addSafetyReason(reason) {
-    this.isSafe = false;
-    this.safetyReasons.push({
-      time: Date.now(),
-      reason,
-    });
-  }
-
   transitionTo(newState, reason = "") {
     const oldState = this.state;
 
@@ -807,29 +722,16 @@ class Token extends EventEmitter {
 
     // If transitioning to READY, check holder concentration
     if (newState === STATES.READY) {
-      if (this.getTopHolderConcentration(10) > 30) {
-        this.addSafetyReason("Top holder concentration too high");
-        if (this.shouldRetrySafetyChecks()) {
-          // Will try again later
-          return;
-        }
-        this.transitionTo(STATES.DEAD, "Failed final safety check");
-        return;
-      }
-
-      // Emit ready signal if safe
-      if (this.isSafe) {
-        const suggestedSize = this.calculatePositionSize();
-        this.emit("readyForPosition", {
-          token: this,
-          metrics: {
-            firstPump: this.pumpMetrics.firstPump,
-            dip: this.dipMetrics,
-            secondPump: this.pumpMetrics.secondPump,
-          },
-          suggestedSize,
-        });
-      }
+      const suggestedSize = this.calculatePositionSize();
+      this.emit("readyForPosition", {
+        token: this,
+        metrics: {
+          firstPump: this.pumpMetrics.firstPump,
+          dip: this.dipMetrics,
+          secondPump: this.pumpMetrics.secondPump,
+        },
+        suggestedSize,
+      });
     }
 
     // Emit state change event
@@ -852,7 +754,6 @@ class Token extends EventEmitter {
       metrics: {
         marketCap: this.marketCapSol,
         volume: this.volume,
-        safetyReasons: this.safetyReasons,
       },
     });
   }
@@ -863,7 +764,7 @@ class Token extends EventEmitter {
 
     // Market cap factor (smaller for higher mcap)
     // Convert marketCapSol to USD for comparison
-    const marketCapUSD = this.marketCapSol * this.solPrice;
+    const marketCapUSD = this.priceManager.solToUSD(this.marketCapSol);
     const mcapFactor = Math.min(
       1,
       this.config.MAX_ENTRY_MCAP_USD / marketCapUSD
@@ -913,16 +814,11 @@ class Token extends EventEmitter {
       components.recovery = 0;
     }
 
-    // Safety score from safety checker
-    const { safe, score: safetyScore } = this.safetyChecker.isTokenSafe(this);
-    components.safety = safe ? safetyScore : 0;
-
     // Calculate overall score as weighted average
     this.score.overall = (
-      components.momentum * 0.3 +
+      components.momentum * 0.4 +
       components.volume * 0.3 +
-      components.recovery * 0.2 +
-      components.safety * 0.2
+      components.recovery * 0.3
     ).toFixed(2);
 
     this.emit("scoreUpdated", {

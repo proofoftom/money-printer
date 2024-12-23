@@ -2,6 +2,7 @@ const TokenTracker = require("./TokenTracker");
 const WebSocketManager = require("./WebSocketManager");
 const SafetyChecker = require("./SafetyChecker");
 const PositionManager = require("./PositionManager");
+const ExitStrategies = require("./ExitStrategies");
 const PriceManager = require("./PriceManager");
 const Wallet = require("./Wallet");
 const { Logger } = require("./Logger");
@@ -65,12 +66,14 @@ class MoneyPrinter {
 
       // Initialize wallet and price manager
       this.wallet = new Wallet(this.config, this.logger);
+      this.exitStrategies = new ExitStrategies(this.config, this.logger);
       this.priceManager = new PriceManager(this.config, this.logger);
 
       // Initialize position manager with dependencies
       this.positionManager = new PositionManager({
         wallet: this.wallet,
         priceManager: this.priceManager,
+        exitStrategies: this.exitStrategies,
         logger: this.logger,
         config: this.config,
         analytics: this.analytics,

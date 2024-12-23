@@ -214,7 +214,7 @@ class TokenTracker extends EventEmitter {
         txType: tradeData.txType,
       });
 
-      this.logger.debug("Token updated", {
+      this.logger.debug("Token updated TokenTracker.js", {
         mint: tradeData.mint,
         marketCapSol: tradeData.marketCapSol,
       });

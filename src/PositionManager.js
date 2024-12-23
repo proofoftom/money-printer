@@ -2,15 +2,112 @@ const EventEmitter = require("events");
 const Position = require("./Position");
 
 class PositionManager extends EventEmitter {
-  constructor({ wallet, priceManager, logger, config, analytics }) {
+  constructor({
+    wallet,
+    exitStrategies,
+    priceManager,
+    logger,
+    config,
+    analytics,
+    safetyChecker,
+  }) {
     super();
     this.wallet = wallet;
+    this.exitStrategies = exitStrategies;
     this.priceManager = priceManager;
     this.logger = logger;
     this.config = config;
     this.analytics = analytics;
+    this.safetyChecker = safetyChecker;
     this.position = null;
     this._tradingEnabled = true;
+  }
+
+  initialize(tokenTracker) {
+    this.tokenTracker = tokenTracker;
+
+    // Listen for tokens that are ready for positions
+    this.tokenTracker.on("tokenAdded", (token) => {
+      token.on(
+        "readyForPosition",
+        async ({ token, metrics, suggestedSize }) => {
+          await this.handleReadyForPosition(token, metrics, suggestedSize);
+        }
+      );
+    });
+  }
+
+  async handleReadyForPosition(token, metrics, suggestedSize) {
+    if (!this.isTradingEnabled()) {
+      this.logger.info("Trading is disabled, cannot open position");
+      return;
+    }
+
+    if (this.position && this.position.state !== Position.STATES.CLOSED) {
+      this.logger.info(`Active position exists for ${this.position.symbol}`);
+      return;
+    }
+
+    // Run safety checks
+    const { safe, reasons } = await this.safetyChecker.isTokenSafe(token);
+    if (!safe) {
+      this.logger.warn("Failed safety check before opening position", {
+        mint: token.mint,
+        reasons,
+      });
+      return;
+    }
+
+    try {
+      const position = new Position(token, this.priceManager);
+
+      const success = await position.open(token.currentPrice, suggestedSize);
+      if (success) {
+        this.position = position;
+        this.logger.info("Opened position", {
+          mint: token.mint,
+          price: token.currentPrice,
+          size: suggestedSize,
+          metrics,
+        });
+
+        // Handle position updates and closure
+        this.setupPositionListeners(token, position);
+      }
+    } catch (error) {
+      this.logger.error("Error opening position", {
+        mint: token.mint,
+        error: error.message,
+      });
+    }
+  }
+
+  setupPositionListeners(token, position) {
+    // Update position price on each token price update
+    token.on("priceUpdate", ({ price }) => {
+      if (position && position.state === "OPEN") {
+        position.updatePrice(price);
+
+        // Check exit conditions
+        const exitSignals = this.exitStrategies.checkExitSignals(position);
+        if (exitSignals.shouldExit) {
+          this.closePosition(exitSignals.reason);
+        }
+      }
+    });
+
+    // Handle position close
+    position.on("closed", (positionState) => {
+      this.logger.info("Position closed", {
+        mint: token.mint,
+        reason: positionState.closeReason,
+        roi: positionState.roiPercentage,
+        pnl: positionState.realizedPnLSol,
+      });
+
+      // Clean up position
+      this.position = null;
+    });
   }
 
   isTradingEnabled() {
@@ -32,46 +129,6 @@ class PositionManager extends EventEmitter {
     const maxRiskAmount = walletBalance * this.config.RISK_PER_TRADE;
     const maxMcapAmount = token.marketCapSol * this.config.MAX_MCAP_POSITION;
     return Math.min(maxRiskAmount, maxMcapAmount);
-  }
-
-  openPosition(token) {
-    this.logger?.info(`Attempting to open position for ${token.symbol}`);
-
-    if (!this.isTradingEnabled()) {
-      this.logger?.info("Trading is disabled, cannot open position");
-      return null;
-    }
-
-    if (this.position && this.position.state !== Position.STATES.CLOSED) {
-      this.logger?.info(`Active position exists for ${this.position.symbol}`);
-      return null;
-    }
-
-    try {
-      const position = new Position(token, this.priceManager, this.wallet, {
-        takeProfitLevel: this.config.TAKE_PROFIT_PERCENT,
-        stopLossLevel: this.config.STOP_LOSS_PERCENT,
-      });
-
-      const size = this.calculatePositionSize(token);
-      position.size = size;
-
-      // Open the position
-      const success = position.open();
-      if (!success) {
-        return null;
-      }
-
-      this.position = position;
-      this.emit("positionOpened", { position, token });
-      return position;
-    } catch (error) {
-      this.logger?.error("Failed to open position:", error);
-      if (this.analytics) {
-        this.analytics.trackError("trading");
-      }
-      return null;
-    }
   }
 
   closePosition(reason = "manual") {
@@ -102,18 +159,6 @@ class PositionManager extends EventEmitter {
       return true;
     }
     return this.closePosition(reason);
-  }
-
-  updatePositions() {
-    if (!this.position || this.position.state === Position.STATES.CLOSED) {
-      return;
-    }
-
-    try {
-      this.position.update();
-    } catch (error) {
-      this.logger?.error("Failed to update position:", error);
-    }
   }
 }
 

@@ -1,25 +1,16 @@
-const EventEmitter = require('events');
+const EventEmitter = require("events");
 
 const STATES = {
-  PENDING: 'PENDING',
-  OPEN: 'OPEN',
-  CLOSED: 'CLOSED'
+  PENDING: "PENDING",
+  OPEN: "OPEN",
+  CLOSED: "CLOSED",
 };
 
 class Position extends EventEmitter {
-  constructor(token, priceManager, config = {}) {
+  constructor(token, priceManager) {
     super();
     this.token = token;
     this.priceManager = priceManager;
-    this.config = {
-      takeProfitLevel: config.takeProfitLevel ?? 50,
-      stopLossLevel: config.stopLossLevel ?? 10,
-      TRANSACTION_FEES: {
-        BUY: 0,
-        SELL: 0,
-        ...(config.TRANSACTION_FEES || {})
-      }
-    };
 
     // Core position data
     this.mint = token.mint;
@@ -55,20 +46,20 @@ class Position extends EventEmitter {
     this.entryPrice = price;
     this.size = size;
     this.openedAt = Date.now();
-    
+
     this.trades.push({
-      type: 'ENTRY',
+      type: "ENTRY",
       price,
       size,
-      timestamp: this.openedAt
+      timestamp: this.openedAt,
     });
 
     this.updatePriceMetrics(price);
-    this.emit('opened', this.getState());
+    this.emit("opened", this.getState());
     return true;
   }
 
-  close(price, reason = 'manual') {
+  close(price, reason = "manual") {
     if (this.state !== STATES.OPEN) {
       throw new Error(`Cannot close position in state: ${this.state}`);
     }
@@ -78,20 +69,22 @@ class Position extends EventEmitter {
     this.closeReason = reason;
 
     this.trades.push({
-      type: 'EXIT',
+      type: "EXIT",
       price,
       size: this.size,
       timestamp: this.closedAt,
-      reason
+      reason,
     });
 
     // Calculate final P&L
     this.realizedPnLSol = (price - this.entryPrice) * this.size;
-    this.realizedPnLUsd = this.priceManager?.solToUSD?.(this.realizedPnLSol) ?? this.realizedPnLSol * 100;
+    this.realizedPnLUsd =
+      this.priceManager?.solToUSD?.(this.realizedPnLSol) ??
+      this.realizedPnLSol * 100;
     this.unrealizedPnLSol = 0;
     this.unrealizedPnLUsd = 0;
 
-    this.emit('closed', this.getState());
+    this.emit("closed", this.getState());
     return true;
   }
 
@@ -103,20 +96,18 @@ class Position extends EventEmitter {
 
     // Update P&L
     this.unrealizedPnLSol = (price - this.entryPrice) * this.size;
-    this.unrealizedPnLUsd = this.priceManager?.solToUSD?.(this.unrealizedPnLSol) ?? this.unrealizedPnLSol * 100;
-    this.highestUnrealizedPnLSol = Math.max(this.highestUnrealizedPnLSol, this.unrealizedPnLSol);
+    this.unrealizedPnLUsd =
+      this.priceManager?.solToUSD?.(this.unrealizedPnLSol) ??
+      this.unrealizedPnLSol * 100;
+    this.highestUnrealizedPnLSol = Math.max(
+      this.highestUnrealizedPnLSol,
+      this.unrealizedPnLSol
+    );
 
     // Calculate ROI percentage
     this.roiPercentage = ((price - this.entryPrice) / this.entryPrice) * 100;
 
-    // Check stop loss and take profit
-    if (this.roiPercentage <= -this.config.stopLossLevel) {
-      this.close(price, 'stop_loss');
-    } else if (this.roiPercentage >= this.config.takeProfitLevel) {
-      this.close(price, 'take_profit');
-    }
-
-    this.emit('updated', this.getState());
+    this.emit("updated", this.getState());
   }
 
   updatePriceMetrics(price) {
@@ -130,10 +121,13 @@ class Position extends EventEmitter {
   }
 
   getAverageEntryPrice() {
-    const entryTrades = this.trades.filter(trade => trade.type === 'ENTRY');
+    const entryTrades = this.trades.filter((trade) => trade.type === "ENTRY");
     if (entryTrades.length === 0) return 0;
 
-    const totalValue = entryTrades.reduce((sum, trade) => sum + (trade.price * trade.size), 0);
+    const totalValue = entryTrades.reduce(
+      (sum, trade) => sum + trade.price * trade.size,
+      0
+    );
     const totalSize = entryTrades.reduce((sum, trade) => sum + trade.size, 0);
     return totalValue / totalSize;
   }
@@ -141,7 +135,6 @@ class Position extends EventEmitter {
   toJSON() {
     return {
       ...this.getState(),
-      config: this.config
     };
   }
 
@@ -162,7 +155,7 @@ class Position extends EventEmitter {
       highestUnrealizedPnLSol: this.highestUnrealizedPnLSol,
       roiPercentage: this.roiPercentage,
       trades: this.trades,
-      timeInPosition: this.getTimeInPosition()
+      timeInPosition: this.getTimeInPosition(),
     };
   }
 }

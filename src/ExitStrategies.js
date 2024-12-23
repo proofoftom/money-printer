@@ -1,61 +1,54 @@
 class ExitStrategies {
-  constructor(logger) {
-    // Default values that can be overridden by position config
-    this.defaultConfig = {
-      stopLossPortion: 1.0,    // Full exit on stop loss by default
-      takeProfitPortion: 1.0,  // Full exit on take profit by default
-      trailingStopLevel: 20,   // 20% drop from highest price
-      trailingStopPortion: 1.0 // Full exit on trailing stop by default
-    };
+  constructor(config, logger) {
     this.logger = logger;
+    this.config = config;
   }
 
   checkExitSignals(position) {
-    if (position.state !== 'OPEN') {
-      return null;
+    if (position.state !== "OPEN") {
+      return { shouldExit: false };
     }
 
     const currentPrice = position.currentPrice;
     const entryPrice = position.entryPrice;
     const priceChangePercent = ((currentPrice - entryPrice) / entryPrice) * 100;
-    
-    // Get position-specific config or use defaults
-    const config = {
-      ...this.defaultConfig,
-      ...(position.config || {})  // Handle case where position.config might be undefined
-    };
 
-    // 1. Stop Loss (e.g., -10%)
-    if (priceChangePercent <= -config.stopLossLevel) {
-      this.logger.info(`Stop loss triggered for ${position.mint} at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`);
-      return { 
-        reason: 'STOP_LOSS', 
-        portion: config.stopLossPortion 
-      };
+    // Use the same config values as Position
+    if (priceChangePercent <= -this.config.STOP_LOSS_PERCENT) {
+      this.logger.info(
+        `Stop loss triggered for ${
+          position.mint
+        } at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`
+      );
+      return { shouldExit: true, reason: "STOP_LOSS" };
     }
 
-    // 2. Take Profit (e.g., +50%)
-    if (priceChangePercent >= config.takeProfitLevel) {
-      this.logger.info(`Take profit triggered for ${position.mint} at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`);
-      return { 
-        reason: 'TAKE_PROFIT', 
-        portion: config.takeProfitPortion 
-      };
+    if (priceChangePercent >= this.config.TAKE_PROFIT_PERCENT) {
+      this.logger.info(
+        `Take profit triggered for ${
+          position.mint
+        } at ${currentPrice} (${priceChangePercent.toFixed(2)}%)`
+      );
+      return { shouldExit: true, reason: "TAKE_PROFIT" };
     }
 
-    // 3. Trailing Stop
-    const highestPrice = position.highestPrice;
-    const dropFromHighPercent = ((currentPrice - highestPrice) / highestPrice) * 100;
-    
-    if (dropFromHighPercent <= -config.trailingStopLevel) {
-      this.logger.info(`Trailing stop (${config.trailingStopLevel}%) triggered for ${position.mint} at ${currentPrice} (${dropFromHighPercent.toFixed(2)}% from high of ${highestPrice})`);
-      return { 
-        reason: 'TRAILING_STOP', 
-        portion: config.trailingStopPortion 
-      };
+    // Check trailing stop if enabled
+    if (this.config.TRAILING_STOP_PERCENT) {
+      const dropFromHigh =
+        ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
+      if (dropFromHigh >= this.config.TRAILING_STOP_PERCENT) {
+        this.logger.info(
+          `Trailing stop triggered for ${
+            position.mint
+          } at ${currentPrice} (${dropFromHigh.toFixed(2)}% drop from high of ${
+            position.highestPrice
+          })`
+        );
+        return { shouldExit: true, reason: "TRAILING_STOP" };
+      }
     }
 
-    return null;
+    return { shouldExit: false };
   }
 }
 
