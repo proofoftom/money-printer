@@ -207,7 +207,7 @@ class TokenTracker extends EventEmitter {
     const token = this.tokens.get(tradeData.mint);
     if (token) {
       // Update token metrics with trade data
-      token.updateTokenMetrics(tradeData);
+      token.update(tradeData);
 
       this.logger.debug("Token trade detected", {
         mint: tradeData.mint,
