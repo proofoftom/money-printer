@@ -5,20 +5,20 @@ const STATES = {
   PUMPING: "PUMPING", // In first pump phase
   PUMPED: "PUMPED", // First pump reached target
   DIPPING: "DIPPING", // In first dip phase
+  DIPPED: "DIPPED", // Reached dip target
   RECOVERING: "RECOVERING", // Recovering from first dip
   READY: "READY", // Ready for position (during recovery)
   DEAD: "DEAD", // Exceeded max recovery time or 90% drawdown
-  CLOSED: "CLOSED", // Position closed
 };
 
 const PRICE_THRESHOLDS = {
   // Initial pump detection
   INITIAL_PUMP: 50, // 20% price increase from initial price
-  TARGET_PUMP: 40, // 40% total increase triggers PUMPED state
+  SECOND_PUMP: 40, // 40% total increase triggers PUMPED state
 
   // Dip detection
   DIP_THRESHOLD: 15, // 15% drop from high triggers DIPPING state
-  MAX_DIP: 40, // 40% max drop before DEAD state
+  DIPPED_THRESHOLD: 35, // 35% drop from highest pump triggers DIPPED state
 
   // Recovery thresholds
   RECOVERY_THRESHOLD: 10, // 10% increase from dip triggers RECOVERING
@@ -492,14 +492,18 @@ class Token extends EventEmitter {
 
     // First pump detection
     if (this.state === STATES.NEW) {
-      const priceChange =
-        ((this.currentPrice - this.initialPrice) / this.initialPrice) * 100;
-      if (priceChange >= PRICE_THRESHOLDS.INITIAL_PUMP && relativeVolume >= 2) {
+      const marketCapChange =
+        ((this.marketCapSol - this.initialMarketCap) / this.initialMarketCap) *
+        100;
+      if (
+        marketCapChange >= PRICE_THRESHOLDS.INITIAL_PUMP &&
+        relativeVolume >= 2
+      ) {
         this.pumpMetrics.firstPump = {
           detected: true,
           startMarketCap: this.marketCapSol,
           time: Date.now(),
-          highestMarketCap: this.marketCapSol, // Change to highestMarketCap
+          highestMarketCap: this.marketCapSol,
         };
         this.emit("pumpDetected", {
           type: "first",
@@ -530,7 +534,7 @@ class Token extends EventEmitter {
       100;
 
     if (
-      priceChangeFromRecovery >= PRICE_THRESHOLDS.TARGET_PUMP &&
+      priceChangeFromRecovery >= PRICE_THRESHOLDS.SECOND_PUMP &&
       relativeVolume >= 2
     ) {
       this.pumpMetrics.secondPump = {
@@ -628,7 +632,7 @@ class Token extends EventEmitter {
             this.pumpMetrics.firstPump.highestMarketCap = this.marketCapSol;
           }
 
-          // Check for pump target (100% gain)
+          // Check for pump target (50% gain)
           if (
             this.marketCapSol >=
             this.pumpMetrics.firstPump.startMarketCap * 1.5
@@ -671,6 +675,34 @@ class Token extends EventEmitter {
             this.transitionTo(STATES.DEAD, "Market cap dropped too low");
             return;
           }
+
+          // Check for re-pump first
+          const priceChangeFromHigh =
+            ((this.marketCapSol - this.pumpMetrics.firstPump.highestMarketCap) /
+              this.pumpMetrics.firstPump.highestMarketCap) *
+            100;
+
+          if (
+            priceChangeFromHigh >= 0 &&
+            this.getVolumeProfile().relativeVolume >= 2
+          ) {
+            this.transitionTo(STATES.PUMPING, "Re-pump detected");
+            return;
+          }
+
+          // Check for DIPPED threshold
+          if (priceChangeFromHigh <= -PRICE_THRESHOLDS.DIPPED_THRESHOLD) {
+            this.transitionTo(STATES.DIPPED, "Dipped threshold reached");
+            return;
+          }
+
+          // Check for timeout
+          if (now - this.dipMetrics.time > TIME_WINDOWS.MAX_DIP_WINDOW) {
+            this.transitionTo(STATES.DEAD, "Dip timeout");
+          }
+          break;
+
+        case STATES.DIPPED:
           const { buyPressure } = this.getVolumeProfile();
           if (buyPressure > 0) {
             const consecutivePositivePressure =
@@ -681,10 +713,6 @@ class Token extends EventEmitter {
                 "Positive buy pressure detected"
               );
             }
-          }
-
-          if (now - this.dipMetrics.time > TIME_WINDOWS.MAX_DIP_WINDOW) {
-            this.transitionTo(STATES.DEAD, "Dip timeout");
           }
           break;
 
