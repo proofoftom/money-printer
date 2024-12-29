@@ -155,8 +155,13 @@ export class OHLCVData extends EventEmitter {
     this.invalidateCache("volumeProfiles");
     this.invalidateCache("patterns");
 
-    // Aggregate to higher timeframes
+    // After aggregating to higher timeframes
     this.aggregateToHigherTimeframes(timestamp);
+
+    // Detect patterns for all timeframes
+    Object.keys(this.candles).forEach((timeframe) => {
+      this.detectCrosses(timeframe as TimeframeType);
+    });
   }
 
   private emitCandleUpdate(timeframe: TimeframeType, candle: Candle): void {
@@ -263,8 +268,19 @@ export class OHLCVData extends EventEmitter {
     return candles[candles.length - 1];
   }
 
-  public calculateVWAP(timeframe: TimeframeType, period: number): number {
-    const candles = this.getCandles(timeframe).slice(-period);
+  private calculateVWAP(
+    timeframe: TimeframeType,
+    period: number,
+    endTimestamp?: number
+  ): number {
+    const candles = endTimestamp
+      ? this.getCandles(
+          timeframe,
+          endTimestamp - period * this.getTimeframeDuration(timeframe),
+          endTimestamp
+        )
+      : this.getCandles(timeframe).slice(-period);
+
     if (candles.length === 0) return 0;
 
     const totalVolume = candles.reduce(
@@ -284,12 +300,12 @@ export class OHLCVData extends EventEmitter {
     return sumVolumePrice / totalVolume;
   }
 
-  public calculateEMA(timeframe: TimeframeType, period: number): number {
-    const cacheKey = `ema_${timeframe}_${period}`;
-    const cached = this.cache.indicators.get(cacheKey);
-    if (cached) return cached;
-
-    const candles = this.getCandles(timeframe);
+  private calculateEMA(
+    timeframe: TimeframeType,
+    period: number,
+    endTimestamp?: number
+  ): number {
+    const candles = this.getCandles(timeframe, undefined, endTimestamp);
     if (candles.length < period) return 0;
 
     const multiplier = 2 / (period + 1);
@@ -299,7 +315,130 @@ export class OHLCVData extends EventEmitter {
       ema = (candles[i].close.usd - ema) * multiplier + ema;
     }
 
-    this.cache.indicators.set(cacheKey, ema);
     return ema;
+  }
+
+  private detectCrosses(timeframe: TimeframeType): void {
+    const latestCandle = this.getLatestCandle(timeframe);
+    if (!latestCandle) return;
+
+    // EMA Crosses (9/21 and 21/55 are common combinations)
+    this.detectEMACross(timeframe, 9, 21);
+    this.detectEMACross(timeframe, 21, 55);
+
+    // VWAP Crosses (using standard 24-period VWAP)
+    this.detectVWAPCross(timeframe, 24);
+  }
+
+  private detectEMACross(
+    timeframe: TimeframeType,
+    fastPeriod: number,
+    slowPeriod: number
+  ): void {
+    const candles = this.getCandles(timeframe).slice(-2);
+    if (candles.length < 2) return;
+
+    const [previousCandle, currentCandle] = candles;
+
+    const previousFastEMA = this.calculateEMA(
+      timeframe,
+      fastPeriod,
+      previousCandle.timestamp
+    );
+    const previousSlowEMA = this.calculateEMA(
+      timeframe,
+      slowPeriod,
+      previousCandle.timestamp
+    );
+    const currentFastEMA = this.calculateEMA(
+      timeframe,
+      fastPeriod,
+      currentCandle.timestamp
+    );
+    const currentSlowEMA = this.calculateEMA(
+      timeframe,
+      slowPeriod,
+      currentCandle.timestamp
+    );
+
+    // Detect bullish cross (fast crosses above slow)
+    if (previousFastEMA <= previousSlowEMA && currentFastEMA > currentSlowEMA) {
+      const crossEvent: CrossEvent = {
+        type: "EMA",
+        direction: "BULLISH",
+        timeframe,
+        timestamp: currentCandle.timestamp,
+        fastPeriod,
+        slowPeriod,
+        price: currentCandle.close.usd,
+        crossValue: currentSlowEMA,
+      };
+      this.emit("cross", crossEvent);
+    }
+    // Detect bearish cross (fast crosses below slow)
+    else if (
+      previousFastEMA >= previousSlowEMA &&
+      currentFastEMA < currentSlowEMA
+    ) {
+      const crossEvent: CrossEvent = {
+        type: "EMA",
+        direction: "BEARISH",
+        timeframe,
+        timestamp: currentCandle.timestamp,
+        fastPeriod,
+        slowPeriod,
+        price: currentCandle.close.usd,
+        crossValue: currentSlowEMA,
+      };
+      this.emit("cross", crossEvent);
+    }
+  }
+
+  private detectVWAPCross(timeframe: TimeframeType, period: number): void {
+    const candles = this.getCandles(timeframe).slice(-2);
+    if (candles.length < 2) return;
+
+    const [previousCandle, currentCandle] = candles;
+    const previousVWAP = this.calculateVWAP(
+      timeframe,
+      period,
+      previousCandle.timestamp
+    );
+    const currentVWAP = this.calculateVWAP(
+      timeframe,
+      period,
+      currentCandle.timestamp
+    );
+
+    // Detect crosses above VWAP
+    if (
+      previousCandle.close.usd <= previousVWAP &&
+      currentCandle.close.usd > currentVWAP
+    ) {
+      const crossEvent: CrossEvent = {
+        type: "VWAP",
+        direction: "BULLISH",
+        timeframe,
+        timestamp: currentCandle.timestamp,
+        price: currentCandle.close.usd,
+        crossValue: currentVWAP,
+      };
+      this.emit("cross", crossEvent);
+    }
+    // Detect crosses below VWAP
+    else if (
+      previousCandle.close.usd >= previousVWAP &&
+      currentCandle.close.usd < currentVWAP
+    ) {
+      const crossEvent: CrossEvent = {
+        type: "VWAP",
+        direction: "BEARISH",
+        timeframe,
+        timestamp: currentCandle.timestamp,
+        price: currentCandle.close.usd,
+        crossValue: currentVWAP,
+      };
+      this.emit("cross", crossEvent);
+    }
   }
 }
