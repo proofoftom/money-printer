@@ -80,3 +80,17 @@ export interface VolumeProfileLevel {
   trades: number;
   significance: number; // 0-1 score based on relative volume
 }
+
+export enum PatternType {
+  SUPPORT = "support",
+  RESISTANCE = "resistance",
+  VOLUME_CLUSTER = "volume_cluster",
+  // We can add more patterns later
+}
+
+export interface SupportResistanceLevel {
+  price: number;
+  strength: number; // 0-1 score based on volume and recurrence
+  type: PatternType.SUPPORT | PatternType.RESISTANCE;
+  volumeProfile: VolumeProfileLevel;
+}

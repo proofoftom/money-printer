@@ -518,4 +518,49 @@ export class OHLCVData extends EventEmitter {
       .filter((level) => level.significance > 0)
       .sort((a, b) => b.significance - a.significance);
   }
+
+  private detectSupportResistanceLevels(
+    timeframe: TimeframeType,
+    period: number = 100,
+    significanceThreshold: number = 0.3
+  ): SupportResistanceLevel[] {
+    const volumeProfile = this.calculateVolumeProfile(timeframe, period);
+    const currentPrice = this.getLatestCandle(timeframe).close.usd;
+
+    // Filter significant volume levels
+    const significantLevels = volumeProfile.filter(
+      (level) => level.significance >= significanceThreshold
+    );
+
+    return significantLevels.map((level) => ({
+      price: level.price,
+      strength: level.significance,
+      type:
+        level.price > currentPrice
+          ? PatternType.RESISTANCE
+          : PatternType.SUPPORT,
+      volumeProfile: level,
+    }));
+  }
+
+  private detectPatterns(timeframe: TimeframeType): void {
+    const supportResistanceLevels =
+      this.detectSupportResistanceLevels(timeframe);
+
+    // Emit events for newly formed patterns
+    supportResistanceLevels.forEach((level) => {
+      const pattern: Pattern = {
+        type: level.type,
+        timeframe,
+        timestamp: Date.now(),
+        data: {
+          price: level.price,
+          strength: level.strength,
+          volumeProfile: level.volumeProfile,
+        },
+      };
+
+      this.emit("pattern", pattern);
+    });
+  }
 }
