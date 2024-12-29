@@ -1,12 +1,15 @@
 import { EventEmitter } from "events";
 import {
   Candle,
-  VolumeProfile,
   Pattern,
   TimeframeType,
   CacheType,
   TokenStatus,
   OHLCVDataExport,
+  CrossType,
+  CrossDirection,
+  CrossEvent,
+  VolumeProfileLevel,
 } from "./types/OHLCVData";
 
 export class OHLCVData extends EventEmitter {
@@ -440,5 +443,79 @@ export class OHLCVData extends EventEmitter {
       };
       this.emit("cross", crossEvent);
     }
+  }
+
+  private calculateVolumeProfile(
+    timeframe: TimeframeType,
+    period: number,
+    priceIntervals: number = 100,
+    endTimestamp?: number
+  ): VolumeProfileLevel[] {
+    const candles = endTimestamp
+      ? this.getCandles(
+          timeframe,
+          endTimestamp - period * this.getTimeframeDuration(timeframe),
+          endTimestamp
+        )
+      : this.getCandles(timeframe).slice(-period);
+
+    if (candles.length === 0) return [];
+
+    // Find price range
+    const maxPrice = Math.max(...candles.map((c) => c.high.usd));
+    const minPrice = Math.min(...candles.map((c) => c.low.usd));
+    const priceStep = (maxPrice - minPrice) / priceIntervals;
+
+    // Initialize price levels
+    const volumeByPrice = new Map<
+      number,
+      {
+        volume: { tokens: number; sol: number; usd: number };
+        trades: number;
+      }
+    >();
+
+    for (let i = 0; i < priceIntervals; i++) {
+      volumeByPrice.set(minPrice + i * priceStep, {
+        volume: { tokens: 0, sol: 0, usd: 0 },
+        trades: 0,
+      });
+    }
+
+    // Aggregate volume at each price level
+    candles.forEach((candle) => {
+      const priceLevel =
+        Math.floor((candle.close.usd - minPrice) / priceStep) * priceStep +
+        minPrice;
+
+      const current = volumeByPrice.get(priceLevel) || {
+        volume: { tokens: 0, sol: 0, usd: 0 },
+        trades: 0,
+      };
+
+      volumeByPrice.set(priceLevel, {
+        volume: {
+          tokens: current.volume.tokens + candle.volume.tokens,
+          sol: current.volume.sol + candle.volume.sol,
+          usd: current.volume.usd + candle.volume.usd,
+        },
+        trades: current.trades + 1,
+      });
+    });
+
+    // Calculate significance scores
+    const maxVolume = Math.max(
+      ...Array.from(volumeByPrice.values()).map((v) => v.volume.usd)
+    );
+
+    return Array.from(volumeByPrice.entries())
+      .map(([price, data]) => ({
+        price,
+        volume: data.volume,
+        trades: data.trades,
+        significance: data.volume.usd / maxVolume,
+      }))
+      .filter((level) => level.significance > 0)
+      .sort((a, b) => b.significance - a.significance);
   }
 }

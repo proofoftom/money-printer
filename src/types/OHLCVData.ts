@@ -38,20 +38,6 @@ export interface Candle {
   };
 }
 
-export interface VolumeProfile {
-  priceLevel: {
-    tokens: number;
-    sol: number;
-    usd: number;
-  };
-  volume: {
-    tokens: number;
-    sol: number;
-    usd: number;
-  };
-  trades: number;
-}
-
 export interface Pattern {
   type: string;
   timeframe: string;
@@ -82,4 +68,15 @@ export interface OHLCVDataExport {
     [timeframe in TimeframeType]?: VolumeProfile[];
   };
   patterns: Pattern[];
+}
+
+export interface VolumeProfileLevel {
+  price: number;
+  volume: {
+    tokens: number;
+    sol: number;
+    usd: number;
+  };
+  trades: number;
+  significance: number; // 0-1 score based on relative volume
 }
