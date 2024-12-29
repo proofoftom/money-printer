@@ -166,4 +166,77 @@ export class OHLCVData extends EventEmitter {
   private invalidateCache(type: CacheType): void {
     this.cache[type].clear();
   }
+
+  private getTimeframeTimestamp(
+    timestamp: number,
+    timeframe: TimeframeType
+  ): number {
+    const seconds = Math.floor(timestamp / 1000);
+    switch (timeframe) {
+      case "5s":
+        return Math.floor(seconds / 5) * 5000;
+      case "15s":
+        return Math.floor(seconds / 15) * 15000;
+      case "30s":
+        return Math.floor(seconds / 30) * 30000;
+      case "1m":
+        return Math.floor(seconds / 60) * 60000;
+      default:
+        return seconds * 1000;
+    }
+  }
+
+  private aggregateToHigherTimeframes(timestamp: number): void {
+    const timeframes: TimeframeType[] = ["5s", "15s", "30s", "1m"];
+
+    for (const timeframe of timeframes) {
+      const periodStart = this.getTimeframeTimestamp(timestamp, timeframe);
+      const periodEnd = periodStart + this.getTimeframeDuration(timeframe);
+
+      // Get all 1s candles within this timeframe
+      const relevantCandles = Array.from(this.candles["1s"].values()).filter(
+        (candle) =>
+          candle.timestamp >= periodStart && candle.timestamp < periodEnd
+      );
+
+      if (relevantCandles.length === 0) return;
+
+      const aggregatedCandle: Candle = {
+        timestamp: periodStart,
+        open: relevantCandles[0].open,
+        high: {
+          tokens: Math.max(...relevantCandles.map((c) => c.high.tokens)),
+          sol: Math.max(...relevantCandles.map((c) => c.high.sol)),
+          usd: Math.max(...relevantCandles.map((c) => c.high.usd)),
+        },
+        low: {
+          tokens: Math.min(...relevantCandles.map((c) => c.low.tokens)),
+          sol: Math.min(...relevantCandles.map((c) => c.low.sol)),
+          usd: Math.min(...relevantCandles.map((c) => c.low.usd)),
+        },
+        close: relevantCandles[relevantCandles.length - 1].close,
+        volume: {
+          tokens: relevantCandles.reduce((sum, c) => sum + c.volume.tokens, 0),
+          sol: relevantCandles.reduce((sum, c) => sum + c.volume.sol, 0),
+          usd: relevantCandles.reduce((sum, c) => sum + c.volume.usd, 0),
+        },
+        trades: relevantCandles.reduce((sum, c) => sum + c.trades, 0),
+        marketCap: relevantCandles[relevantCandles.length - 1].marketCap,
+      };
+
+      this.candles[timeframe].set(periodStart, aggregatedCandle);
+      this.emitCandleUpdate(timeframe, aggregatedCandle);
+    }
+  }
+
+  private getTimeframeDuration(timeframe: TimeframeType): number {
+    const durations: Record<TimeframeType, number> = {
+      "1s": 1000,
+      "5s": 5000,
+      "15s": 15000,
+      "30s": 30000,
+      "1m": 60000,
+    };
+    return durations[timeframe];
+  }
 }
