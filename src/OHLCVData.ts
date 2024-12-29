@@ -239,4 +239,67 @@ export class OHLCVData extends EventEmitter {
     };
     return durations[timeframe];
   }
+
+  public getCandles(
+    timeframe: TimeframeType,
+    start?: number,
+    end?: number
+  ): Candle[] {
+    const candles = Array.from(this.candles[timeframe].values());
+
+    if (!start && !end) return candles;
+
+    return candles
+      .filter(
+        (candle) =>
+          (!start || candle.timestamp >= start) &&
+          (!end || candle.timestamp <= end)
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  public getLatestCandle(timeframe: TimeframeType): Candle | undefined {
+    const candles = this.getCandles(timeframe);
+    return candles[candles.length - 1];
+  }
+
+  public calculateVWAP(timeframe: TimeframeType, period: number): number {
+    const candles = this.getCandles(timeframe).slice(-period);
+    if (candles.length === 0) return 0;
+
+    const totalVolume = candles.reduce(
+      (sum, candle) => sum + candle.volume.usd,
+      0
+    );
+    if (totalVolume === 0) return 0;
+
+    const sumVolumePrice = candles.reduce(
+      (sum, candle) =>
+        sum +
+        candle.volume.usd *
+          ((candle.high.usd + candle.low.usd + candle.close.usd) / 3),
+      0
+    );
+
+    return sumVolumePrice / totalVolume;
+  }
+
+  public calculateEMA(timeframe: TimeframeType, period: number): number {
+    const cacheKey = `ema_${timeframe}_${period}`;
+    const cached = this.cache.indicators.get(cacheKey);
+    if (cached) return cached;
+
+    const candles = this.getCandles(timeframe);
+    if (candles.length < period) return 0;
+
+    const multiplier = 2 / (period + 1);
+    let ema = candles[0].close.usd;
+
+    for (let i = 1; i < candles.length; i++) {
+      ema = (candles[i].close.usd - ema) * multiplier + ema;
+    }
+
+    this.cache.indicators.set(cacheKey, ema);
+    return ema;
+  }
 }

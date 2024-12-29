@@ -1,3 +1,9 @@
+export type TimeframeType = "1s" | "5s" | "15s" | "30s" | "1m";
+export type CacheType = "indicators" | "volumeProfiles" | "patterns";
+export type TokenStatus = "ACTIVE" | "DEAD";
+export type CrossType = "EMA" | "VWAP";
+export type CrossDirection = "BULLISH" | "BEARISH";
+
 export interface Candle {
   timestamp: number;
   open: {
@@ -53,9 +59,16 @@ export interface Pattern {
   significance: number;
 }
 
-export type TimeframeType = "1s" | "5s" | "15s" | "30s" | "1m";
-export type CacheType = "indicators" | "volumeProfiles" | "patterns";
-export type TokenStatus = "ACTIVE" | "DEAD";
+export interface CrossEvent {
+  type: CrossType;
+  direction: CrossDirection;
+  timeframe: TimeframeType;
+  timestamp: number;
+  fastPeriod?: number; // For EMA crosses
+  slowPeriod?: number; // For EMA crosses
+  price: number;
+  crossValue: number;
+}
 
 export interface OHLCVDataExport {
   candles: {
